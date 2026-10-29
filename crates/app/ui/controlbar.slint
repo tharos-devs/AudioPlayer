@@ -9,7 +9,7 @@ component RoundButton inherits Rectangle {
     width: 24px;
     height: 24px;
     border-radius: 12px;
-    border-width: 1px;
+    border-width: Theme.hairline;
     opacity: root.enabled ? 1 : 0.5;
     border-color: root.primary ? self.background
         : touch.has-hover && root.enabled ? Theme.control-button-hover-border : Theme.control-button-border;
@@ -106,7 +106,7 @@ component TextToggle inherits VerticalLayout {
         }
     }
     Rectangle {
-        height: 1px;
+        height: Theme.hairline;
         background: label.color;
     }
 }
@@ -140,7 +140,7 @@ component PlayerControls inherits Rectangle {
     height: 50px;
 
     Rectangle {
-        border-width: 1px;
+        border-width: Theme.hairline;
         border-color: Theme.player-box-border;
 
         HorizontalLayout {
@@ -240,7 +240,7 @@ component PlayerControls inherits Rectangle {
                             Rectangle {
                                 height: 6px;
                                 border-radius: 3px;
-                                border-width: 1px;
+                                border-width: Theme.hairline;
                                 border-color: Theme.player-box-border;
                                 background: progress.has-hover ? Theme.progress-hover : Theme.progress-bg;
                             }
@@ -381,7 +381,7 @@ component SearchField inherits Rectangle {
     height: 24px;
     border-radius: 4px;
     background: Theme.search-bg;
-    border-width: Theme.dark ? 0px : 1px;
+    border-width: Theme.dark ? 0px : Theme.hairline;
     border-color: input.has-focus ? Theme.accent : touch.has-hover ? #c0c4cc : Theme.border-base;
     drop-shadow-blur: Theme.dark && input.has-focus ? 2px : 0px;
     drop-shadow-color: Theme.accent.with-alpha(0.2);
@@ -497,7 +497,7 @@ export component ControlBar inherits Rectangle {
             // Filet supérieur de .player-controls, sur toute la largeur de la zone.
             Rectangle {
                 y: 4px;
-                height: 1px;
+                height: Theme.hairline;
                 background: Theme.player-border-top;
             }
             HorizontalLayout {
@@ -558,8 +558,8 @@ export component ControlBar inherits Rectangle {
     }
 
     Rectangle {
-        y: parent.height - 1px;
-        height: 1px;
+        y: parent.height - Theme.hairline;
+        height: Theme.hairline;
         background: Theme.control-bar-border;
     }
 }

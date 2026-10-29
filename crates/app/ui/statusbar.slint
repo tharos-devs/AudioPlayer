@@ -10,7 +10,7 @@ component SquareButton inherits Rectangle {
     width: 24px;
     height: 24px;
     border-radius: 4px;
-    border-width: 1px;
+    border-width: Theme.hairline;
     border-color: root.active || touch.has-hover ? Theme.accent : Theme.border-base;
     background: root.active ? Theme.accent : touch.has-hover ? Theme.hover-tint : Theme.library-button-bg;
     property <color> foreground: root.active ? Theme.text-inverse : touch.has-hover ? Theme.accent : Theme.status-text;
@@ -121,7 +121,7 @@ export component StatusBar inherits Rectangle {
 
     Rectangle {
         y: 0;
-        height: 1px;
+        height: Theme.hairline;
         background: Theme.status-border;
     }
 
@@ -170,7 +170,7 @@ export component StatusBar inherits Rectangle {
                 height: 22px;
                 width: stop-row.preferred-width + 16px;
                 border-radius: 4px;
-                border-width: 1px;
+                border-width: Theme.hairline;
                 border-color: stop-touch.has-hover ? Theme.accent : Theme.border-base;
                 background: stop-touch.has-hover ? Theme.hover-tint : Theme.library-button-bg;
                 stop-row := HorizontalLayout {

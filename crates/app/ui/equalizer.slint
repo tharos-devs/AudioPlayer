@@ -124,7 +124,7 @@ export component Equalizer inherits Rectangle {
 
     Rectangle {
         y: 0;
-        height: 1px;
+        height: Theme.hairline;
         background: Theme.footer-divider;
     }
 
@@ -140,7 +140,7 @@ export component Equalizer inherits Rectangle {
                 width: 130px;
                 height: 24px * Theme.zoom;
                 border-radius: 4px;
-                border-width: 1px;
+                border-width: Theme.hairline;
                 border-color: preset-touch.has-hover ? Theme.eq-border-hover : Theme.eq-border;
                 background: Theme.eq-bg;
                 HorizontalLayout {
@@ -171,7 +171,7 @@ export component Equalizer inherits Rectangle {
                     Rectangle {
                         background: Theme.eq-bg;
                         border-radius: 4px;
-                        border-width: 1px;
+                        border-width: Theme.hairline;
                         border-color: Theme.eq-dropdown-border;
                         drop-shadow-blur: 8px;
                         drop-shadow-color: #0000004d;
@@ -278,7 +278,7 @@ export component Equalizer inherits Rectangle {
                     }
                 }
                 Rectangle {
-                    height: 1px;
+                    height: Theme.hairline;
                     background: reset.color;
                 }
             }

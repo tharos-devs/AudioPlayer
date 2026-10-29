@@ -47,7 +47,7 @@ export component ThemedMenu inherits PopupWindow {
     Rectangle {
         background: Theme.footer-bg;
         border-radius: 4px;
-        border-width: 1px;
+        border-width: Theme.hairline;
         border-color: Theme.border-base;
         drop-shadow-blur: 10px;
         drop-shadow-color: #00000066;
@@ -59,7 +59,7 @@ export component ThemedMenu inherits PopupWindow {
                 if !entry.hidden && entry.separated: Rectangle {
                     height: 9px;
                     Rectangle {
-                        height: 1px;
+                        height: Theme.hairline;
                         background: Theme.border;
                     }
                 }
@@ -125,7 +125,7 @@ export component ThemedMenu inherits PopupWindow {
         Rectangle {
             background: Theme.footer-bg;
             border-radius: 4px;
-            border-width: 1px;
+            border-width: Theme.hairline;
             border-color: Theme.border-base;
             drop-shadow-blur: 10px;
             drop-shadow-color: #00000066;
@@ -154,7 +154,7 @@ export component ThemedMenu inherits PopupWindow {
                 if TrackMenu.playlists.length > 0: Rectangle {
                     height: 9px;
                     Rectangle {
-                        height: 1px;
+                        height: Theme.hairline;
                         background: Theme.border;
                     }
                 }
@@ -381,8 +381,8 @@ export component AlbumRow inherits Rectangle {
         background: root.selected ? Theme.accent : root.cursor ? Theme.accent.with-alpha(0.5) : transparent;
     }
     Rectangle {
-        y: parent.height - 1px;
-        height: 1px;
+        y: parent.height - Theme.hairline;
+        height: Theme.hairline;
         background: Theme.item-border;
     }
 
@@ -471,7 +471,7 @@ export component Splitter inherits Rectangle {
     width: 5px;
 
     Rectangle {
-        width: touch.has-hover || touch.pressed ? 3px : 1px;
+        width: touch.has-hover || touch.pressed ? 3px : Theme.hairline;
         background: touch.has-hover || touch.pressed ? Theme.accent : Theme.border;
     }
 
@@ -561,7 +561,7 @@ export component ThemedButton inherits Rectangle {
     height: 32px;
     min-width: label.preferred-width + 30px;
     border-radius: 4px;
-    border-width: 1px;
+    border-width: Theme.hairline;
     opacity: root.enabled ? 1 : 0.5;
     border-color: root.primary ? Theme.accent : touch.has-hover && root.enabled ? Theme.accent : Theme.button-border;
     background: root.primary ? (touch.has-hover && root.enabled ? Theme.accent-light-3 : Theme.accent)

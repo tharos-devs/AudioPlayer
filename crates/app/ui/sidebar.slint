@@ -14,7 +14,7 @@ export component SmallButton inherits Rectangle {
     height: 24px;
     width: 36px;
     border-radius: 3px;
-    border-width: 1px;
+    border-width: Theme.hairline;
     border-color: touch.has-hover && !root.active ? Theme.accent : Theme.button-border;
     background: root.active ? Theme.tint : touch.has-hover ? Theme.hover-tint : Theme.button-bg;
 
@@ -41,7 +41,7 @@ component DropdownMenu inherits PopupWindow {
     Rectangle {
         background: Theme.footer-bg;
         border-radius: 4px;
-        border-width: 1px;
+        border-width: Theme.hairline;
         border-color: Theme.border-base;
         drop-shadow-blur: 8px;
         drop-shadow-color: #0000004d;
@@ -53,7 +53,7 @@ component DropdownMenu inherits PopupWindow {
                 if entry.separated: Rectangle {
                     height: 9px;
                     Rectangle {
-                        height: 1px;
+                        height: Theme.hairline;
                         background: Theme.border;
                     }
                 }
@@ -132,7 +132,7 @@ component RecentPopup inherits PopupWindow {
     Rectangle {
         background: Theme.footer-bg;
         border-radius: 6px;
-        border-width: 1px;
+        border-width: Theme.hairline;
         border-color: Theme.border-base;
         drop-shadow-blur: 8px;
         drop-shadow-color: #0000004d;
@@ -351,7 +351,7 @@ component AccentPicker inherits Rectangle {
 
     Rectangle {
         y: 0;
-        height: 1px;
+        height: Theme.hairline;
         background: Theme.border;
     }
 
@@ -550,7 +550,7 @@ export component Sidebar inherits Rectangle {
                         }
                         Rectangle {
                             border-radius: 3px;
-                            border-width: drop.has-drag ? 1px : 0px;
+                            border-width: drop.has-drag ? Theme.hairline : 0px;
                             border-color: Theme.accent;
                             FolderRow {
                                 label: playlist.label;
@@ -575,8 +575,8 @@ export component Sidebar inherits Rectangle {
     }
 
     Rectangle {
-        x: parent.width - 1px;
-        width: 1px;
+        x: parent.width - Theme.hairline;
+        width: Theme.hairline;
         background: Theme.sidebar-border;
     }
 }

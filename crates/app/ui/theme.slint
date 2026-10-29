@@ -14,6 +14,9 @@ export global Theme {
     in-out property <float> zoom: 0.9;
     out property <float> zoom-min: 0.7;
     out property <float> zoom-max: 0.9;
+    // Filet d'un pixel d'écran une fois le zoom appliqué : un trait de 1px réduit à 0,9px
+    // tombait parfois entre deux pixels et disparaissait (une ligne de liste sur quinze).
+    out property <length> hairline: 1px / zoom;
     in-out property <string> accent-id: "amber";
     in-out property <color> accent: #c8961e;
 

@@ -116,8 +116,8 @@ component TrackListRow inherits Rectangle {
     height: Metrics.row;
 
     Rectangle {
-        y: parent.height - 1px;
-        height: 1px;
+        y: parent.height - Theme.hairline;
+        height: Theme.hairline;
         background: Theme.item-border;
     }
 
@@ -305,8 +305,8 @@ export component TrackList inherits VerticalLayout {
         }
 
         Rectangle {
-            y: parent.height - 1px;
-            height: 1px;
+            y: parent.height - Theme.hairline;
+            height: Theme.hairline;
             background: Theme.item-border;
         }
     }
@@ -360,8 +360,8 @@ component PlaylistTrackRow inherits Rectangle {
     background: root.playing ? Theme.playing-bg : (root.selected ? Theme.current-bg : (touch.has-hover ? Theme.item-hover : transparent));
 
     Rectangle {
-        y: parent.height - 1px;
-        height: 1px;
+        y: parent.height - Theme.hairline;
+        height: Theme.hairline;
         background: Theme.item-border;
     }
     Rectangle {
