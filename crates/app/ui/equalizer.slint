@@ -47,8 +47,10 @@ component Switch inherits Rectangle {
     }
 }
 
+// La valeur vient toujours du parent : le curseur ne fait que signaler `edited`,
+// sinon l'affecter couperait la liaison et « reset » ou un préréglage ne le déplacerait plus.
 component VerticalSlider inherits Rectangle {
-    in-out property <float> value;
+    in property <float> value;
     in property <float> minimum: -12;
     in property <float> maximum: 12;
     in property <float> step: 0.5;
@@ -90,7 +92,6 @@ component VerticalSlider inherits Rectangle {
         let raw = root.maximum - clamp(y / root.rail, 0, 1) * (root.maximum - root.minimum);
         let stepped = round(raw / root.step) * root.step;
         if stepped != root.value {
-            root.value = stepped;
             root.edited(stepped);
         }
     }
