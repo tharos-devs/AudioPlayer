@@ -216,13 +216,20 @@ export component Equalizer inherits Rectangle {
             spacing: 8px * Theme.zoom;
             for frequency[band] in EqualizerState.frequencies: VerticalLayout {
                 // Les marges latérales (4px) disparaissent en flex, faute de place à 180px.
+                // Largeur égale et indépendante du texte : « +0 » → « -10.5 » ne décale rien.
                 horizontal-stretch: 1;
+                min-width: 0px;
+                preferred-width: 0px;
                 alignment: end;
-                Text {
-                    text: root.format-gain(EqualizerState.gains[band]);
-                    font-size: 9px * Theme.zoom;
-                    color: Theme.eq-label;
-                    horizontal-alignment: center;
+                // Hors layout : le texte se centre sur la bande sans en imposer la largeur.
+                Rectangle {
+                    height: gain-label.preferred-height;
+                    gain-label := Text {
+                        x: (parent.width - self.width) / 2;
+                        text: root.format-gain(EqualizerState.gains[band]);
+                        font-size: 9px * Theme.zoom;
+                        color: Theme.eq-label;
+                    }
                 }
                 Rectangle {
                     height: 12px * Theme.zoom + 8px;
@@ -242,12 +249,14 @@ export component Equalizer inherits Rectangle {
                 Rectangle {
                     height: 8px;
                 }
-                Text {
-                    text: root.format-frequency(frequency);
-                    font-size: 8px * Theme.zoom;
-                    color: Theme.status-label;
-                    horizontal-alignment: center;
-                    wrap: no-wrap;
+                Rectangle {
+                    height: frequency-label.preferred-height;
+                    frequency-label := Text {
+                        x: (parent.width - self.width) / 2;
+                        text: root.format-frequency(frequency);
+                        font-size: 8px * Theme.zoom;
+                        color: Theme.status-label;
+                    }
                 }
             }
         }
