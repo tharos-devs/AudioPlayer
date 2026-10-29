@@ -1,0 +1,12 @@
+[package]
+name = "audioplayer-scanner"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+audioplayer-db = { path = "../db" }
+lofty.workspace = true
+image.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

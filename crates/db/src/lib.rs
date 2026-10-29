@@ -3,6 +3,7 @@
 
 mod catalog;
 mod playlists;
+mod scan;
 mod preferences;
 pub mod legacy;
 pub mod schema;
@@ -14,6 +15,7 @@ use rusqlite::Connection;
 
 pub use catalog::{Album, Artist, Artwork, Library, Track};
 pub use playlists::Playlist;
+pub use scan::{KnownFile, TrackRecord};
 
 #[derive(Debug)]
 pub enum Error {
@@ -105,6 +107,8 @@ impl Database {
         conn.pragma_update(None, "foreign_keys", true)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
+        // Le scan écrit depuis son propre fil : une écriture concurrente attend au lieu d'échouer.
+        conn.busy_timeout(std::time::Duration::from_secs(10))?;
         schema::migrate(&mut conn)?;
         Ok(Database { conn })
     }

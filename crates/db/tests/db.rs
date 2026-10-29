@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use audioplayer_db::{inspect, legacy, schema, Database, Error, FileKind};
+use audioplayer_db::{inspect, legacy, schema, Database, Error, FileKind, TrackRecord};
 use rusqlite::{params, Connection};
 
 fn sample(db: &Database) {
@@ -345,4 +345,75 @@ fn libraries_rename_and_delete() {
     let names: Vec<_> = db.libraries().unwrap().into_iter().map(|l| l.name).collect();
     assert_eq!(names, ["Soundtracks"]);
     assert!(db.artists(2).unwrap().is_empty() && db.tracks(2).unwrap().is_empty());
+}
+
+fn record(path: &str, title: &str, artist: &str, album: &str) -> TrackRecord {
+    TrackRecord {
+        path: path.into(),
+        size: 100,
+        mtime: 1,
+        title: title.into(),
+        artist: artist.into(),
+        album: album.into(),
+        duration_ms: 1000,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn scan_writes_update_in_place_and_clean_orphans() {
+    let mut db = Database::open_in_memory().unwrap();
+    let lib = db.create_library("OST", "/ost").unwrap().unwrap();
+    assert_eq!(db.create_library("OST", "/other").unwrap(), None);
+    assert_eq!(db.create_library("Other", "/ost").unwrap(), None);
+
+    // Artiste d'album prioritaire pour le regroupement ; l'interprète reste sur la piste.
+    let mut a = record("/ost/a.flac", "Theme", "Orchestra", "Score");
+    a.album_artist = Some("Composer".into());
+    a.year = Some(2001);
+    a.genre = Some("Soundtrack".into());
+    let b = record("/ost/b.flac", "Finale", "Composer", "Score");
+    let albums = db.write_tracks(lib, &[a.clone(), b]).unwrap();
+    assert_eq!(albums[0], albums[1], "same album artist and title: one album");
+    let names: Vec<_> = db.artists(lib).unwrap().into_iter().map(|a| (a.name, a.album_count)).collect();
+    assert_eq!(names, [("Composer".to_string(), 1), ("Orchestra".to_string(), 0)]);
+
+    // Écoutes et favori, puis nouveau scan du même fichier aux tags modifiés.
+    let id = db.library_files(lib).unwrap()["/ost/a.flac"].track_id;
+    db.record_play(id).unwrap();
+    db.toggle_track_favorite(id).unwrap();
+    let playlist = db.create_playlist(lib, "Mix").unwrap().unwrap();
+    db.add_to_playlist(playlist, &[id]).unwrap();
+    a.title = "Main Theme".into();
+    a.genre = None;
+    a.mtime = 2;
+    db.write_tracks(lib, &[a]).unwrap();
+    let track = db.tracks(lib).unwrap().into_iter().find(|t| t.id == id).unwrap();
+    assert_eq!((track.title.as_str(), track.play_count, track.is_favorite), ("Main Theme", 1, true));
+    let genre: Option<String> = db.connection().query_row("SELECT genre FROM tracks WHERE id = ?1", [id], |r| r.get(0)).unwrap();
+    assert_eq!(genre, None, "a tag removed from the file is cleared");
+    assert_eq!(db.playlist_tracks(playlist).unwrap(), [id]);
+    assert_eq!(db.library_files(lib).unwrap()["/ost/a.flac"].mtime, Some(2));
+
+    // Un morceau qui change d'album laisse l'ancien vide : il disparaît, l'artiste aussi.
+    let moved = record("/ost/b.flac", "Finale", "Someone", "Other Album");
+    db.write_tracks(lib, &[moved]).unwrap();
+    db.remove_orphans(lib).unwrap();
+    let albums: Vec<_> = db.albums(lib).unwrap().into_iter().map(|a| a.title).collect();
+    assert_eq!(albums, ["Other Album", "Score"]);
+    db.remove_tracks(lib, &[id]).unwrap();
+    let albums: Vec<_> = db.albums(lib).unwrap().into_iter().map(|a| a.title).collect();
+    assert_eq!(albums, ["Other Album"]);
+    let artists: Vec<_> = db.artists(lib).unwrap().into_iter().map(|a| a.name).collect();
+    assert_eq!(artists, ["Someone"]);
+
+    let album = db.albums(lib).unwrap()[0].id;
+    db.set_artwork(album, &[(80, "image/jpeg".into(), vec![0])]).unwrap();
+    assert!(db.albums_with_artwork(lib, 150).unwrap().is_empty());
+    db.set_artwork(album, &[(150, "image/jpeg".into(), vec![1])]).unwrap();
+    assert_eq!(db.albums_with_artwork(lib, 150).unwrap(), [album]);
+    // La vignette remplace l'ancienne : une seule image par album.
+    let count: i64 = db.connection().query_row("SELECT count(*) FROM artworks WHERE album_id = ?1", [album], |r| r.get(0)).unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(db.artwork(album, 150).unwrap().unwrap().data, [1]);
 }

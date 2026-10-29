@@ -34,8 +34,8 @@ enum Dragged {
     Artist(usize),
     Album(usize),
 }
-// Vignettes de 80px affichées jusqu'à 80px : 160px suffisent en Retina.
-const COVER_SIZE: u32 = 160;
+// Pochettes affichées jusqu'à 80px ; la base garde des vignettes de 150px.
+const COVER_SIZE: u32 = 150;
 // « Added last 2 weeks », la valeur par défaut de la v0.1.
 const RECENT_MODIFIER: &str = "-14 days";
 const STATUS_MESSAGE_DURATION: Duration = Duration::from_secs(3);
@@ -1005,7 +1005,7 @@ impl App {
     fn publish(&mut self) {
         let key = self.now.as_ref().map(|now| (now.library, now.track));
         if key != self.published_track {
-            let artwork = self.now_track().and_then(|(lib, t)| self.db.artwork(lib.albums[t.album].id, 600).ok().flatten());
+            let artwork = self.now_track().and_then(|(lib, t)| self.db.artwork(lib.albums[t.album].id, COVER_SIZE).ok().flatten());
             let details = self.now_track().map(|(lib, t)| {
                 let album = &lib.albums[t.album];
                 (t.title.clone(), lib.artists[t.artist].name.clone(), album.title.clone(), t.duration)
