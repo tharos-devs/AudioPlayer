@@ -89,7 +89,7 @@ export component NameDialog inherits Rectangle {
     }
 }
 
-export enum ConfirmKind { delete-playlist, delete-library, remove-missing, delete-tracks }
+export enum ConfirmKind { delete-playlist, delete-library, remove-missing, delete-tracks, delete-selection }
 
 // Confirmation d'une suppression ; Entrée confirme, Échap annule.
 export component ConfirmDialog inherits Rectangle {
@@ -140,6 +140,8 @@ export component ConfirmDialog inherits Rectangle {
                         ? @tr("{n} track of “{0}” has a missing file" | "{n} tracks of “{0}” have missing files" % root.count, root.subject)
                         : root.kind == ConfirmKind.delete-tracks
                         ? @tr("Delete “{0}” from the library ({n} track)?" | "Delete “{0}” from the library ({n} tracks)?" % root.count, root.subject)
+                        : root.kind == ConfirmKind.delete-selection
+                        ? @tr("Delete {n} track from the library?" | "Delete {n} tracks from the library?" % root.count)
                         : @tr("Delete the library “{0}”?", root.subject);
                     font-size: 14px;
                     font-weight: 600;
@@ -151,7 +153,7 @@ export component ConfirmDialog inherits Rectangle {
                         ? @tr("The tracks stay in the library.")
                         : root.kind == ConfirmKind.remove-missing
                         ? @tr("Remove them from the library? Their play counts, favorites and playlist entries are lost.")
-                        : root.kind == ConfirmKind.delete-tracks
+                        : root.kind == ConfirmKind.delete-tracks || root.kind == ConfirmKind.delete-selection
                         ? @tr("Play counts, favorites and playlist entries are lost. The music files are not touched: the next scan of the folder adds them back.")
                         : @tr("Its artists, albums, tracks and playlists are removed from the database. The music files are not touched.");
                     font-size: 12px;

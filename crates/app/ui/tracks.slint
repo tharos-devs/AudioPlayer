@@ -22,6 +22,8 @@ export struct TrackItem {
     has-artwork: bool,
     first-in-album: bool,
     favorite: bool,
+    // Fait partie de la sélection (multiple avec Cmd/Ctrl ou Maj).
+    selected: bool,
 }
 
 
@@ -105,7 +107,9 @@ component TrackListRow inherits Rectangle {
     in property <bool> selected;
     in property <bool> playing;
     in property <bool> running;
-    callback select();
+    // `toggle` : Cmd/Ctrl-clic ; `extend` : Maj-clic.
+    callback select(bool, bool);
+    property <bool> modified-press;
     callback play();
     callback action(string);
     pure callback payload(int) -> data-transfer;
@@ -139,13 +143,27 @@ component TrackListRow inherits Rectangle {
             }
 
             touch := TouchArea {
+                // Comme le Finder : un clic simple sur une piste déjà sélectionnée ne réduit la
+                // sélection qu'au relâchement, pour pouvoir faire glisser tout le groupe.
                 clicked => {
-                    root.select();
+                    if !root.modified-press {
+                        root.select(false, false);
+                    }
                 }
                 // Clic droit : menu au style de l'app, à l'endroit du clic.
                 pointer-event(event) => {
+                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                        let toggle = event.modifiers.meta || event.modifiers.control;
+                        root.modified-press = toggle || event.modifiers.shift;
+                        if root.modified-press || !root.selected {
+                            root.select(toggle, event.modifiers.shift && !toggle);
+                        }
+                    }
                     if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
-                        root.select();
+                        // Clic droit hors de la sélection : elle se réduit à cette piste.
+                        if !root.selected {
+                            root.select(false, false);
+                        }
                         menu-anchor.x = self.mouse-x;
                         menu-anchor.y = self.mouse-y;
                         menu.show();
@@ -243,7 +261,9 @@ export component TrackList inherits VerticalLayout {
             list.content-y = -(top + Metrics.row - list.visible-height);
         }
     }
+    // Piste courante (clavier, Entrée) ; la sélection est portée par `TrackItem.selected`.
     in-out property <int> selected-track: -1;
+    callback select-track(int, bool, bool);
     callback play-track(int);
     callback track-action(int, string);
     pure callback track-payload(int) -> data-transfer;
@@ -301,11 +321,11 @@ export component TrackList inherits VerticalLayout {
             }
             if item.kind == TrackItemKind.track: TrackListRow {
                 item: item;
-                selected: item.id == root.selected-track;
+                selected: item.selected;
                 playing: item.id == root.playing-track;
                 running: root.running;
-                select => {
-                    root.selected-track = item.id;
+                select(toggle, extend) => {
+                    root.select-track(item.id, toggle, extend);
                 }
                 play => {
                     root.play-track(item.id);
@@ -327,7 +347,9 @@ component PlaylistTrackRow inherits Rectangle {
     in property <bool> selected;
     in property <bool> playing;
     in property <bool> running;
-    callback select();
+    // `toggle` : Cmd/Ctrl-clic ; `extend` : Maj-clic.
+    callback select(bool, bool);
+    property <bool> modified-press;
     callback play();
     callback action(string);
     pure callback payload(int) -> data-transfer;
@@ -362,13 +384,27 @@ component PlaylistTrackRow inherits Rectangle {
         data: root.payload(root.item.id);
 
         touch := TouchArea {
+            // Comme le Finder : un clic simple sur une piste déjà sélectionnée ne réduit la
+            // sélection qu'au relâchement, pour pouvoir faire glisser tout le groupe.
             clicked => {
-                root.select();
+                if !root.modified-press {
+                    root.select(false, false);
+                }
             }
             // Clic droit : menu au style de l'app, à l'endroit du clic.
             pointer-event(event) => {
+                if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                    let toggle = event.modifiers.meta || event.modifiers.control;
+                    root.modified-press = toggle || event.modifiers.shift;
+                    if root.modified-press || !root.selected {
+                        root.select(toggle, event.modifiers.shift && !toggle);
+                    }
+                }
                 if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
-                    root.select();
+                    // Clic droit hors de la sélection : elle se réduit à cette piste.
+                    if !root.selected {
+                        root.select(false, false);
+                    }
                     menu-anchor.x = self.mouse-x;
                     menu-anchor.y = self.mouse-y;
                     menu.show();
@@ -466,7 +502,9 @@ export component PlaylistTrackList inherits ListView {
     }
     in property <int> playing-track: -1;
     in property <bool> running;
+    // Piste courante (clavier, Entrée) ; la sélection est portée par `TrackItem.selected`.
     in-out property <int> selected-track: -1;
+    callback select-track(int, bool, bool);
     callback play-track(int);
     callback track-action(int, string);
     pure callback track-payload(int) -> data-transfer;
@@ -476,11 +514,11 @@ export component PlaylistTrackList inherits ListView {
 
     for item[row] in root.items: PlaylistTrackRow {
         item: item;
-        selected: item.id == root.selected-track;
+        selected: item.selected;
         playing: item.id == root.playing-track;
         running: root.running;
-        select => {
-            root.selected-track = item.id;
+        select(toggle, extend) => {
+            root.select-track(item.id, toggle, extend);
         }
         play => {
             root.play-track(item.id);

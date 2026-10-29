@@ -407,3 +407,31 @@ msgstr[1] "Supprimer « {0} » de la bibliothèque ({n} morceaux) ?"
 
 msgid "Stop"
 msgstr "Arrêter"
+
+msgid "{n} track added to “{0}”"
+msgid_plural "{n} tracks added to “{0}”"
+msgstr[0] "{n} morceau ajouté à « {0} »"
+msgstr[1] "{n} morceaux ajoutés à « {0} »"
+
+msgid "These tracks are already in “{0}”"
+msgstr "Ces morceaux sont déjà dans « {0} »"
+
+msgid "{n} track added to the queue"
+msgid_plural "{n} tracks added to the queue"
+msgstr[0] "{n} morceau ajouté à la file"
+msgstr[1] "{n} morceaux ajoutés à la file"
+
+msgid "{n} track added to favorites"
+msgid_plural "{n} tracks added to favorites"
+msgstr[0] "{n} morceau ajouté aux favoris"
+msgstr[1] "{n} morceaux ajoutés aux favoris"
+
+msgid "{n} track removed from favorites"
+msgid_plural "{n} tracks removed from favorites"
+msgstr[0] "{n} morceau retiré des favoris"
+msgstr[1] "{n} morceaux retirés des favoris"
+
+msgid "Delete {n} track from the library?"
+msgid_plural "Delete {n} tracks from the library?"
+msgstr[0] "Supprimer {n} morceau de la bibliothèque ?"
+msgstr[1] "Supprimer {n} morceaux de la bibliothèque ?"

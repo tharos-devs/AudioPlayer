@@ -26,6 +26,7 @@ slint::include_modules!();
 const TRACK_PAYLOAD_PREFIX: &str = "audioplayer/track:";
 const ARTIST_PAYLOAD_PREFIX: &str = "audioplayer/artist:";
 const ALBUM_PAYLOAD_PREFIX: &str = "audioplayer/album:";
+const SELECTION_PAYLOAD: &str = "audioplayer/selection";
 
 /// Ce qui peut être glissé sur une playlist.
 #[derive(Clone, Copy)]
@@ -33,6 +34,8 @@ enum Dragged {
     Track(usize),
     Artist(usize),
     Album(usize),
+    // Les pistes sélectionnées (sélection multiple), résolues au moment de l'action.
+    Selection,
 }
 // Pochettes affichées jusqu'à 80px ; la base garde des vignettes de 150px.
 const COVER_SIZE: u32 = 150;
@@ -121,6 +124,11 @@ struct App {
     visible: Vec<usize>,
     // Ligne de chaque morceau affiché (les en-têtes d'album occupent aussi des lignes).
     rows: HashMap<usize, usize>,
+    // Sélection multiple (index de morceaux) et point de départ d'un Maj-clic.
+    selection: std::collections::HashSet<usize>,
+    anchor: Option<usize>,
+    // Modèle affiché : la sélection ne met à jour que les lignes qui changent.
+    track_model: Option<Rc<VecModel<TrackItem>>>,
     reveal_serial: i32,
     // Artistes et albums listés, dans l'ordre : pour la navigation au clavier.
     artist_rows: Vec<usize>,
@@ -175,6 +183,9 @@ impl App {
             recent: (2, "weeks".into()),
             visible: Vec::new(),
             rows: HashMap::new(),
+            selection: Default::default(),
+            anchor: None,
+            track_model: None,
             reveal_serial: 0,
             artist_rows: Vec::new(),
             album_rows: Vec::new(),
@@ -221,6 +232,8 @@ impl App {
         self.library = library;
         self.artist_order = artist_order;
         self.visible.clear();
+        self.selection.clear();
+        self.anchor = None;
         self.reset_navigation();
         Ok(())
     }
@@ -450,10 +463,19 @@ impl App {
                 .collect(),
         };
 
+        // La sélection ne garde que les morceaux encore affichés.
+        let shown: std::collections::HashSet<usize> = ids.iter().copied().collect();
+        self.selection.retain(|t| shown.contains(t));
+        if self.anchor.is_some_and(|a| !shown.contains(&a)) {
+            self.anchor = None;
+        }
+
         // Une playlist garde l'ordre d'ajout ; la bibliothèque est groupée par album.
         if self.view == View::Playlist {
             let items = ids.iter().enumerate().map(|(position, &t)| self.track_item(t, position as i32 + 1, false));
-            ui.set_playlist_items(model(items.collect()));
+            let rows = Rc::new(VecModel::from(items.collect::<Vec<_>>()));
+            ui.set_playlist_items(ModelRc::from(rows.clone()));
+            self.track_model = Some(rows);
             self.rows = ids.iter().enumerate().map(|(row, &t)| (t, row)).collect();
         } else {
             if self.view == View::MostPlayed {
@@ -468,7 +490,9 @@ impl App {
                 .filter(|(_, item)| item.kind == TrackItemKind::Track)
                 .map(|(row, item)| (item.id as usize, row))
                 .collect();
-            ui.set_track_items(model(items));
+            let rows = Rc::new(VecModel::from(items));
+            ui.set_track_items(ModelRc::from(rows.clone()));
+            self.track_model = Some(rows);
         }
 
         let total: i32 = ids.iter().map(|&t| tracks[t].duration).sum();
@@ -528,6 +552,7 @@ impl App {
             has_artwork,
             first_in_album,
             favorite: t.is_favorite,
+            selected: self.selection.contains(&track),
         }
     }
 
@@ -698,7 +723,7 @@ impl App {
         let index = queue.iter().position(|&t| t == track);
         self.now = Some(NowPlaying { library, track, queue, index, next: None });
         self.failures = 0;
-        ui.set_selected_track(track as i32);
+        self.select_only(ui, track);
         self.start(ui);
     }
 
@@ -848,7 +873,7 @@ impl App {
     }
 
     // ↑/↓ : élément précédent/suivant du panneau actif ; sans position, le premier (↓) ou le dernier (↑).
-    fn move_selection(&mut self, ui: &AppWindow, delta: isize) {
+    fn move_selection(&mut self, ui: &AppWindow, delta: isize, extend: bool) {
         let panel = ui.get_active_panel();
         if panel == 0 || panel == 1 {
             let (rows, cursor) = if panel == 0 {
@@ -879,8 +904,59 @@ impl App {
             None => 0,
         };
         let track = self.visible[index];
-        ui.set_selected_track(track as i32);
+        if extend {
+            self.anchor = self.anchor.or(current.map(|c| self.visible[c])).or(Some(track));
+            self.select_range(ui, track);
+        } else {
+            self.select_only(ui, track);
+        }
         self.reveal(ui, track);
+    }
+
+    // Applique une nouvelle sélection en ne retouchant que les lignes qui changent.
+    fn set_selection(&mut self, ui: &AppWindow, selection: std::collections::HashSet<usize>, current: Option<usize>) {
+        let changed: Vec<usize> = self.selection.symmetric_difference(&selection).copied().collect();
+        self.selection = selection;
+        if let Some(model) = &self.track_model {
+            for track in changed {
+                if let Some(mut item) = self.rows.get(&track).and_then(|&row| model.row_data(row).map(|i| (row, i))) {
+                    item.1.selected = self.selection.contains(&track);
+                    model.set_row_data(item.0, item.1);
+                }
+            }
+        }
+        ui.set_selected_track(to_ui_id(current));
+    }
+
+    fn select_only(&mut self, ui: &AppWindow, track: usize) {
+        self.anchor = Some(track);
+        self.set_selection(ui, std::iter::once(track).collect(), Some(track));
+    }
+
+    // Maj : de l'ancre jusqu'à `track`, dans l'ordre affiché.
+    fn select_range(&mut self, ui: &AppWindow, track: usize) {
+        let position = |t: usize| self.visible.iter().position(|&v| v == t);
+        let (Some(to), Some(from)) = (position(track), self.anchor.and_then(position)) else {
+            return self.select_only(ui, track);
+        };
+        let range = self.visible[from.min(to)..=from.max(to)].iter().copied().collect();
+        self.set_selection(ui, range, Some(track));
+    }
+
+    // Clic dans la liste : simple, Cmd/Ctrl (ajoute ou retire) ou Maj (plage).
+    fn track_clicked(&mut self, ui: &AppWindow, track: usize, toggle: bool, extend: bool) {
+        if extend && self.anchor.is_some() {
+            self.select_range(ui, track);
+        } else if toggle {
+            let mut selection = self.selection.clone();
+            if !selection.remove(&track) {
+                selection.insert(track);
+            }
+            self.anchor = Some(track);
+            self.set_selection(ui, selection, Some(track));
+        } else {
+            self.select_only(ui, track);
+        }
     }
 
     fn play_selected(&mut self, ui: &AppWindow) {
@@ -896,7 +972,7 @@ impl App {
         }
         if self.selected_library == Some(library) {
             self.reveal_album(ui, self.library.tracks[track].album);
-            ui.set_selected_track(track as i32);
+            self.select_only(ui, track);
             self.reveal(ui, track);
         }
     }
@@ -1143,30 +1219,51 @@ impl App {
         match action {
             "show-album" => {
                 self.reveal_album(ui, self.library.tracks[track].album);
-                ui.set_selected_track(id);
+                self.select_only(ui, track);
             }
-            "remove-from-playlist" => self.remove_from_playlist(ui, track),
-            "reset-plays" => self.reset_plays(ui, track),
-            _ => self.item_action(ui, Dragged::Track(track), action),
+            _ => {
+                // Clic droit dans une sélection multiple : l'action vaut pour toute la sélection.
+                let item = if self.selection.len() > 1 && self.selection.contains(&track) { Dragged::Selection } else { Dragged::Track(track) };
+                match action {
+                    "remove-from-playlist" => self.remove_from_playlist(ui, item),
+                    "reset-plays" => self.reset_plays(ui, item),
+                    _ => self.item_action(ui, item, action),
+                }
+            }
         }
     }
 
     // Favori d'un morceau, d'un album ou d'un artiste.
     fn toggle_favorite(&mut self, ui: &AppWindow, item: Dragged) {
-        let (result, view) = match item {
-            Dragged::Track(t) => (self.db.toggle_track_favorite(self.library.tracks[t].id), View::FavoriteTracks),
-            Dragged::Album(a) => (self.db.toggle_album_favorite(self.library.albums[a].id), View::FavoriteAlbums),
-            Dragged::Artist(a) => (self.db.toggle_artist_favorite(self.library.artists[a].id), View::FavoriteArtists),
+        let (favorite, view) = match item {
+            Dragged::Album(a) => match self.db.toggle_album_favorite(self.library.albums[a].id) {
+                Ok(favorite) => {
+                    self.library.albums[a].is_favorite = favorite;
+                    (favorite, View::FavoriteAlbums)
+                }
+                Err(error) => return eprintln!("favorite: {error}"),
+            },
+            Dragged::Artist(a) => match self.db.toggle_artist_favorite(self.library.artists[a].id) {
+                Ok(favorite) => {
+                    self.library.artists[a].is_favorite = favorite;
+                    (favorite, View::FavoriteArtists)
+                }
+                Err(error) => return eprintln!("favorite: {error}"),
+            },
+            // Plusieurs pistes : toutes en favori, ou toutes retirées si elles l'étaient déjà.
+            Dragged::Track(_) | Dragged::Selection => {
+                let tracks = self.tracks_of(item);
+                let target = !tracks.iter().all(|&t| self.library.tracks[t].is_favorite);
+                let to_change: Vec<usize> = tracks.into_iter().filter(|&t| self.library.tracks[t].is_favorite != target).collect();
+                for t in to_change {
+                    match self.db.toggle_track_favorite(self.library.tracks[t].id) {
+                        Ok(favorite) => self.library.tracks[t].is_favorite = favorite,
+                        Err(error) => return eprintln!("favorite: {error}"),
+                    }
+                }
+                (target, View::FavoriteTracks)
+            }
         };
-        let favorite = match result {
-            Ok(favorite) => favorite,
-            Err(error) => return eprintln!("favorite: {error}"),
-        };
-        match item {
-            Dragged::Track(t) => self.library.tracks[t].is_favorite = favorite,
-            Dragged::Album(a) => self.library.albums[a].is_favorite = favorite,
-            Dragged::Artist(a) => self.library.artists[a].is_favorite = favorite,
-        }
         let lib = &self.library;
         ui.set_favorite_tracks_count(lib.tracks.iter().filter(|t| t.is_favorite).count() as i32);
         ui.set_favorite_albums_count(lib.albums.iter().filter(|a| a.is_favorite).count() as i32);
@@ -1179,15 +1276,25 @@ impl App {
             self.refresh_albums(ui);
             self.refresh_tracks(ui);
         }
-        let kind = if favorite { StatusKind::FavoriteAdded } else { StatusKind::FavoriteRemoved };
-        self.show_status(ui, Status { kind, track: self.label_of(item).into(), ..Default::default() });
+        let count = self.tracks_of(item).len() as i32;
+        let kind = match (favorite, item) {
+            (true, Dragged::Selection) => StatusKind::SelectionFavorited,
+            (false, Dragged::Selection) => StatusKind::SelectionUnfavorited,
+            (true, _) => StatusKind::FavoriteAdded,
+            (false, _) => StatusKind::FavoriteRemoved,
+        };
+        self.show_status(ui, Status { kind, track: self.label_of(item).into(), count, ..Default::default() });
     }
 
-    fn reset_plays(&mut self, ui: &AppWindow, track: usize) {
-        if let Err(error) = self.db.reset_play_counts(&[self.library.tracks[track].id]) {
+    fn reset_plays(&mut self, ui: &AppWindow, item: Dragged) {
+        let tracks = self.tracks_of(item);
+        let ids: Vec<i64> = tracks.iter().map(|&t| self.library.tracks[t].id).collect();
+        if let Err(error) = self.db.reset_play_counts(&ids) {
             return eprintln!("reset plays: {error}");
         }
-        self.library.tracks[track].play_count = 0;
+        for t in tracks {
+            self.library.tracks[t].play_count = 0;
+        }
         ui.set_most_played_count(self.library.tracks.iter().filter(|t| t.play_count > 0).count() as i32);
         if self.view == View::MostPlayed {
             self.update_scope();
@@ -1229,7 +1336,9 @@ impl App {
         now.index = Some(index);
         now.queue.extend(tracks);
         self.queue_next();
-        self.show_status(ui, Status { kind: StatusKind::Enqueued, track: self.label_of(item).into(), ..Default::default() });
+        let kind = if matches!(item, Dragged::Selection) { StatusKind::SelectionEnqueued } else { StatusKind::Enqueued };
+        let count = self.tracks_of(item).len() as i32;
+        self.show_status(ui, Status { kind, track: self.label_of(item).into(), count, ..Default::default() });
     }
 
     // Révèle le fichier (morceau) ou ouvre le dossier (album) dans le gestionnaire de fichiers.
@@ -1290,6 +1399,8 @@ impl App {
                 .filter(|&t| self.library.albums[tracks[t].album].artist == artist && self.in_scope(t))
                 .collect(),
             Dragged::Album(album) => (0..tracks.len()).filter(|&t| tracks[t].album == album && self.in_scope(t)).collect(),
+            // Dans l'ordre affiché, pas dans l'ordre des clics.
+            Dragged::Selection => return self.visible.iter().copied().filter(|t| self.selection.contains(t)).collect(),
         };
         ids.sort_by(|&a, &b| self.compare(a, b));
         ids
@@ -1300,6 +1411,8 @@ impl App {
             Dragged::Track(track) => self.library.tracks[track].title.clone(),
             Dragged::Artist(artist) => self.library.artists[artist].name.clone(),
             Dragged::Album(album) => self.library.albums[album].title.clone(),
+            // Les messages d'une sélection donnent un nombre, pas un nom.
+            Dragged::Selection => String::new(),
         }
     }
 
@@ -1315,8 +1428,10 @@ impl App {
             self.refresh_tracks(ui);
         }
         let kind = match (added, item) {
+            (0, Dragged::Selection) => StatusKind::SelectionAlreadyInPlaylist,
             (0, _) => StatusKind::AlreadyInPlaylist,
             (_, Dragged::Track(_)) => StatusKind::AddedToPlaylist,
+            (_, Dragged::Selection) => StatusKind::SelectionAdded,
             _ => StatusKind::TracksAdded,
         };
         let label = self.label_of(item).into();
@@ -1351,7 +1466,8 @@ impl App {
                 let tracks: Vec<i64> = self.tracks_of(item).into_iter().map(|t| self.library.tracks[t].id).collect();
                 ui.set_confirm_count(tracks.len() as i32);
                 let label = self.label_of(item);
-                self.ask_confirmation(ui, ConfirmKind::DeleteTracks, &label, ConfirmRequest::DeleteTracks { library, tracks });
+                let kind = if matches!(item, Dragged::Selection) { ConfirmKind::DeleteSelection } else { ConfirmKind::DeleteTracks };
+                self.ask_confirmation(ui, kind, &label, ConfirmRequest::DeleteTracks { library, tracks });
             }
             "add-to-new-playlist" => {
                 let tracks = self.tracks_of(item);
@@ -1366,9 +1482,10 @@ impl App {
         }
     }
 
-    fn remove_from_playlist(&mut self, ui: &AppWindow, track: usize) {
+    fn remove_from_playlist(&mut self, ui: &AppWindow, item: Dragged) {
         let Some(playlist) = self.selected_playlist.filter(|_| self.view == View::Playlist) else { return };
-        if let Err(error) = self.db.remove_from_playlist(playlist, &[self.library.tracks[track].id]) {
+        let ids: Vec<i64> = self.tracks_of(item).into_iter().map(|t| self.library.tracks[t].id).collect();
+        if let Err(error) = self.db.remove_from_playlist(playlist, &ids) {
             return eprintln!("playlist {playlist}: {error}");
         }
         self.refresh_playlists(ui);
@@ -1816,6 +1933,9 @@ fn payload(prefix: &str, id: i32) -> DataTransfer {
 fn dragged(data: &DataTransfer) -> Option<Dragged> {
     let text = data.plain_text().ok()?;
     let parse = |prefix: &str| text.strip_prefix(prefix).and_then(|id| id.parse().ok());
+    if text == SELECTION_PAYLOAD {
+        return Some(Dragged::Selection);
+    }
     parse(TRACK_PAYLOAD_PREFIX)
         .map(Dragged::Track)
         .or_else(|| parse(ARTIST_PAYLOAD_PREFIX).map(Dragged::Artist))
@@ -2061,7 +2181,15 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let c = ctx.clone();
     ui.on_seek_by(move |seconds| c.update(|app, ui| app.seek_by(ui, seconds)));
     let c = ctx.clone();
-    ui.on_move_selection(move |delta| c.update(|app, ui| app.move_selection(ui, delta as isize)));
+    ui.on_move_selection(move |delta, extend| c.update(|app, ui| app.move_selection(ui, delta as isize, extend)));
+    let c = ctx.clone();
+    ui.on_track_clicked(move |id, toggle, extend| {
+        c.update(|app, ui| {
+            if let Some(track) = from_ui_id(id).filter(|&t| t < app.library.tracks.len()) {
+                app.track_clicked(ui, track, toggle, extend);
+            }
+        })
+    });
     let c = ctx.clone();
     ui.on_cycle_panel(move |direction| c.update(|app, ui| app.cycle_panel(ui, direction)));
     let c = ctx.clone();
@@ -2082,7 +2210,12 @@ fn launch(path: &Path) -> Result<(), Problem> {
             select_language(&ui, &language);
         }
     });
-    ui.on_track_payload(|id| payload(TRACK_PAYLOAD_PREFIX, id));
+    let c = ctx.clone();
+    ui.on_track_payload(move |id| {
+        let app = c.app.borrow();
+        let in_selection = from_ui_id(id).is_some_and(|t| app.selection.len() > 1 && app.selection.contains(&t));
+        if in_selection { DataTransfer::from(SharedString::from(SELECTION_PAYLOAD)) } else { payload(TRACK_PAYLOAD_PREFIX, id) }
+    });
     ui.on_artist_payload(|id| payload(ARTIST_PAYLOAD_PREFIX, id));
     ui.on_album_payload(|id| payload(ALBUM_PAYLOAD_PREFIX, id));
     ui.on_is_track_payload(|data| dragged(&data).is_some());

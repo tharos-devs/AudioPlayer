@@ -11,7 +11,7 @@ import { SetupWindow, DatabaseProblem, DatabaseProblems } from "setup.slint";
 
 export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind }
 
-export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, tracks-added, scan-listing, scan-reading, scan-finished, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed }
+export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed }
 
 // Les messages d'état sont formatés ici (et non en Rust) pour passer par @tr.
 export struct Status {
@@ -110,6 +110,16 @@ export component AppWindow inherits Window {
         ? @tr("{0} overlaps the folder of the library “{1}”.", root.status.track, root.status.playlist)
         : root.status.kind == StatusKind.tracks-added
         ? @tr("{n} track of “{0}” added to “{1}”" | "{n} tracks of “{0}” added to “{1}”" % root.status.count, root.status.track, root.status.playlist)
+        : root.status.kind == StatusKind.selection-added
+        ? @tr("{n} track added to “{0}”" | "{n} tracks added to “{0}”" % root.status.count, root.status.playlist)
+        : root.status.kind == StatusKind.selection-already-in-playlist
+        ? @tr("These tracks are already in “{0}”", root.status.playlist)
+        : root.status.kind == StatusKind.selection-enqueued
+        ? @tr("{n} track added to the queue" | "{n} tracks added to the queue" % root.status.count)
+        : root.status.kind == StatusKind.selection-favorited
+        ? @tr("{n} track added to favorites" | "{n} tracks added to favorites" % root.status.count)
+        : root.status.kind == StatusKind.selection-unfavorited
+        ? @tr("{n} track removed from favorites" | "{n} tracks removed from favorites" % root.status.count)
         : root.status.kind == StatusKind.favorite-added
         ? @tr("“{0}” added to favorites", root.status.track)
         : root.status.kind == StatusKind.favorite-removed
@@ -142,7 +152,9 @@ export component AppWindow inherits Window {
     callback next();
     callback seek(float);
     callback seek-by(int);
-    callback move-selection(int);
+    // Maj+↑/↓ étend la sélection.
+    callback move-selection(int, bool);
+    callback track-clicked(int, bool, bool);
     in property <int> reveal-row;
     in property <int> reveal-serial;
     // Navigation clavier : 0 = artistes, 1 = albums, 2 = morceaux.
@@ -322,7 +334,7 @@ export component AppWindow inherits Window {
                 }
                 // ↑/↓ déplacent la sélection dans la liste des morceaux, Entrée la lance.
                 if event.text == Key.UpArrow || event.text == Key.DownArrow {
-                    root.move-selection(event.text == Key.UpArrow ? -1 : 1);
+                    root.move-selection(event.text == Key.UpArrow ? -1 : 1, event.modifiers.shift);
                     return accept;
                 }
                 if event.text == Key.Return {
@@ -535,6 +547,9 @@ export component AppWindow inherits Window {
                                 playing-track: root.playing-track;
                                 running: root.playing;
                                 selected-track <=> root.selected-track;
+                                select-track(id, toggle, extend) => {
+                                    root.track-clicked(id, toggle, extend);
+                                }
                                 play-track(id) => {
                                     root.play-track(id);
                                 }
@@ -560,6 +575,9 @@ export component AppWindow inherits Window {
                                 playing-track: root.playing-track;
                                 running: root.playing;
                                 selected-track <=> root.selected-track;
+                                select-track(id, toggle, extend) => {
+                                    root.track-clicked(id, toggle, extend);
+                                }
                                 play-track(id) => {
                                     root.play-track(id);
                                 }
