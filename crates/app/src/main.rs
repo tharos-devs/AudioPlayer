@@ -1970,7 +1970,6 @@ impl App {
             put(field.key(), details.iter().map(|d| field_value(d, field)).collect());
         }
         let number = |value: Option<u32>| value.map_or(String::new(), |n| n.to_string());
-        put("compilation", details.iter().map(|d| u8::from(d.compilation).to_string()).collect());
         put("codec", details.iter().map(|d| d.codec.clone().unwrap_or_default()).collect());
         put("bitrate", details.iter().map(|d| number(d.bitrate)).collect());
         put("sample-rate", details.iter().map(|d| number(d.sample_rate)).collect());
@@ -2041,7 +2040,33 @@ impl App {
         if self.scan.is_none() && !self.tag_tracks.is_empty() {
             self.tag_edits.clear();
             ui.set_tags_editing(true);
+            let genre = self.tag_values.get("genre").filter(|(_, multiple)| !multiple).map(|(v, _)| v.clone()).unwrap_or_default();
+            self.suggest_genres(ui, &genre);
         }
+    }
+
+    fn tag_edited(&mut self, ui: &AppWindow, key: &str, value: &str) {
+        self.tag_edits.insert(key.to_owned(), value.to_owned());
+        if key == "genre" {
+            self.suggest_genres(ui, value);
+        }
+    }
+
+    // Genres de la v0.1 et ceux de la bibliothèque contenant le texte saisi (hors lui-même).
+    fn suggest_genres(&self, ui: &AppWindow, typed: &str) {
+        let library = self.selected_library.map(|i| self.libraries[i].id);
+        let mut genres: Vec<String> = library.and_then(|id| self.db.genres(id).ok()).unwrap_or_default();
+        genres.extend(GENRES.iter().map(|g| g.to_string()));
+        genres.sort_by_key(|g| g.to_lowercase());
+        genres.dedup_by_key(|g| g.to_lowercase());
+        let typed = typed.trim().to_lowercase();
+        let shown: Vec<SharedString> = genres
+            .into_iter()
+            .filter(|g| g.to_lowercase() != typed && g.to_lowercase().contains(&typed))
+            .take(8)
+            .map(SharedString::from)
+            .collect();
+        ui.set_genre_suggestions(model(shown));
     }
 
     fn cancel_tags(&mut self, ui: &AppWindow) {
@@ -2255,6 +2280,13 @@ const TAG_FIELDS: &[&str] = &[
     "title", "artist", "album-artist", "album", "track-number", "disc-number", "year", "genre", "grouping", "composer",
     "conductor", "lyricist", "comment", "publisher", "catalog-number", "disc-subtitle", "barcode", "work", "compilation",
 ];
+// Genres proposés par la v0.1, en plus de ceux déjà présents dans la bibliothèque.
+const GENRES: &[&str] = &[
+    "Alternative", "Ambient", "Blues", "Classical", "Country", "Dance", "Drum & Bass", "Electronic", "Folk", "Funk",
+    "Gospel", "Hip-Hop", "House", "Indie", "Jazz", "Latin", "Metal", "New Age", "Opera", "Orchestral", "Pop",
+    "Progressive Rock", "Punk", "R&B", "Reggae", "Rock", "Soul", "Soundtrack", "Swing", "Techno", "Trance", "Trip-Hop",
+    "World",
+];
 const TECHNICAL_FIELDS: &[&str] = &["codec", "bitrate", "sample-rate", "bit-depth", "channels", "duration", "file-size", "path"];
 
 // Valeur d'un champ modifiable, telle que la base la connaît.
@@ -2282,6 +2314,7 @@ fn field_value(d: &TrackDetails, field: Field) -> String {
         Field::CatalogNumber => text(&d.catalog_number),
         Field::Barcode => text(&d.barcode),
         Field::DiscSubtitle => text(&d.disc_subtitle),
+        Field::Compilation => u8::from(d.compilation).to_string(),
     }
 }
 
@@ -2631,11 +2664,7 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let c = ctx.clone();
     ui.on_tags_cancel(move || c.update(|app, ui| app.cancel_tags(ui)));
     let c = ctx.clone();
-    ui.on_tag_edited(move |key, value| {
-        c.update(|app, _| {
-            app.tag_edits.insert(key.into(), value.into());
-        })
-    });
+    ui.on_tag_edited(move |key, value| c.update(|app, ui| app.tag_edited(ui, &key, &value)));
     let c = ctx.clone();
     ui.on_tag_field_toggled(move |key| c.update(|app, ui| app.toggle_tag_field(ui, &key)));
     let c = ctx.clone();

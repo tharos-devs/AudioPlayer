@@ -181,6 +181,7 @@ fn writes_only_the_edited_tags_and_the_cover() {
             (Field::AlbumArtist, None),
             (Field::TrackNumber, Some("7".into())),
             (Field::TrackTotal, Some("12".into())),
+            (Field::Compilation, Some("1".into())),
         ],
         Some(("image/jpeg", &cover)),
     )
@@ -192,7 +193,9 @@ fn writes_only_the_edited_tags_and_the_cover() {
     assert_eq!((r.composer.as_deref(), r.album_artist.as_deref()), (Some("John Williams"), None));
     // Champs non modifiés : intacts (album, artiste, disque 1/2 avec son total).
     assert_eq!((r.album.as_str(), r.artist.as_str(), r.disc_number), ("Album", "Someone", Some(1)));
-    assert_eq!((r.track_total, r.disc_total), (Some(12), Some(2)));
+    assert_eq!((r.track_total, r.disc_total, r.compilation), (Some(12), Some(2), true));
+    write_tags(&path, &[(Field::Compilation, Some("0".into()))], None).unwrap();
+    assert!(!tags::read(&file(&path)).unwrap().record.compilation);
     let tagged = lofty::read_from_path(&path).unwrap();
     let tag = tagged.primary_tag().unwrap();
     assert_eq!((tag.disk(), tag.disk_total()), (Some(1), Some(2)), "disc total kept");

@@ -214,6 +214,16 @@ pub struct TrackDetails {
 }
 
 impl Database {
+    /// Genres déjà présents dans la bibliothèque, pour les suggestions de saisie.
+    pub fn genres(&self, library_id: i64) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT t.genre FROM tracks t JOIN albums al ON al.id = t.album_id
+             WHERE al.library_id = ?1 AND t.genre IS NOT NULL AND t.genre <> '' ORDER BY t.genre",
+        )?;
+        let rows = stmt.query_map([library_id], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Détails de morceaux, dans l'ordre des ids demandés (ids inconnus ignorés).
     pub fn track_details(&self, ids: &[i64]) -> Result<Vec<TrackDetails>> {
         let mut stmt = self.conn.prepare_cached(

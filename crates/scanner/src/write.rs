@@ -34,10 +34,11 @@ pub enum Field {
     CatalogNumber,
     Barcode,
     DiscSubtitle,
+    Compilation,
 }
 
 impl Field {
-    pub const ALL: [Field; 20] = [
+    pub const ALL: [Field; 21] = [
         Field::Title,
         Field::Artist,
         Field::AlbumArtist,
@@ -58,6 +59,7 @@ impl Field {
         Field::CatalogNumber,
         Field::Barcode,
         Field::DiscSubtitle,
+        Field::Compilation,
     ];
 
     /// Nom stable, partagé avec l'interface.
@@ -83,6 +85,7 @@ impl Field {
             Field::CatalogNumber => "catalog-number",
             Field::Barcode => "barcode",
             Field::DiscSubtitle => "disc-subtitle",
+            Field::Compilation => "compilation",
         }
     }
 
@@ -144,6 +147,11 @@ fn apply(tag: &mut Tag, field: Field, value: Option<&str>) -> Result<(), String>
             tag.remove_key(ItemKey::Year);
             tag.set_date(Timestamp { year, ..Timestamp::default() });
         }
+        // « 1 » coche, toute autre valeur retire le drapeau.
+        (Field::Compilation, Some("1")) => {
+            tag.insert_text(ItemKey::FlagCompilation, "1".into());
+        }
+        (Field::Compilation, _) => tag.remove_key(ItemKey::FlagCompilation),
         (Field::Year, None) => {
             tag.remove_date();
             tag.remove_key(ItemKey::Year);

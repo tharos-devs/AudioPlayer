@@ -145,12 +145,15 @@ impl Database {
         Ok(())
     }
 
-    /// Avant une relecture ciblée : l'année des albums de ces morceaux sera reprise des
-    /// fichiers relus, au lieu de garder la première connue (année modifiée à la main).
-    pub fn reset_album_years(&mut self, track_ids: &[i64]) -> Result<()> {
+    /// Avant une relecture ciblée : l'année et le drapeau compilation des albums de ces
+    /// morceaux seront repris des fichiers relus, au lieu de garder ce qui était connu
+    /// (valeurs modifiées à la main).
+    pub fn reset_album_fields(&mut self, track_ids: &[i64]) -> Result<()> {
         let tx = self.conn.transaction()?;
         {
-            let mut reset = tx.prepare("UPDATE albums SET year = NULL WHERE id = (SELECT album_id FROM tracks WHERE id = ?1)")?;
+            let mut reset = tx.prepare(
+                "UPDATE albums SET year = NULL, is_compilation = 0 WHERE id = (SELECT album_id FROM tracks WHERE id = ?1)",
+            )?;
             for id in track_ids {
                 reset.execute([id])?;
             }

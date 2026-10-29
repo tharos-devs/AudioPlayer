@@ -153,6 +153,7 @@ export component AppWindow inherits Window {
     in-out property <length> tags-width: 320px;
     in property <[TagRow]> tag-rows;
     in property <[TagChoice]> tag-choices;
+    in property <[string]> genre-suggestions;
     in property <int> tag-count;
     in property <bool> tags-editing;
     in property <bool> tags-saving;
@@ -637,6 +638,7 @@ export component AppWindow inherits Window {
                         width: root.tags-width;
                         rows: root.tag-rows;
                         choices: root.tag-choices;
+                        genre-suggestions: root.genre-suggestions;
                         count: root.tag-count;
                         editing: root.tags-editing;
                         saving: root.tags-saving;

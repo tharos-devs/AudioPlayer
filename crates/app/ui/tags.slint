@@ -60,6 +60,7 @@ global TagLabels {
 component TagField inherits Rectangle {
     in-out property <string> text;
     in property <string> placeholder;
+    out property <bool> focused: input.has-focus;
     callback edited(string);
     callback accepted();
     callback cancelled();
@@ -101,6 +102,85 @@ component TagField inherits Rectangle {
                         return accept;
                     }
                     return reject;
+                }
+            }
+        }
+    }
+}
+
+// Oui / Non (« Part of a Compilation ») ; aucun des deux pour des valeurs multiples.
+component Choice inherits HorizontalLayout {
+    in property <string> value;
+    property <string> chosen: root.value;
+    callback edited(string);
+    spacing: 6px;
+    alignment: start;
+    for option in [{ value: "1", label: @tr("Yes") }, { value: "0", label: @tr("No") }]: Rectangle {
+        width: 56px;
+        height: 24px;
+        border-radius: 3px;
+        border-width: Theme.hairline;
+        border-color: root.chosen == option.value || touch.has-hover ? Theme.accent : Theme.border-base;
+        background: root.chosen == option.value ? Theme.tint-strong : touch.has-hover ? Theme.hover-tint : Theme.bg-primary;
+        Text {
+            text: option.label;
+            font-size: 12px;
+            color: root.chosen == option.value ? Theme.accent : Theme.text-primary;
+        }
+        touch := TouchArea {
+            clicked => {
+                root.chosen = option.value;
+                root.edited(option.value);
+            }
+        }
+    }
+}
+
+// Genre : saisie libre, avec les genres connus qui correspondent à ce qui est tapé.
+component GenreField inherits VerticalLayout {
+    in property <string> value;
+    in property <string> placeholder;
+    in property <[string]> suggestions;
+    callback edited(string);
+    callback accepted();
+    callback cancelled();
+    spacing: 2px;
+    field := TagField {
+        text: root.value;
+        placeholder: root.placeholder;
+        edited(text) => {
+            root.edited(text);
+        }
+        accepted => {
+            root.accepted();
+        }
+        cancelled => {
+            root.cancelled();
+        }
+    }
+    if field.focused && root.suggestions.length > 0: Rectangle {
+        border-radius: 3px;
+        border-width: Theme.hairline;
+        border-color: Theme.border-base;
+        background: Theme.footer-bg;
+        VerticalLayout {
+            padding-top: 3px;
+            padding-bottom: 3px;
+            for genre in root.suggestions: Rectangle {
+                height: 22px;
+                background: item.has-hover ? Theme.hover-tint : transparent;
+                Text {
+                    x: 8px;
+                    text: genre;
+                    font-size: 12px;
+                    color: item.has-hover ? Theme.accent : Theme.text-primary;
+                    vertical-alignment: center;
+                }
+                item := TouchArea {
+                    clicked => {
+                        field.text = genre;
+                        root.edited(genre);
+                    }
                 }
             }
         }
@@ -150,6 +230,7 @@ component TagValue inherits Text {
 export component TagsDrawer inherits Rectangle {
     in property <[TagRow]> rows;
     in property <[TagChoice]> choices;
+    in property <[string]> genre-suggestions;
     // Nombre de morceaux affichés.
     in property <int> count;
     in property <bool> editing;
@@ -266,7 +347,27 @@ export component TagsDrawer inherits Rectangle {
                     if !(root.editing && row.editable): TagValue {
                         tag: row;
                     }
-                    if root.editing && row.editable && row.pair-key == "": TagField {
+                    if root.editing && row.editable && row.key == "compilation": Choice {
+                        value: row.multiple ? "" : row.value;
+                        edited(value) => {
+                            root.value-edited(row.key, value);
+                        }
+                    }
+                    if root.editing && row.editable && row.key == "genre": GenreField {
+                        value: row.value;
+                        placeholder: row.multiple ? @tr("Multiple values") : "";
+                        suggestions: root.genre-suggestions;
+                        edited(value) => {
+                            root.value-edited(row.key, value);
+                        }
+                        accepted => {
+                            root.save();
+                        }
+                        cancelled => {
+                            root.cancel();
+                        }
+                    }
+                    if root.editing && row.editable && row.pair-key == "" && row.key != "compilation" && row.key != "genre": TagField {
                         text: row.value;
                         placeholder: row.multiple ? @tr("Multiple values") : "";
                         edited(value) => {
