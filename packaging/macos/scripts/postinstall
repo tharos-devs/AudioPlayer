@@ -1,0 +1,33 @@
+#!/bin/bash
+# Après installation du .pkg (premier installation ou mise à jour depuis l'app), comme la
+# v0.1 : l'app ne garde aucune marque de quarantaine et a une signature valide sur ce Mac.
+# Journal : log show --predicate 'eventMessage CONTAINS "AudioPlayer postinstall"' --last 1h
+#
+# $2 : dossier d'installation choisi par l'installeur (/Applications).
+APP="${2:-/Applications}/AudioPlayer.app"
+APP="${APP//\/\//\/}"
+
+log() { logger "AudioPlayer postinstall: $*"; }
+
+if [ ! -d "$APP" ]; then
+    log "application not found at $APP"
+    exit 0
+fi
+
+# Seule la marque « téléchargé d'Internet » est retirée, pas les autres attributs.
+if xattr -lr "$APP" 2>/dev/null | grep -q com.apple.quarantine; then
+    xattr -dr com.apple.quarantine "$APP" 2>/dev/null && log "quarantine attribute removed"
+fi
+
+# Re-signée (ad hoc) seulement si la signature n'est pas valide ici : une vraie signature
+# Developer ID, si l'app en a une un jour, ne doit pas être écrasée.
+if /usr/bin/codesign --verify --deep --strict "$APP" 2>/dev/null; then
+    log "signature valid"
+elif /usr/bin/codesign --force --deep --sign - "$APP" 2>/dev/null; then
+    log "signed ad hoc"
+else
+    log "could not sign $APP"
+fi
+
+# Une installation ne doit jamais échouer pour ces retouches.
+exit 0

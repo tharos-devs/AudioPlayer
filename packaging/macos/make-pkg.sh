@@ -43,7 +43,9 @@ cp -R target/release/bundle/AudioPlayer.app "$root/"
 # le disque (target/…) au lieu de l'installer dans /Applications.
 pkgbuild --analyze --root "$root" "$root.plist" >/dev/null
 plutil -replace 0.BundleIsRelocatable -bool NO "$root.plist"
+# postinstall : retire la quarantaine et vérifie la signature de l'app installée (comme la v0.1).
 pkgbuild --root "$root" --component-plist "$root.plist" --install-location /Applications \
+    --scripts packaging/macos/scripts \
     --identifier com.audioplayer.player --version "$version" "$pkg"
 rm -f "$root.plist"
 

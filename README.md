@@ -1,11 +1,6 @@
 # AudioPlayer
 
 Lecteur audio de bureau (macOS, Windows, Linux) écrit entièrement en Rust, interface en [Slint](https://slint.dev).
-Refonte complète de la v0.1 (Tauri + Vue), conservée dans `../AudioPlayerOld` comme référence.
-
-> État actuel : bibliothèques scannées depuis leurs dossiers (ou importées de la v0.1),
-> lecture audio (FLAC, MP3, AAC/ALAC, WAV, Ogg, AIFF via symphonia), enchaînement sans blanc,
-> égaliseur 7 bandes, playlists par bibliothèque, favoris.
 
 ## Lancer
 
@@ -14,8 +9,7 @@ cargo run --release
 ```
 
 Au premier lancement, AudioPlayer demande où créer la base (n'importe quel dossier, un disque
-externe par exemple), ou en ouvre une existante, ou en crée une à partir de la base de la v0.1
-(lue en lecture seule, jamais modifiée). Les réglages de l'interface sont enregistrés dans la base,
+externe par exemple), ou en ouvre une existante. Les réglages de l'interface sont enregistrés dans la base,
 table `preferences`. Seul le chemin de la base est noté hors d'elle, dans
 `~/Library/Application Support/AudioPlayer/audioplayer.cfg` (macOS) ; si la base est introuvable
 (disque débranché), l'écran de démarrage propose de réessayer. *Fichier → Nouvelle base / Ouvrir
@@ -33,7 +27,7 @@ cp -R target/release/bundle/AudioPlayer.app /Applications/
 L'app est signée localement (ad hoc) : suffisant sur ce Mac ; une distribution à d'autres
 demandera un certificat de développeur Apple et la notarisation.
 
-En ligne de commande, l'import de la v0.1 existe aussi :
+En ligne de commande, l'import de l'ancienne version de AudioPlayer (rust + Tauri + vuejs) existe aussi :
 
 ```bash
 cargo run --release -p audioplayer-db --bin import-v01 -- ancienne.db nouvelle.db
