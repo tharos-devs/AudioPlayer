@@ -9,6 +9,37 @@ export struct ListItem {
     has-artwork: bool,
 }
 
+// Données partagées par les menus contextuels (morceaux, artistes, albums).
+export global TrackMenu {
+    // Playlists de la bibliothèque, pour « Ajouter à la playlist ».
+    in property <[ListItem]> playlists;
+    // Vue d'une playlist : « Retirer de la playlist » est proposé.
+    in property <bool> in-playlist;
+}
+
+// « Ajouter à la playlist » pour un artiste ou un album : tous ses morceaux.
+component AddToPlaylistArea inherits ContextMenuArea {
+    callback action(string);
+    Menu {
+        Menu {
+            title: @tr("Add to Playlist");
+            MenuItem {
+                title: @tr("New Playlist…");
+                activated => {
+                    root.action("add-to-new-playlist");
+                }
+            }
+            if TrackMenu.playlists.length > 0: MenuSeparator { }
+            for playlist in TrackMenu.playlists: MenuItem {
+                title: playlist.label;
+                activated => {
+                    root.action("add-to-playlist:" + playlist.id);
+                }
+            }
+        }
+    }
+}
+
 // En-tête de panneau : titre en capitales + pastille de comptage, comme la v0.1.
 export component PanelHeader inherits Rectangle {
     in property <string> title;
@@ -85,6 +116,9 @@ export component ArtistRow inherits Rectangle {
     // Position du curseur clavier (Entrée la sélectionne) : barre gauche en demi-teinte.
     in property <bool> cursor;
     callback clicked();
+    callback action(string);
+    // Glissé sur une playlist : tous ses morceaux y sont ajoutés.
+    pure callback payload() -> data-transfer;
     height: 48px;
 
     // Angles droits et barre d'accent à gauche, comme les albums et les morceaux.
@@ -118,9 +152,18 @@ export component ArtistRow inherits Rectangle {
         }
     }
 
-    touch := TouchArea {
-        clicked => {
-            root.clicked();
+    DragArea {
+        allow-copy: true;
+        data: root.payload();
+        AddToPlaylistArea {
+            action(name) => {
+                root.action(name);
+            }
+            touch := TouchArea {
+                clicked => {
+                    root.clicked();
+                }
+            }
         }
     }
 }
@@ -130,6 +173,9 @@ export component AlbumRow inherits Rectangle {
     in property <bool> selected;
     in property <bool> cursor;
     callback clicked();
+    callback action(string);
+    // Glissé sur une playlist : tous ses morceaux y sont ajoutés.
+    pure callback payload() -> data-transfer;
     height: 61px;
     background: root.selected ? Theme.selected-bg : (root.cursor || touch.has-hover ? Theme.item-hover : transparent);
 
@@ -176,9 +222,18 @@ export component AlbumRow inherits Rectangle {
         }
     }
 
-    touch := TouchArea {
-        clicked => {
-            root.clicked();
+    DragArea {
+        allow-copy: true;
+        data: root.payload();
+        AddToPlaylistArea {
+            action(name) => {
+                root.action(name);
+            }
+            touch := TouchArea {
+                clicked => {
+                    root.clicked();
+                }
+            }
         }
     }
 }
@@ -228,6 +283,8 @@ export component ArtistList inherits ListView {
     in property <int> reveal-row;
     in property <int> reveal-serial;
     callback clicked(int);
+    callback action(int, string);
+    pure callback payload(int) -> data-transfer;
     changed reveal-serial => {
         let top = root.reveal-row * 48px;
         if top < -root.content-y {
@@ -244,6 +301,12 @@ export component ArtistList inherits ListView {
         clicked => {
             root.clicked(artist.id);
         }
+        action(name) => {
+            root.action(artist.id, name);
+        }
+        payload => {
+            return root.payload(artist.id);
+        }
     }
 }
 
@@ -254,6 +317,8 @@ export component AlbumList inherits ListView {
     in property <int> reveal-row;
     in property <int> reveal-serial;
     callback clicked(int);
+    callback action(int, string);
+    pure callback payload(int) -> data-transfer;
     changed reveal-serial => {
         let top = root.reveal-row * 61px;
         if top < -root.content-y {
@@ -269,6 +334,12 @@ export component AlbumList inherits ListView {
         cursor: album.id == root.cursor;
         clicked => {
             root.clicked(album.id);
+        }
+        action(name) => {
+            root.action(album.id, name);
+        }
+        payload => {
+            return root.payload(album.id);
         }
     }
 }

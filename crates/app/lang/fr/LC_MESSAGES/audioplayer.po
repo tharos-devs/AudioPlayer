@@ -332,3 +332,8 @@ msgstr "« {0} » ajouté aux favoris"
 
 msgid "“{0}” removed from favorites"
 msgstr "« {0} » retiré des favoris"
+
+msgid "{n} track of “{0}” added to “{1}”"
+msgid_plural "{n} tracks of “{0}” added to “{1}”"
+msgstr[0] "{n} morceau de « {0} » ajouté à « {1} »"
+msgstr[1] "{n} morceaux de « {0} » ajoutés à « {1} »"

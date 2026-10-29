@@ -1,6 +1,8 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Artwork, PlayingIndicator, ListItem } from "widgets.slint";
+import { Artwork, PlayingIndicator, ListItem, TrackMenu } from "widgets.slint";
+
+export { TrackMenu }
 
 export enum TrackItemKind { album-header, track }
 
@@ -22,13 +24,6 @@ export struct TrackItem {
     favorite: bool,
 }
 
-// Données partagées par tous les menus contextuels de morceaux.
-export global TrackMenu {
-    // Playlists de la bibliothèque, pour « Ajouter à la playlist ».
-    in property <[ListItem]> playlists;
-    // Vue d'une playlist : « Retirer de la playlist » est proposé.
-    in property <bool> in-playlist;
-}
 
 // Mesures de la v0.1 : lignes de 43px, colonne de jaquette de 92px (80px + marge).
 global Metrics {

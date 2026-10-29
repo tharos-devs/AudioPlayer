@@ -22,7 +22,18 @@ use slint::{DataTransfer, Image, Model, ModelRc, SharedString, Timer, TimerMode,
 
 slint::include_modules!();
 
+// Glisser-déposer interne : « audioplayer/<sorte>:<index> ».
 const TRACK_PAYLOAD_PREFIX: &str = "audioplayer/track:";
+const ARTIST_PAYLOAD_PREFIX: &str = "audioplayer/artist:";
+const ALBUM_PAYLOAD_PREFIX: &str = "audioplayer/album:";
+
+/// Ce qui peut être glissé sur une playlist.
+#[derive(Clone, Copy)]
+enum Dragged {
+    Track(usize),
+    Artist(usize),
+    Album(usize),
+}
 // Vignettes de 80px affichées jusqu'à 80px : 160px suffisent en Retina.
 const COVER_SIZE: u32 = 160;
 // « Added last 2 weeks », la valeur par défaut de la v0.1.
@@ -48,7 +59,7 @@ struct NowPlaying {
 /// Action en attente de la saisie d'un nom.
 enum NameRequest {
     // Avec un morceau à y ajouter aussitôt (menu « Ajouter à la playlist → Nouvelle playlist… »).
-    NewPlaylist { track: Option<usize> },
+    NewPlaylist { tracks: Vec<usize> },
     RenamePlaylist(i64),
     RenameLibrary(usize),
 }
@@ -1090,6 +1101,7 @@ impl App {
                 track: problem.path.display().to_string().into(),
                 playlist: problem.detail.as_str().into(),
                 problem: problem.kind,
+                ..Default::default()
             },
         );
     }
@@ -1106,7 +1118,7 @@ impl App {
             "favorite" => self.toggle_favorite(ui, track),
             "play-next" => self.show_status(ui, status(StatusKind::PlayNext)),
             "enqueue" => self.show_status(ui, status(StatusKind::Enqueued)),
-            "add-to-new-playlist" => self.ask_name(ui, NameDialogKind::NewPlaylist, "", NameRequest::NewPlaylist { track: Some(track) }),
+            "add-to-new-playlist" => self.ask_name(ui, NameDialogKind::NewPlaylist, "", NameRequest::NewPlaylist { tracks: vec![track] }),
             "remove-from-playlist" => self.remove_from_playlist(ui, track),
             _ => {
                 if let Some(playlist) = action.strip_prefix("add-to-playlist:").and_then(|id| id.parse().ok()) {
@@ -1135,19 +1147,60 @@ impl App {
     }
 
     fn add_to_playlist(&mut self, ui: &AppWindow, playlist: i64, track: usize) {
+        self.add_dragged(ui, playlist, Dragged::Track(track));
+    }
+
+    // Morceaux d'un élément glissé, dans l'ordre de la bibliothèque et limités à la vue
+    // en cours (en « Added last… », un artiste n'apporte que ses morceaux récents).
+    fn tracks_of(&self, item: Dragged) -> Vec<usize> {
+        let tracks = &self.library.tracks;
+        let mut ids: Vec<usize> = match item {
+            Dragged::Track(track) => return vec![track],
+            Dragged::Artist(artist) => (0..tracks.len())
+                .filter(|&t| self.library.albums[tracks[t].album].artist == artist && self.in_scope(t))
+                .collect(),
+            Dragged::Album(album) => (0..tracks.len()).filter(|&t| tracks[t].album == album && self.in_scope(t)).collect(),
+        };
+        ids.sort_by(|&a, &b| self.compare(a, b));
+        ids
+    }
+
+    fn label_of(&self, item: Dragged) -> String {
+        match item {
+            Dragged::Track(track) => self.library.tracks[track].title.clone(),
+            Dragged::Artist(artist) => self.library.artists[artist].name.clone(),
+            Dragged::Album(album) => self.library.albums[album].title.clone(),
+        }
+    }
+
+    fn add_dragged(&mut self, ui: &AppWindow, playlist: i64, item: Dragged) {
         let Some(name) = self.playlists.iter().find(|p| p.id == playlist).map(|p| p.name.clone()) else { return };
-        let id = self.library.tracks[track].id;
-        let kind = match self.db.add_to_playlist(playlist, &[id]) {
-            Ok(0) => StatusKind::AlreadyInPlaylist,
-            Ok(_) => StatusKind::AddedToPlaylist,
+        let ids: Vec<i64> = self.tracks_of(item).into_iter().map(|t| self.library.tracks[t].id).collect();
+        let added = match self.db.add_to_playlist(playlist, &ids) {
+            Ok(added) => added,
             Err(error) => return eprintln!("playlist {playlist}: {error}"),
         };
         self.refresh_playlists(ui);
         if self.view == View::Playlist && self.selected_playlist == Some(playlist) {
             self.refresh_tracks(ui);
         }
-        let track = self.library.tracks[track].title.as_str().into();
-        self.show_status(ui, Status { kind, track, playlist: name.into(), ..Default::default() });
+        let kind = match (added, item) {
+            (0, _) => StatusKind::AlreadyInPlaylist,
+            (_, Dragged::Track(_)) => StatusKind::AddedToPlaylist,
+            _ => StatusKind::TracksAdded,
+        };
+        let label = self.label_of(item).into();
+        self.show_status(ui, Status { kind, track: label, playlist: name.into(), count: added as i32, ..Default::default() });
+    }
+
+    // Menu contextuel d'un artiste ou d'un album : « Ajouter à la playlist ».
+    fn item_action(&mut self, ui: &AppWindow, item: Dragged, action: &str) {
+        if action == "add-to-new-playlist" {
+            let tracks = self.tracks_of(item);
+            self.ask_name(ui, NameDialogKind::NewPlaylist, &self.label_of(item), NameRequest::NewPlaylist { tracks });
+        } else if let Some(playlist) = action.strip_prefix("add-to-playlist:").and_then(|id| id.parse().ok()) {
+            self.add_dragged(ui, playlist, item);
+        }
     }
 
     fn remove_from_playlist(&mut self, ui: &AppWindow, track: usize) {
@@ -1174,14 +1227,13 @@ impl App {
             return;
         }
         let result = match *request {
-            NameRequest::NewPlaylist { track } => {
+            NameRequest::NewPlaylist { ref tracks } => {
                 let Some(library) = self.selected_library.map(|i| self.libraries[i].id) else { return };
+                let ids: Vec<i64> = tracks.iter().map(|&t| self.library.tracks[t].id).collect();
                 match self.db.create_playlist(library, name) {
                     Ok(Some(playlist)) => {
-                        if let Some(track) = track {
-                            if let Err(error) = self.db.add_to_playlist(playlist, &[self.library.tracks[track].id]) {
-                                eprintln!("playlist {playlist}: {error}");
-                            }
+                        if let Err(error) = self.db.add_to_playlist(playlist, &ids) {
+                            eprintln!("playlist {playlist}: {error}");
                         }
                         Ok(true)
                     }
@@ -1275,7 +1327,7 @@ impl App {
     fn playlist_menu(&mut self, ui: &AppWindow, action: &str) {
         let current = self.selected_playlist.and_then(|id| self.playlists.iter().find(|p| p.id == id)).cloned();
         match (action, current) {
-            ("new-playlist", _) => self.ask_name(ui, NameDialogKind::NewPlaylist, "", NameRequest::NewPlaylist { track: None }),
+            ("new-playlist", _) => self.ask_name(ui, NameDialogKind::NewPlaylist, "", NameRequest::NewPlaylist { tracks: Vec::new() }),
             ("rename-playlist", Some(playlist)) => {
                 self.ask_name(ui, NameDialogKind::RenamePlaylist, &playlist.name, NameRequest::RenamePlaylist(playlist.id))
             }
@@ -1332,13 +1384,17 @@ impl Context {
     }
 }
 
-fn track_payload(id: i32) -> DataTransfer {
-    DataTransfer::from(SharedString::from(format!("{TRACK_PAYLOAD_PREFIX}{id}")))
+fn payload(prefix: &str, id: i32) -> DataTransfer {
+    DataTransfer::from(SharedString::from(format!("{prefix}{id}")))
 }
 
-fn payload_track(data: &DataTransfer) -> Option<usize> {
+fn dragged(data: &DataTransfer) -> Option<Dragged> {
     let text = data.plain_text().ok()?;
-    text.strip_prefix(TRACK_PAYLOAD_PREFIX)?.parse().ok()
+    let parse = |prefix: &str| text.strip_prefix(prefix).and_then(|id| id.parse().ok());
+    parse(TRACK_PAYLOAD_PREFIX)
+        .map(Dragged::Track)
+        .or_else(|| parse(ARTIST_PAYLOAD_PREFIX).map(Dragged::Artist))
+        .or_else(|| parse(ALBUM_PAYLOAD_PREFIX).map(Dragged::Album))
 }
 
 fn model<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
@@ -1590,8 +1646,8 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let c = ctx.clone();
     ui.on_drop_on_playlist(move |playlist, data| {
         c.update(|app, ui| {
-            if let Some(track) = payload_track(&data).filter(|_| playlist >= 0) {
-                app.add_to_playlist(ui, playlist as i64, track);
+            if let Some(item) = dragged(&data).filter(|_| playlist >= 0) {
+                app.add_dragged(ui, playlist as i64, item);
             }
         })
     });
@@ -1601,8 +1657,26 @@ fn launch(path: &Path) -> Result<(), Problem> {
             select_language(&ui, &language);
         }
     });
-    ui.on_track_payload(track_payload);
-    ui.on_is_track_payload(|data| payload_track(&data).is_some());
+    ui.on_track_payload(|id| payload(TRACK_PAYLOAD_PREFIX, id));
+    ui.on_artist_payload(|id| payload(ARTIST_PAYLOAD_PREFIX, id));
+    ui.on_album_payload(|id| payload(ALBUM_PAYLOAD_PREFIX, id));
+    ui.on_is_track_payload(|data| dragged(&data).is_some());
+    let c = ctx.clone();
+    ui.on_artist_action(move |id, action| {
+        c.update(|app, ui| {
+            if let Some(artist) = from_ui_id(id).filter(|&a| a < app.library.artists.len()) {
+                app.item_action(ui, Dragged::Artist(artist), &action);
+            }
+        })
+    });
+    let c = ctx.clone();
+    ui.on_album_action(move |id, action| {
+        c.update(|app, ui| {
+            if let Some(album) = from_ui_id(id).filter(|&a| a < app.library.albums.len()) {
+                app.item_action(ui, Dragged::Album(album), &action);
+            }
+        })
+    });
 
     ui.set_database_path(path.display().to_string().into());
     let c = ctx.clone();
