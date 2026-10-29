@@ -177,3 +177,92 @@ impl Database {
         Ok(artwork)
     }
 }
+
+/// Tous les champs d'un morceau, pour le tiroir d'informations.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TrackDetails {
+    pub id: i64,
+    pub path: String,
+    pub title: String,
+    pub artist: String,
+    pub album_artist: String,
+    pub album: String,
+    pub year: Option<i32>,
+    pub track_number: Option<u32>,
+    pub disc_number: Option<u32>,
+    pub disc_subtitle: Option<String>,
+    pub genre: Option<String>,
+    pub composer: Option<String>,
+    pub conductor: Option<String>,
+    pub lyricist: Option<String>,
+    pub grouping: Option<String>,
+    pub work: Option<String>,
+    pub comment: Option<String>,
+    pub publisher: Option<String>,
+    pub catalog_number: Option<String>,
+    pub barcode: Option<String>,
+    pub compilation: bool,
+    pub codec: Option<String>,
+    pub bitrate: Option<u32>,
+    pub sample_rate: Option<u32>,
+    pub bit_depth: Option<u32>,
+    pub channels: Option<u32>,
+    pub duration_ms: u64,
+    pub file_size: Option<u64>,
+}
+
+impl Database {
+    /// Détails de morceaux, dans l'ordre des ids demandés (ids inconnus ignorés).
+    pub fn track_details(&self, ids: &[i64]) -> Result<Vec<TrackDetails>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT t.id, t.file_path, t.title, ar.name, aa.name, al.title, al.year, t.track_number, t.disc_number,
+                    t.disc_subtitle, t.genre, t.composer, t.conductor, t.lyricist, t.grouping, t.work, t.comment,
+                    t.publisher, t.catalog_number, t.barcode, al.is_compilation, t.codec, t.bitrate, t.sample_rate,
+                    t.bit_depth, t.channels, t.duration_ms, t.file_size
+             FROM tracks t
+             JOIN artists ar ON ar.id = t.artist_id
+             JOIN albums al ON al.id = t.album_id
+             JOIN artists aa ON aa.id = al.artist_id
+             WHERE t.id = ?1",
+        )?;
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            let row = stmt
+                .query_row([id], |r| {
+                    Ok(TrackDetails {
+                        id: r.get(0)?,
+                        path: r.get(1)?,
+                        title: r.get(2)?,
+                        artist: r.get(3)?,
+                        album_artist: r.get(4)?,
+                        album: r.get(5)?,
+                        year: r.get(6)?,
+                        track_number: r.get(7)?,
+                        disc_number: r.get(8)?,
+                        disc_subtitle: r.get(9)?,
+                        genre: r.get(10)?,
+                        composer: r.get(11)?,
+                        conductor: r.get(12)?,
+                        lyricist: r.get(13)?,
+                        grouping: r.get(14)?,
+                        work: r.get(15)?,
+                        comment: r.get(16)?,
+                        publisher: r.get(17)?,
+                        catalog_number: r.get(18)?,
+                        barcode: r.get(19)?,
+                        compilation: r.get(20)?,
+                        codec: r.get(21)?,
+                        bitrate: r.get(22)?,
+                        sample_rate: r.get(23)?,
+                        bit_depth: r.get(24)?,
+                        channels: r.get(25)?,
+                        duration_ms: r.get::<_, i64>(26)?.max(0) as u64,
+                        file_size: r.get::<_, Option<i64>>(27)?.map(|s| s.max(0) as u64),
+                    })
+                })
+                .optional()?;
+            out.extend(row);
+        }
+        Ok(out)
+    }
+}

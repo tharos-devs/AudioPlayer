@@ -441,3 +441,16 @@ fn playlist_moves_and_inserts_at_a_position() {
     assert_eq!(db.place_in_playlist(p, 1, &[103, 100]).unwrap(), 1);
     assert_eq!(db.playlist_tracks(p).unwrap(), [102, 103, 100, 101]);
 }
+
+#[test]
+fn track_details_join_album_and_artists() {
+    let db = Database::open_in_memory().unwrap();
+    sample(&db);
+    db.connection().execute("UPDATE tracks SET genre = 'Score', composer = 'J. Williams' WHERE id = 100", []).unwrap();
+    let details = db.track_details(&[102, 100, 999]).unwrap();
+    assert_eq!(details.len(), 2);
+    let main = &details[1];
+    assert_eq!((main.id, main.title.as_str(), main.album.as_str(), main.year), (100, "Main Title", "Jaws", Some(1975)));
+    assert_eq!((main.artist.as_str(), main.album_artist.as_str()), ("john Williams", "john Williams"));
+    assert_eq!((main.genre.as_deref(), main.composer.as_deref(), main.duration_ms), (Some("Score"), Some("J. Williams"), 135000));
+}

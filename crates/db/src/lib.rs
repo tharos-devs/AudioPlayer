@@ -13,7 +13,7 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
-pub use catalog::{Album, Artist, Artwork, Library, Track};
+pub use catalog::{Album, Artist, Artwork, Library, Track, TrackDetails};
 pub use playlists::Playlist;
 pub use scan::{KnownFile, TrackRecord};
 

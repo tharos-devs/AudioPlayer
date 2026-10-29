@@ -5,6 +5,7 @@
 pub mod artwork;
 pub mod files;
 pub mod tags;
+pub mod write;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;

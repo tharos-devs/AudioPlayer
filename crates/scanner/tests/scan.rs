@@ -46,7 +46,8 @@ fn tagged(path: &Path, title: &str, artist: &str, album_artist: Option<&str>, al
     tag.set_artist(artist.into());
     tag.set_album(album.into());
     tag.set_track(track);
-    tag.insert_text(ItemKey::DiscNumber, "1/2".into());
+    tag.set_disk(1);
+    tag.set_disk_total(2);
     tag.insert_text(ItemKey::Genre, "  ".into());
     if let Some(album_artist) = album_artist {
         tag.insert_text(ItemKey::AlbumArtist, album_artist.into());
@@ -152,4 +153,46 @@ fn rescan_files_rereads_even_unchanged_and_drops_missing() {
     assert_eq!((report.updated, report.removed), (1, 1));
     let titles: Vec<_> = Database::open(&db_path).unwrap().albums(library).unwrap().into_iter().map(|a| a.title).collect();
     assert_eq!(titles, ["One"]);
+}
+
+#[test]
+fn writes_only_the_edited_tags_and_the_cover() {
+    use audioplayer_scanner::files::AudioFile;
+    use audioplayer_scanner::tags;
+    use audioplayer_scanner::write::{write_tags, Field};
+    use lofty::prelude::{Accessor, TaggedFileExt};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a/01.wav");
+    tagged(&path, "Old Title", "Someone", Some("Composer"), "Album", 3, None);
+    let file = |p: &Path| AudioFile { path: p.to_owned(), size: 0, mtime: 0 };
+
+    let cover = jpeg(150);
+    write_tags(
+        &path,
+        &[
+            (Field::Title, Some("New Title".into())),
+            (Field::Year, Some("1999".into())),
+            (Field::Composer, Some("John Williams".into())),
+            (Field::AlbumArtist, None),
+            (Field::TrackNumber, Some("7".into())),
+        ],
+        Some(("image/jpeg", &cover)),
+    )
+    .unwrap();
+
+    let read = tags::read(&file(&path)).unwrap();
+    let r = &read.record;
+    assert_eq!((r.title.as_str(), r.year, r.track_number), ("New Title", Some(1999), Some(7)));
+    assert_eq!((r.composer.as_deref(), r.album_artist.as_deref()), (Some("John Williams"), None));
+    // Champs non modifiés : intacts (album, artiste, disque 1/2 avec son total).
+    assert_eq!((r.album.as_str(), r.artist.as_str(), r.disc_number), ("Album", "Someone", Some(1)));
+    let tagged = lofty::read_from_path(&path).unwrap();
+    let tag = tagged.primary_tag().unwrap();
+    assert_eq!((tag.disk(), tag.disk_total()), (Some(1), Some(2)), "disc total kept");
+    assert_eq!(read.picture.as_deref(), Some(cover.as_slice()));
+
+    // Un nombre invalide est refusé sans rien écrire.
+    assert!(write_tags(&path, &[(Field::Title, Some("X".into())), (Field::Year, Some("19x9".into()))], None).is_err());
+    assert_eq!(tags::read(&file(&path)).unwrap().record.title, "New Title");
 }
