@@ -9,8 +9,8 @@ component WindowButton inherits Rectangle {
     background: touch.has-hover ? root.hover-color : Theme.mini-overlay-bg;
     Image {
         source: root.icon;
-        width: 11px;
-        height: 11px;
+        width: 15px;
+        height: 15px;
         colorize: touch.has-hover && root.hover-color == Theme.mini-close-bg ? #ffffff : Theme.mini-overlay-text;
     }
     touch := TouchArea {
@@ -47,6 +47,8 @@ export component MiniPlayerWindow inherits Window {
     callback seek(float);
     callback volume-edited();
     callback restore();
+    // Appui sur la poignée ou le titre : déplacement natif de la fenêtre.
+    callback start-move();
     callback quit();
     property <float> volume-before-mute: 70;
     property <float> zoom: 0.7;
@@ -69,17 +71,23 @@ export component MiniPlayerWindow inherits Window {
                     width: Theme.hairline;
                     background: Theme.mini-handle-border;
                 }
-                Text {
-                    width: 100%;
-                    height: 100%;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    text: "⋮⋮";
-                    font-size: 17px;
-                    letter-spacing: -2px;
-                    color: Theme.mini-handle-dots;
+                // Poignée « ⋮⋮ » : deux colonnes de trois points.
+                for dot[i] in 6: Rectangle {
+                    x: parent.width / 2 + (Math.mod(i, 2) == 0 ? -4.5px : 1.5px);
+                    y: parent.height / 2 - 7px + floor(i / 2) * 5px;
+                    width: 3px;
+                    height: 3px;
+                    border-radius: 1.5px;
+                    background: Theme.mini-handle-dots;
                 }
-                WindowMoveArea { }
+                TouchArea {
+                    mouse-cursor: move;
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                            root.start-move();
+                        }
+                    }
+                }
             }
 
             HorizontalLayout {
@@ -116,7 +124,7 @@ export component MiniPlayerWindow inherits Window {
                         label := Text {
                             x: title-box.scrolling ? -title-box.offset : max(0px, (title-box.width - self.width) / 2);
                             width: title-box.scrolling ? title-box.text-width : min(title-box.text-width, title-box.width);
-                            text: root.has-track ? root.track-title : "";
+                            text: root.has-track ? root.track-title : @tr("No track selected");
                             font-size: 13px;
                             font-weight: 500;
                             color: Theme.player-info-text;
@@ -131,7 +139,13 @@ export component MiniPlayerWindow inherits Window {
                             color: Theme.player-info-text;
                             vertical-alignment: center;
                         }
-                        WindowMoveArea { }
+                        TouchArea {
+                            pointer-event(event) => {
+                                if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                                    root.start-move();
+                                }
+                            }
+                        }
                     }
                     HorizontalLayout {
                         spacing: 6px;
@@ -256,14 +270,14 @@ export component MiniPlayerWindow inherits Window {
             VerticalLayout {
                 width: 30px;
                 WindowButton {
-                    icon: @image-url("icons/ep-arrow-up.svg");
+                    icon: @image-url("icons/mini-up.svg");
                     hover-color: Theme.mini-overlay-hover;
                     clicked => {
                         root.restore();
                     }
                 }
                 WindowButton {
-                    icon: @image-url("icons/ep-close.svg");
+                    icon: @image-url("icons/mini-close.svg");
                     hover-color: Theme.mini-close-bg;
                     clicked => {
                         root.quit();

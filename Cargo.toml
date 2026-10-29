@@ -10,7 +10,8 @@ edition = "2021"
 
 [workspace.dependencies]
 # Rendu Skia plutôt que femtovg : texte nettement plus fin (crénage, lissage).
-slint = { version = "1.18", default-features = false, features = ["std", "backend-default", "renderer-skia", "accessibility", "compat-1-2"] }
+# unstable-winit-030 : accès à la fenêtre winit pour déplacer le mini-lecteur sans cadre.
+slint = { version = "1.18", default-features = false, features = ["std", "backend-default", "renderer-skia", "accessibility", "compat-1-2", "unstable-winit-030"] }
 slint-build = "1.18"
 rusqlite = { version = "0.41", features = ["bundled"] }
 base64 = "0.23"

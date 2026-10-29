@@ -2748,6 +2748,16 @@ fn launch(path: &Path) -> Result<(), Problem> {
             let _ = mini.hide();
         }
     });
+    let m = mini.as_weak();
+    mini.on_start_move(move || {
+        use slint::winit_030::WinitWindowAccessor;
+        if let Some(mini) = m.upgrade() {
+            // Lancé pendant l'appui, comme le demande macOS ; le système suit ensuite la souris.
+            mini.window().with_winit_window(|window| {
+                let _ = window.drag_window();
+            });
+        }
+    });
     let (c, s, m) = (ctx.clone(), saved.clone(), mini.as_weak());
     mini.on_quit(move || {
         if let Some(mini) = m.upgrade() {

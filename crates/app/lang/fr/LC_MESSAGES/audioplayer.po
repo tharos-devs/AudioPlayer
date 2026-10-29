@@ -575,3 +575,6 @@ msgstr "Durée"
 
 msgid "File Type"
 msgstr "Type de fichier"
+
+msgid "No track selected"
+msgstr "Aucun morceau sélectionné"
