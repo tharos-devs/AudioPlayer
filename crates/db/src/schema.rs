@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::{Error, Result};
 
-pub const MIGRATIONS: &[&str] = &[V1];
+pub const MIGRATIONS: &[&str] = &[V1, V2];
 
 // Les dates sont du texte UTC « AAAA-MM-JJ HH:MM:SS », comme `datetime('now')`.
 const V1: &str = "
@@ -117,6 +117,15 @@ CREATE INDEX albums_favorited       ON albums (favorited_at) WHERE favorited_at 
 CREATE INDEX tracks_favorited       ON tracks (favorited_at) WHERE favorited_at IS NOT NULL;
 CREATE INDEX playlist_tracks_order  ON playlist_tracks (playlist_id, position);
 CREATE INDEX playlist_tracks_track  ON playlist_tracks (track_id);
+";
+
+// Réglages de l'interface, rangés dans la base comme dans la v0.1 : elle se déplace
+// avec eux (disque externe, par exemple). Valeurs JSON, une clé par section.
+const V2: &str = "
+CREATE TABLE preferences (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+) STRICT;
 ";
 
 pub fn version(conn: &Connection) -> Result<usize> {

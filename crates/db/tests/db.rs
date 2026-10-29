@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use audioplayer_db::{legacy, schema, Database, Error};
+use audioplayer_db::{inspect, legacy, schema, Database, Error, FileKind};
 use rusqlite::{params, Connection};
 
 fn sample(db: &Database) {
@@ -205,4 +205,38 @@ fn legacy_import_cleans_and_keeps_ids() {
     assert_eq!(order, [(8, 0), (9, 1)]);
 
     assert!(matches!(legacy::import(&mut db, &old_path), Err(Error::TargetNotEmpty)));
+}
+
+#[test]
+fn preferences_are_upserted() {
+    let db = Database::open_in_memory().unwrap();
+    assert_eq!(db.preference("appearance").unwrap(), None);
+    db.set_preference("appearance", r#"{"dark":true}"#).unwrap();
+    db.set_preference("appearance", r#"{"dark":false}"#).unwrap();
+    assert_eq!(db.preference("appearance").unwrap().as_deref(), Some(r#"{"dark":false}"#));
+}
+
+#[test]
+fn inspect_tells_files_apart_without_touching_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("missing.db");
+    assert_eq!(inspect(&missing).unwrap(), None);
+
+    let current = dir.path().join("current.db");
+    drop(Database::open(&current).unwrap());
+    assert_eq!(inspect(&current).unwrap(), Some(FileKind::Current { version: schema::MIGRATIONS.len() }));
+
+    let old = dir.path().join("old.db");
+    legacy_db(&old);
+    let before = std::fs::read(&old).unwrap();
+    assert_eq!(inspect(&old).unwrap(), Some(FileKind::Legacy));
+    assert_eq!(std::fs::read(&old).unwrap(), before);
+
+    let text = dir.path().join("notes.db");
+    std::fs::write(&text, "not a database").unwrap();
+    assert_eq!(inspect(&text).unwrap(), Some(FileKind::Unknown));
+
+    let empty = dir.path().join("empty.db");
+    std::fs::write(&empty, "").unwrap();
+    assert_eq!(inspect(&empty).unwrap(), Some(FileKind::Current { version: 0 }));
 }

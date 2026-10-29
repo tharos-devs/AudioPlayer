@@ -3,16 +3,17 @@
 
 mod covers;
 mod library;
+mod location;
 mod settings;
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
-use audioplayer_db::Database;
+use audioplayer_db::{legacy, Database, FileKind};
 use library::{format_duration, sort_key, Library};
 use settings::Settings;
 use slint::{DataTransfer, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
@@ -34,6 +35,7 @@ struct Playlist {
 
 struct App {
     db: Database,
+    db_path: PathBuf,
     libraries: Vec<audioplayer_db::Library>,
     selected_library: Option<usize>,
     library: Library,
@@ -63,12 +65,13 @@ struct App {
 
 impl App {
     /// `library` : nom de la bibliothèque à ouvrir, la première sinon.
-    fn new(db: Database, library: Option<&str>) -> audioplayer_db::Result<Self> {
+    fn new(db: Database, db_path: PathBuf, library: Option<&str>) -> audioplayer_db::Result<Self> {
         let libraries = db.libraries()?;
         let recent_cutoff = db.datetime_from_now(RECENT_MODIFIER)?;
 
         let mut app = App {
             db,
+            db_path,
             libraries,
             selected_library: None,
             library: Library::default(),
@@ -594,6 +597,18 @@ impl App {
         });
     }
 
+    fn show_problem(&self, ui: &AppWindow, problem: &Problem) {
+        self.show_status(
+            ui,
+            Status {
+                kind: StatusKind::DatabaseProblem,
+                track: problem.path.display().to_string().into(),
+                playlist: problem.detail.as_str().into(),
+                problem: problem.kind,
+            },
+        );
+    }
+
     fn track_action(&mut self, ui: &AppWindow, id: i32, action: &str) {
         let Some(track) = from_ui_id(id) else { return };
         let status = |kind| Status { kind, track: self.library.tracks[track].title.as_str().into(), ..Default::default() };
@@ -623,6 +638,7 @@ impl App {
             kind,
             track: self.library.tracks[track].title.as_str().into(),
             playlist: target.name.as_str().into(),
+            ..Default::default()
         };
         self.refresh_playlists(ui);
         if self.view == View::Playlist && self.selected_playlist == Some(playlist) {
@@ -674,31 +690,86 @@ fn select_language(ui: &AppWindow, language: &str) {
     }
 }
 
-fn data_dir() -> PathBuf {
-    let dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("AudioPlayer");
-    let _ = std::fs::create_dir_all(&dir);
-    dir
+/// Problème rencontré avec un fichier de base ; le message est formé côté Slint.
+struct Problem {
+    kind: DatabaseProblem,
+    path: PathBuf,
+    detail: String,
 }
 
-// `AUDIOPLAYER_DB` et `AUDIOPLAYER_SETTINGS` permettent d'autres fichiers, par exemple pendant les essais.
-fn database_path() -> PathBuf {
-    std::env::var_os("AUDIOPLAYER_DB").map_or_else(|| data_dir().join("library.db"), PathBuf::from)
+impl Problem {
+    fn new(kind: DatabaseProblem, path: &Path) -> Self {
+        Problem { kind, path: path.to_owned(), detail: String::new() }
+    }
+
+    fn failed(path: &Path, error: impl std::fmt::Display) -> Self {
+        Problem { kind: DatabaseProblem::Failed, path: path.to_owned(), detail: error.to_string() }
+    }
 }
 
-fn settings_path() -> PathBuf {
-    std::env::var_os("AUDIOPLAYER_SETTINGS").map_or_else(|| settings::path(&data_dir()), PathBuf::from)
+// Vérifie sans écrire qu'un fichier est bien une base de cette application.
+fn check_database(path: &Path) -> Result<(), Problem> {
+    match audioplayer_db::inspect(path).map_err(|e| Problem::failed(path, e))? {
+        Some(FileKind::Current { .. }) | None => Ok(()),
+        Some(FileKind::Legacy) => Err(Problem::new(DatabaseProblem::LegacyFile, path)),
+        Some(FileKind::TooNew { .. }) => Err(Problem::new(DatabaseProblem::TooNew, path)),
+        Some(FileKind::Unknown) => Err(Problem::new(DatabaseProblem::UnknownFile, path)),
+    }
+}
+
+fn database_dialog() -> rfd::FileDialog {
+    rfd::FileDialog::new().add_filter("AudioPlayer database", &["db"])
+}
+
+// Une base neuve ne remplace jamais un fichier existant, quel qu'il soit.
+fn choose_new_database() -> Result<Option<PathBuf>, Problem> {
+    let Some(path) = database_dialog().set_file_name("audioplayer.db").save_file() else { return Ok(None) };
+    if path.exists() {
+        return Err(Problem::new(DatabaseProblem::AlreadyExists, &path));
+    }
+    Database::open(&path).map_err(|e| Problem::failed(&path, e))?;
+    Ok(Some(path))
+}
+
+fn choose_existing_database() -> Result<Option<PathBuf>, Problem> {
+    let Some(path) = database_dialog().pick_file() else { return Ok(None) };
+    check_database(&path)?;
+    Ok(Some(path))
+}
+
+// L'ancienne base est lue en lecture seule ; la nouvelle est créée à côté de l'endroit choisi.
+fn import_legacy_database() -> Result<Option<PathBuf>, Problem> {
+    let Some(legacy_path) = database_dialog().set_title("v0.1 database").pick_file() else { return Ok(None) };
+    if audioplayer_db::inspect(&legacy_path).map_err(|e| Problem::failed(&legacy_path, e))? != Some(FileKind::Legacy) {
+        return Err(Problem::new(DatabaseProblem::NotLegacy, &legacy_path));
+    }
+    let directory = legacy_path.parent().map(Path::to_owned).unwrap_or_default();
+    let dialog = database_dialog().set_directory(directory).set_file_name("audioplayer-library.db");
+    let Some(path) = dialog.save_file() else { return Ok(None) };
+    if path.exists() {
+        return Err(Problem::new(DatabaseProblem::AlreadyExists, &path));
+    }
+    let result = Database::open(&path).and_then(|mut db| legacy::import(&mut db, &legacy_path).map(|_| ()));
+    if let Err(error) = result {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        return Err(Problem::failed(&path, error));
+    }
+    Ok(Some(path))
 }
 
 fn apply_settings(ui: &AppWindow, settings: &Settings) {
     let theme = ui.global::<Theme>();
-    theme.set_dark(settings.dark);
-    if let Some(accent) = theme.get_accents().iter().find(|a| a.id == settings.accent.as_str()) {
+    let appearance = &settings.appearance;
+    theme.set_dark(appearance.dark);
+    if let Some(accent) = theme.get_accents().iter().find(|a| a.id == appearance.accent.as_str()) {
         theme.set_accent_id(accent.id);
         theme.set_accent(accent.value);
     }
-    theme.set_zoom(settings.zoom.clamp(theme.get_zoom_min(), theme.get_zoom_max()));
+    theme.set_zoom(appearance.zoom.clamp(theme.get_zoom_min(), theme.get_zoom_max()));
     ui.invoke_sync_color_scheme();
-    select_language(ui, &settings.language);
+    select_language(ui, &appearance.language);
 
     ui.window().set_size(slint::LogicalSize::new(settings.window.width, settings.window.height));
     ui.set_artists_width(settings.panels.artists_width);
@@ -712,7 +783,7 @@ fn apply_settings(ui: &AppWindow, settings: &Settings) {
     let equalizer = ui.global::<EqualizerState>();
     equalizer.set_enabled(settings.equalizer.enabled);
     equalizer.set_preset(settings.equalizer.preset.as_str().into());
-    // Un fichier modifié à la main ne doit pas casser l'égaliseur : 7 bandes, ±12 dB.
+    // Une valeur modifiée à la main ne doit pas casser l'égaliseur : 7 bandes, ±12 dB.
     let count = equalizer.get_frequencies().row_count();
     let gains: Vec<f32> = (0..count).map(|i| settings.equalizer.gains.get(i).copied().unwrap_or(0.0).clamp(-12.0, 12.0)).collect();
     equalizer.set_gains(model(gains));
@@ -726,11 +797,13 @@ fn capture_settings(ui: &AppWindow, app: &App, previous: &Settings) -> Settings 
     let maximized = window.is_maximized();
     let size = window.size().to_logical(window.scale_factor());
     Settings {
-        dark: theme.get_dark(),
-        accent: theme.get_accent_id().into(),
-        zoom: theme.get_zoom(),
-        language: ui.get_language().into(),
-        library: app.selected_library.map(|i| app.libraries[i].name.clone()),
+        appearance: settings::Appearance {
+            dark: theme.get_dark(),
+            accent: theme.get_accent_id().into(),
+            zoom: theme.get_zoom(),
+            language: ui.get_language().into(),
+        },
+        session: settings::Session { library: app.selected_library.map(|i| app.libraries[i].name.clone()) },
         window: settings::WindowSettings {
             width: if maximized { previous.window.width } else { size.width },
             height: if maximized { previous.window.height } else { size.height },
@@ -755,36 +828,48 @@ fn capture_settings(ui: &AppWindow, app: &App, previous: &Settings) -> Settings 
     }
 }
 
-/// Enregistre les réglages quand ils changent (vérifié chaque seconde) et à la fermeture.
-struct SettingsStore {
-    path: PathBuf,
-    saved: RefCell<Settings>,
+/// Fenêtre principale ouverte sur une base ; la lâcher ferme tout.
+struct Session {
+    ui: AppWindow,
+    ctx: Context,
+    // Derniers réglages écrits en base, pour n'écrire que les changements.
+    saved: Rc<RefCell<Settings>>,
+    _timers: Vec<Timer>,
 }
 
-impl SettingsStore {
-    fn save_if_changed(&self, current: Settings) {
-        if *self.saved.borrow() != current {
-            if let Err(error) = current.save(&self.path) {
-                eprintln!("{}: {error}", self.path.display());
-            }
-            *self.saved.borrow_mut() = current;
-        }
+impl Session {
+    fn save_settings(&self) {
+        save_settings(&self.ctx, &self.saved);
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let ui = AppWindow::new()?;
-    ui.set_version(env!("CARGO_PKG_VERSION").into());
-    // Slint suivrait la langue du système : la langue vient des réglages (anglais par défaut).
-    let store = Rc::new(SettingsStore { path: settings_path(), saved: RefCell::new(Settings::default()) });
-    let initial = Settings::load(&store.path);
-    apply_settings(&ui, &initial);
-    *store.saved.borrow_mut() = initial.clone();
+fn save_settings(ctx: &Context, saved: &RefCell<Settings>) {
+    let Some(ui) = ctx.ui.upgrade() else { return };
+    let app = ctx.app.borrow();
+    let current = capture_settings(&ui, &app, &saved.borrow());
+    if current != *saved.borrow() {
+        if let Err(error) = current.save(&app.db, &saved.borrow()) {
+            eprintln!("settings: {error}");
+        }
+        *saved.borrow_mut() = current;
+    }
+}
 
-    let path = database_path();
-    let db = Database::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let app = App::new(db, initial.library.as_deref())?;
+thread_local! {
+    static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
+    static SETUP: RefCell<Option<SetupWindow>> = const { RefCell::new(None) };
+}
+
+fn launch(path: &Path) -> Result<(), Problem> {
+    check_database(path)?;
+    let db = Database::open(path).map_err(|e| Problem::failed(path, e))?;
+    let initial = Settings::load(&db);
+    let app = App::new(db, path.to_owned(), initial.session.library.as_deref()).map_err(|e| Problem::failed(path, e))?;
     let first = app.selected_library;
+
+    let ui = AppWindow::new().map_err(|e| Problem::failed(path, e))?;
+    ui.set_version(env!("CARGO_PKG_VERSION").into());
+    apply_settings(&ui, &initial);
     let ctx = Context { app: Rc::new(RefCell::new(app)), ui: ui.as_weak() };
     ctx.update(|app, ui| app.refresh_all(ui));
 
@@ -839,14 +924,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_track_payload(track_payload);
     ui.on_is_track_payload(|data| payload_track(&data).is_some());
 
+    let c = ctx.clone();
+    ui.on_show_database(move || {
+        c.update(|app, ui| {
+            let track = app.db_path.display().to_string().into();
+            app.show_status(ui, Status { kind: StatusKind::Database, track, ..Default::default() });
+        })
+    });
+    let c = ctx.clone();
+    ui.on_new_database(move || database_action(&c, choose_new_database));
+    let c = ctx.clone();
+    ui.on_open_database(move || database_action(&c, choose_existing_database));
+
     // Préchargement des autres bibliothèques, sur une connexion dédiée.
     let (sender, receiver) = std::sync::mpsc::channel();
     let pending: Vec<(usize, i64)> = ctx.app.borrow().libraries.iter().enumerate()
         .filter(|&(i, _)| Some(i) != first)
         .map(|(i, l)| (i, l.id))
         .collect();
+    let preload_path = path.to_owned();
     std::thread::spawn(move || {
-        let Ok(db) = Database::open(&path) else { return };
+        let Ok(db) = Database::open(&preload_path) else { return };
         for (index, id) in pending {
             match Library::load_with_covers(&db, id, COVER_SIZE) {
                 Ok(loaded) => {
@@ -866,6 +964,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    let saved = Rc::new(RefCell::new(initial.clone()));
+    let (c, s) = (ctx.clone(), saved.clone());
+    let autosave = Timer::default();
+    autosave.start(TimerMode::Repeated, Duration::from_secs(1), move || save_settings(&c, &s));
+    let (c, s) = (ctx.clone(), saved.clone());
+    ui.window().on_close_requested(move || {
+        save_settings(&c, &s);
+        let _ = slint::quit_event_loop();
+        slint::CloseRequestResponse::HideWindow
+    });
+
+    let c = ctx.clone();
+    let ticker = Timer::default();
+    ticker.start(TimerMode::Repeated, Duration::from_secs(1), move || c.update(|app, ui| app.tick(ui)));
+
+    ui.show().map_err(|e| Problem::failed(path, e))?;
     // L'agrandissement ne s'applique qu'à une fenêtre affichée.
     let w = ui.as_weak();
     let maximized = initial.window.maximized;
@@ -874,27 +988,117 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.window().set_maximized(maximized);
         }
     });
-    let (c, s) = (ctx.clone(), store.clone());
-    let autosave = Timer::default();
-    autosave.start(TimerMode::Repeated, Duration::from_secs(1), move || {
-        if let Some(ui) = c.ui.upgrade() {
-            let current = capture_settings(&ui, &c.app.borrow(), &s.saved.borrow());
-            s.save_if_changed(current);
+
+    SESSION.with(|session| *session.borrow_mut() = Some(Session { ui, ctx, saved, _timers: vec![preload, autosave, ticker] }));
+    Ok(())
+}
+
+// Menu Fichier : choisir une base puis y basculer, ou signaler le problème dans la barre d'état.
+fn database_action(ctx: &Context, choose: fn() -> Result<Option<PathBuf>, Problem>) {
+    match choose() {
+        Ok(Some(path)) => {
+            // Différé : la fenêtre courante est encore dans son propre rappel.
+            Timer::single_shot(Duration::ZERO, move || switch_database(path));
+        }
+        Ok(None) => {}
+        Err(problem) => ctx.update(|app, ui| app.show_problem(ui, &problem)),
+    }
+}
+
+fn switch_database(path: PathBuf) {
+    if let Some(session) = SESSION.with(|session| session.borrow_mut().take()) {
+        session.save_settings();
+        let _ = session.ui.hide();
+    }
+    match launch(&path) {
+        Ok(()) => remember_database(&path),
+        Err(problem) => show_setup(None, Some(problem)),
+    }
+}
+
+fn remember_database(path: &Path) {
+    if let Err(error) = location::remember(path) {
+        eprintln!("database location: {error}");
+    }
+}
+
+fn show_setup(missing: Option<&Path>, problem: Option<Problem>) {
+    let setup = match SetupWindow::new() {
+        Ok(setup) => setup,
+        Err(error) => {
+            eprintln!("setup window: {error}");
+            let _ = slint::quit_event_loop();
+            return;
+        }
+    };
+    // Sans base, pas de réglages : l'écran d'accueil est en anglais (Slint suivrait le système).
+    if let Err(error) = slint::select_bundled_translation("en") {
+        eprintln!("language en: {error}");
+    }
+    setup.set_missing_path(missing.map(|p| p.display().to_string()).unwrap_or_default().into());
+    if let Some(problem) = problem {
+        set_problem(&setup, &problem);
+    }
+
+    let w = setup.as_weak();
+    let finish = move |choice: Result<Option<PathBuf>, Problem>| {
+        let Some(setup) = w.upgrade() else { return };
+        match choice {
+            Ok(Some(path)) => match launch(&path) {
+                Ok(()) => {
+                    remember_database(&path);
+                    let _ = setup.hide();
+                    Timer::single_shot(Duration::ZERO, || SETUP.with(|s| s.borrow_mut().take()).map_or((), drop));
+                }
+                Err(problem) => set_problem(&setup, &problem),
+            },
+            Ok(None) => {}
+            Err(problem) => set_problem(&setup, &problem),
+        }
+    };
+    let f = finish.clone();
+    setup.on_create_database(move || f(choose_new_database()));
+    let f = finish.clone();
+    setup.on_open_database(move || f(choose_existing_database()));
+    let f = finish.clone();
+    setup.on_import_legacy(move || f(import_legacy_database()));
+    let missing = missing.map(Path::to_owned);
+    setup.on_retry(move || {
+        if let Some(path) = &missing {
+            finish(if path.exists() { Ok(Some(path.clone())) } else { Ok(None) });
         }
     });
-    let (c, s) = (ctx.clone(), store.clone());
-    ui.window().on_close_requested(move || {
-        if let Some(ui) = c.ui.upgrade() {
-            let current = capture_settings(&ui, &c.app.borrow(), &s.saved.borrow());
-            s.save_if_changed(current);
-        }
+    setup.window().on_close_requested(|| {
+        let _ = slint::quit_event_loop();
         slint::CloseRequestResponse::HideWindow
     });
+    if let Err(error) = setup.show() {
+        eprintln!("setup window: {error}");
+    }
+    SETUP.with(|s| *s.borrow_mut() = Some(setup));
+}
 
-    let c = ctx.clone();
-    let ticker = Timer::default();
-    ticker.start(TimerMode::Repeated, Duration::from_secs(1), move || c.update(|app, ui| app.tick(ui)));
+fn set_problem(setup: &SetupWindow, problem: &Problem) {
+    setup.set_problem(problem.kind);
+    setup.set_problem_path(problem.path.display().to_string().into());
+    setup.set_problem_detail(problem.detail.as_str().into());
+}
 
-    ui.run()?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    match location::saved() {
+        Some(path) if path.exists() => {
+            if let Err(problem) = launch(&path) {
+                show_setup(None, Some(problem));
+            }
+        }
+        // Base notée mais absente : disque externe débranché, fichier déplacé…
+        Some(path) => show_setup(Some(&path), None),
+        None => show_setup(None, None),
+    }
+    slint::run_event_loop_until_quit()?;
+    // Réglages à jour si l'on quitte autrement qu'en fermant la fenêtre (Cmd+Q).
+    if let Some(session) = SESSION.with(|session| session.borrow_mut().take()) {
+        session.save_settings();
+    }
     Ok(())
 }

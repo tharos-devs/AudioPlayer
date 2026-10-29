@@ -9,10 +9,8 @@ audioplayer-db = { path = "../db" }
 image.workspace = true
 dirs.workspace = true
 serde.workspace = true
-toml.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true
+serde_json.workspace = true
+rfd.workspace = true
 
 [build-dependencies]
 slint-build.workspace = true

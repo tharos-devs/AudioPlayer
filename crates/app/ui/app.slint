@@ -6,16 +6,18 @@ import { Sidebar, View } from "sidebar.slint";
 import { ControlBar } from "controlbar.slint";
 import { StatusBar, StatusSource } from "statusbar.slint";
 import { EqualizerState } from "equalizer.slint";
+import { SetupWindow, DatabaseProblem, DatabaseProblems } from "setup.slint";
 
-export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState }
+export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem }
 
-export enum StatusKind { summary, added-to-playlist, already-in-playlist, play-next, enqueued }
+export enum StatusKind { summary, added-to-playlist, already-in-playlist, play-next, enqueued, database, database-problem }
 
 // Les messages d'état sont formatés ici (et non en Rust) pour passer par @tr.
 export struct Status {
     kind: StatusKind,
     track: string,
     playlist: string,
+    problem: DatabaseProblem,
 }
 
 export component AppWindow inherits Window {
@@ -84,6 +86,10 @@ export component AppWindow inherits Window {
         ? @tr("“{0}” will play next (not wired yet)", root.status.track)
         : root.status.kind == StatusKind.enqueued
         ? @tr("“{0}” added to the queue (not wired yet)", root.status.track)
+        : root.status.kind == StatusKind.database
+        ? @tr("Database: {0}", root.status.track)
+        : root.status.kind == StatusKind.database-problem
+        ? DatabaseProblems.describe(root.status.problem, root.status.track, root.status.playlist)
         : @tr("{n} track" | "{n} tracks" % root.tracks-count) + " · "
             + @tr("{0} h {1} min", floor(root.tracks-duration / 3600), Math.mod(floor(root.tracks-duration / 60), 60));
     in-out property <string> search-text;
@@ -110,6 +116,9 @@ export component AppWindow inherits Window {
     pure callback track-payload(int) -> data-transfer;
     pure callback is-track-payload(data-transfer) -> bool;
     callback select-language(string);
+    callback new-database();
+    callback open-database();
+    callback show-database();
     in-out property <string> language: "en";
 
     function toggle-theme() {
@@ -128,6 +137,21 @@ export component AppWindow inherits Window {
     }
 
     MenuBar {
+        Menu {
+            title: @tr("File");
+            MenuItem {
+                title: @tr("New Database…");
+                activated => {
+                    root.new-database();
+                }
+            }
+            MenuItem {
+                title: @tr("Open Database…");
+                activated => {
+                    root.open-database();
+                }
+            }
+        }
         Menu {
             title: @tr("View");
             MenuItem {
@@ -379,6 +403,9 @@ export component AppWindow inherits Window {
                     }
                     toggle-theme => {
                         root.toggle-theme();
+                    }
+                    show-database => {
+                        root.show-database();
                     }
                 }
             }

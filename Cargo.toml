@@ -16,7 +16,8 @@ tempfile = "3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 dirs = "7"
 serde = { version = "1", features = ["derive"] }
-toml = "1"
+serde_json = "1"
+rfd = "0.17"
 
 # Les dépendances (décodage d'images, SQLite, rendu) restent optimisées même en debug.
 [profile.dev.package."*"]

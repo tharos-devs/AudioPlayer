@@ -8,20 +8,24 @@ Refonte complète de la v0.1 (Tauri + Vue), conservée dans `../AudioPlayerOld` 
 
 ## Lancer
 
-La base se trouve dans le dossier de données de l'utilisateur
-(`~/Library/Application Support/AudioPlayer/library.db` sur macOS) ; la variable
-`AUDIOPLAYER_DB` permet d'en désigner une autre.
-Les réglages de l'interface (thème, accent, zoom, égaliseur, volume, bibliothèque ouverte,
-taille de la fenêtre…) sont enregistrés à côté, dans `settings.toml`, à chaque changement ;
-`AUDIOPLAYER_SETTINGS` permet d'utiliser un autre fichier.
+```bash
+cargo run --release
+```
 
-Créer la base à partir de celle de la v0.1 (ouverte en lecture seule, jamais modifiée) :
+Au premier lancement, AudioPlayer demande où créer la base (n'importe quel dossier, un disque
+externe par exemple), ou en ouvre une existante, ou en crée une à partir de la base de la v0.1
+(lue en lecture seule, jamais modifiée). Les réglages de l'interface sont enregistrés dans la base,
+table `preferences`. Seul le chemin de la base est noté hors d'elle, dans
+`~/Library/Application Support/AudioPlayer/database.cfg` (macOS) ; si la base est introuvable
+(disque débranché), l'écran de démarrage propose de réessayer. *Fichier → Nouvelle base / Ouvrir
+une base* change de base en cours de route.
+
+`AUDIOPLAYER_DB=/chemin/base.db` impose une base pour un essai, sans rien enregistrer.
+
+En ligne de commande, l'import de la v0.1 existe aussi :
 
 ```bash
-cargo run --release -p audioplayer-db --bin import-v01 -- \
-    "/Volumes/Transcend/Music Librairies/audioplayer.db" \
-    ~/Library/Application\ Support/AudioPlayer/library.db
-cargo run --release
+cargo run --release -p audioplayer-db --bin import-v01 -- ancienne.db nouvelle.db
 ```
 
 ## Structure
@@ -31,12 +35,16 @@ crates/db/
   src/schema.rs      schéma versionné (PRAGMA user_version) et migrations
   src/catalog.rs     lectures du catalogue d'une bibliothèque
   src/legacy.rs      import de la base de la v0.1
+  src/preferences.rs réglages (table preferences)
   src/bin/import-v01.rs
 crates/app/
-  src/main.rs        état de l'application, branchement des callbacks
+  src/main.rs        état de l'application, démarrage, branchement des callbacks
+  src/location.rs    emplacement de la base choisi par l'utilisateur
+  src/settings.rs    réglages de l'interface, rangés dans la base
   src/library.rs     catalogue de la bibliothèque courante, chargé en mémoire
   src/covers.rs      décodage des pochettes
   ui/app.slint       fenêtre principale
+  ui/setup.slint     écran de démarrage (créer / ouvrir / importer une base)
   ui/theme.slint     thème clair/sombre + couleurs d'accent
   ui/widgets.slint   composants réutilisables
   ui/tracks.slint    table des morceaux (tri, glisser-déposer, menu contextuel)

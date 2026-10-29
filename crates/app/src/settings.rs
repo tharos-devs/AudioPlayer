@@ -1,24 +1,34 @@
-//! Réglages de l'interface, gardés d'un lancement à l'autre dans un fichier TOML
-//! lisible à côté de la base. Les données musicales restent dans la base.
+//! Réglages de l'interface, rangés dans la table `preferences` de la base comme dans
+//! la v0.1 : une clé par section, valeur JSON. Ils suivent la base où qu'elle soit.
 
-use std::path::{Path, PathBuf};
+use audioplayer_db::Database;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use serde::{Deserialize, Serialize};
-
-// Tout champ absent du fichier prend sa valeur par défaut : on peut en ajouter sans migration.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Settings {
-    pub dark: bool,
-    pub accent: String,
-    pub zoom: f32,
-    pub language: String,
-    /// Nom de la bibliothèque ouverte au démarrage (les ids changent si la base est recréée).
-    pub library: Option<String>,
+    pub appearance: Appearance,
+    pub session: Session,
     pub window: WindowSettings,
     pub panels: PanelSettings,
     pub player: PlayerSettings,
     pub equalizer: EqualizerSettings,
+}
+
+// Tout champ absent prend sa valeur par défaut : on peut en ajouter sans migration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Appearance {
+    pub dark: bool,
+    pub accent: String,
+    pub zoom: f32,
+    pub language: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Session {
+    /// Nom de la bibliothèque ouverte au démarrage.
+    pub library: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -55,19 +65,9 @@ pub struct EqualizerSettings {
     pub gains: Vec<f32>,
 }
 
-impl Default for Settings {
+impl Default for Appearance {
     fn default() -> Self {
-        Settings {
-            dark: true,
-            accent: "amber".into(),
-            zoom: 0.9,
-            language: "en".into(),
-            library: None,
-            window: WindowSettings::default(),
-            panels: PanelSettings::default(),
-            player: PlayerSettings::default(),
-            equalizer: EqualizerSettings::default(),
-        }
+        Appearance { dark: true, accent: "amber".into(), zoom: 0.9, language: "en".into() }
     }
 }
 
@@ -95,33 +95,50 @@ impl Default for EqualizerSettings {
     }
 }
 
-impl Settings {
-    /// Un fichier absent ou illisible donne les réglages par défaut, sans bloquer le démarrage.
-    pub fn load(path: &Path) -> Self {
-        match std::fs::read_to_string(path) {
-            Ok(text) => toml::from_str(&text).unwrap_or_else(|error| {
-                eprintln!("{}: {error}; using defaults", path.display());
-                Settings::default()
-            }),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Settings::default(),
-            Err(error) => {
-                eprintln!("{}: {error}; using defaults", path.display());
-                Settings::default()
-            }
+// Une section absente ou illisible garde ses valeurs par défaut, sans bloquer le démarrage.
+fn read<T: DeserializeOwned + Default>(db: &Database, key: &str) -> T {
+    match db.preference(key) {
+        Ok(Some(text)) => serde_json::from_str(&text).unwrap_or_else(|error| {
+            eprintln!("preference {key}: {error}; using defaults");
+            T::default()
+        }),
+        Ok(None) => T::default(),
+        Err(error) => {
+            eprintln!("preference {key}: {error}; using defaults");
+            T::default()
         }
-    }
-
-    /// Écrit dans un fichier temporaire puis le renomme : jamais de fichier à moitié écrit.
-    pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        let text = toml::to_string_pretty(self).map_err(std::io::Error::other)?;
-        let temporary = path.with_extension("toml.tmp");
-        std::fs::write(&temporary, text)?;
-        std::fs::rename(&temporary, path)
     }
 }
 
-pub fn path(data_dir: &Path) -> PathBuf {
-    data_dir.join("settings.toml")
+fn write<T: Serialize + PartialEq>(db: &Database, key: &str, value: &T, previous: &T) -> audioplayer_db::Result<()> {
+    if value == previous {
+        return Ok(());
+    }
+    let text = serde_json::to_string(value).expect("settings serialize to JSON");
+    db.set_preference(key, &text)
+}
+
+impl Settings {
+    pub fn load(db: &Database) -> Self {
+        Settings {
+            appearance: read(db, "appearance"),
+            session: read(db, "session"),
+            window: read(db, "window"),
+            panels: read(db, "panels"),
+            player: read(db, "player"),
+            equalizer: read(db, "equalizer"),
+        }
+    }
+
+    /// N'écrit que les sections qui ont changé depuis `previous`.
+    pub fn save(&self, db: &Database, previous: &Settings) -> audioplayer_db::Result<()> {
+        write(db, "appearance", &self.appearance, &previous.appearance)?;
+        write(db, "session", &self.session, &previous.session)?;
+        write(db, "window", &self.window, &previous.window)?;
+        write(db, "panels", &self.panels, &previous.panels)?;
+        write(db, "player", &self.player, &previous.player)?;
+        write(db, "equalizer", &self.equalizer, &previous.equalizer)
+    }
 }
 
 #[cfg(test)]
@@ -129,22 +146,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn round_trip_and_partial_files() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = path(dir.path());
-        assert_eq!(Settings::load(&path), Settings::default());
+    fn round_trip_and_partial_sections() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(Settings::load(&db), Settings::default());
 
-        let mut settings = Settings { zoom: 0.75, library: Some("OST".into()), ..Settings::default() };
+        let mut settings = Settings::default();
+        settings.appearance.zoom = 0.75;
+        settings.session.library = Some("OST".into());
         settings.equalizer.gains[2] = -3.5;
-        settings.save(&path).unwrap();
-        assert_eq!(Settings::load(&path), settings);
+        settings.save(&db, &Settings::default()).unwrap();
+        assert_eq!(Settings::load(&db), settings);
+        // Sections inchangées : rien d'écrit.
+        assert_eq!(db.preference("player").unwrap(), None);
 
-        // Champs manquants : valeurs par défaut ; fichier invalide : défauts complets.
-        std::fs::write(&path, "dark = false\n[player]\nvolume = 20.0\n").unwrap();
-        let partial = Settings::load(&path);
-        assert!(!partial.dark);
-        assert_eq!((partial.player.volume, partial.zoom), (20.0, 0.9));
-        std::fs::write(&path, "dark = [").unwrap();
-        assert_eq!(Settings::load(&path), Settings::default());
+        // Champs manquants : valeurs par défaut ; JSON invalide : section par défaut.
+        db.set_preference("player", r#"{"volume":20.0}"#).unwrap();
+        db.set_preference("panels", "{").unwrap();
+        let loaded = Settings::load(&db);
+        assert_eq!((loaded.player.volume, loaded.player.muted), (20.0, false));
+        assert_eq!(loaded.panels, PanelSettings::default());
     }
 }

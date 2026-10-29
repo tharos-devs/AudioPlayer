@@ -1,0 +1,150 @@
+import { Theme } from "theme.slint";
+
+// Problèmes rencontrés en créant ou en ouvrant une base ; le texte est formé ici pour @tr.
+export enum DatabaseProblem { none, already-exists, legacy-file, not-legacy, too-new, unknown-file, failed }
+
+export global DatabaseProblems {
+    pure public function describe(problem: DatabaseProblem, path: string, detail: string) -> string {
+        return problem == DatabaseProblem.already-exists ? @tr("“{0}” already exists. Choose a new file name.", path)
+            : problem == DatabaseProblem.legacy-file ? @tr("“{0}” is a v0.1 database: use “Import a v0.1 Database…”.", path)
+            : problem == DatabaseProblem.not-legacy ? @tr("“{0}” is not a v0.1 database.", path)
+            : problem == DatabaseProblem.too-new ? @tr("“{0}” was created by a newer version of AudioPlayer.", path)
+            : problem == DatabaseProblem.unknown-file ? @tr("“{0}” is not an AudioPlayer database.", path)
+            : problem == DatabaseProblem.failed ? @tr("Could not use “{0}”: {1}", path, detail)
+            : "";
+    }
+}
+
+// Bouton Element Plus taille normale : 32px de haut, rayon 4px.
+component Button inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 32px;
+    min-width: label.preferred-width + 30px;
+    border-radius: 4px;
+    border-width: 1px;
+    opacity: root.enabled ? 1 : 0.5;
+    border-color: root.primary ? Theme.accent : touch.has-hover && root.enabled ? Theme.accent : Theme.button-border;
+    background: root.primary ? (touch.has-hover && root.enabled ? Theme.accent-light-3 : Theme.accent)
+        : touch.has-hover && root.enabled ? Theme.hover-tint : Theme.button-bg;
+
+    label := Text {
+        text: root.text;
+        font-size: 14px;
+        color: root.primary ? Theme.on-accent : touch.has-hover && root.enabled ? Theme.accent : Theme.button-text;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Premier lancement, ou base introuvable : créer, ouvrir ou importer une base.
+export component SetupWindow inherits Window {
+    title: "AudioPlayer";
+    width: 600px;
+    height: 400px;
+    background: Theme.bg-secondary;
+    default-font-family: "Verdana";
+
+    // Chemin enregistré mais introuvable (disque externe débranché…) ; vide au premier lancement.
+    in property <string> missing-path;
+    in property <DatabaseProblem> problem;
+    in property <string> problem-path;
+    in property <string> problem-detail;
+    callback create-database();
+    callback open-database();
+    callback import-legacy();
+    callback retry();
+
+    VerticalLayout {
+        padding: 32px;
+        spacing: 16px;
+        alignment: center;
+
+        HorizontalLayout {
+            alignment: center;
+            Image {
+                source: root.missing-path == "" ? @image-url("icons/ep-document.svg") : @image-url("icons/ep-warning.svg");
+                width: 48px;
+                height: 48px;
+                colorize: root.missing-path == "" ? Theme.accent : #e6a23c;
+            }
+        }
+        Text {
+            text: root.missing-path == "" ? @tr("Welcome to AudioPlayer!") : @tr("Database not found");
+            font-size: 20px;
+            font-weight: 600;
+            color: Theme.text-primary;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.missing-path == ""
+                ? @tr("Choose where to keep your music library database, for example on an external drive. Your settings are stored in it too.")
+                : @tr("The database “{0}” cannot be found. If it is on an external drive, connect the drive and retry.", root.missing-path);
+            font-size: 13px;
+            color: Theme.text-secondary;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        VerticalLayout {
+            spacing: 10px;
+            padding-top: 8px;
+            if root.missing-path != "": HorizontalLayout {
+                alignment: center;
+                Button {
+                    width: 300px;
+                    text: @tr("Retry");
+                    primary: true;
+                    clicked => {
+                        root.retry();
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: center;
+                Button {
+                    width: 300px;
+                    text: @tr("Create Database…");
+                    primary: root.missing-path == "";
+                    clicked => {
+                        root.create-database();
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: center;
+                Button {
+                    width: 300px;
+                    text: @tr("Open Database…");
+                    clicked => {
+                        root.open-database();
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: center;
+                Button {
+                    width: 300px;
+                    text: @tr("Import a v0.1 Database…");
+                    clicked => {
+                        root.import-legacy();
+                    }
+                }
+            }
+        }
+
+        if root.problem != DatabaseProblem.none: Text {
+            text: DatabaseProblems.describe(root.problem, root.problem-path, root.problem-detail);
+            font-size: 12px;
+            color: #f56c6c;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+}
