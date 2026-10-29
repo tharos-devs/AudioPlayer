@@ -27,7 +27,8 @@ cp -R target/release/bundle/AudioPlayer.app /Applications/
 L'app est signée localement (ad hoc) : suffisant sur ce Mac ; une distribution à d'autres
 demandera un certificat de développeur Apple et la notarisation.
 
-En ligne de commande, l'import de l'ancienne version de AudioPlayer (rust + Tauri + vuejs) existe aussi :
+Une base de l'ancienne version de AudioPlayer (rust + Tauri + vuejs) se convertit en ligne de
+commande (l'ancienne base n'est que lue) ; la nouvelle s'ouvre ensuite par « Ouvrir une base » :
 
 ```bash
 cargo run --release -p audioplayer-db --bin import-v01 -- ancienne.db nouvelle.db
@@ -59,7 +60,7 @@ crates/app/
   src/library.rs     catalogue de la bibliothèque courante, chargé en mémoire
   src/covers.rs      décodage des pochettes
   ui/app.slint       fenêtre principale
-  ui/setup.slint     écran de démarrage (créer / ouvrir / importer une base)
+  ui/setup.slint     écran de démarrage (créer / ouvrir une base)
   ui/theme.slint     thème clair/sombre + couleurs d'accent
   ui/widgets.slint   composants réutilisables
   ui/tracks.slint    table des morceaux (tri, glisser-déposer, menu contextuel)

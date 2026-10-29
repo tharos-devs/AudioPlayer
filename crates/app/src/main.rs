@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use audioplayer_audio::{Engine, Event};
-use audioplayer_db::{legacy, Database, FileKind, TrackDetails};
+use audioplayer_db::{Database, FileKind, TrackDetails};
 use audioplayer_scanner::write::Field;
 use library::{format_duration, sort_key, Library};
 use settings::Settings;
@@ -2512,28 +2512,6 @@ fn choose_existing_database() -> Result<Option<PathBuf>, Problem> {
     Ok(Some(path))
 }
 
-// L'ancienne base est lue en lecture seule ; la nouvelle est créée à côté de l'endroit choisi.
-fn import_legacy_database() -> Result<Option<PathBuf>, Problem> {
-    let Some(legacy_path) = database_dialog().set_title("v0.1 database").pick_file() else { return Ok(None) };
-    if audioplayer_db::inspect(&legacy_path).map_err(|e| Problem::failed(&legacy_path, e))? != Some(FileKind::Legacy) {
-        return Err(Problem::new(DatabaseProblem::NotLegacy, &legacy_path));
-    }
-    let directory = legacy_path.parent().map(Path::to_owned).unwrap_or_default();
-    let dialog = database_dialog().set_directory(directory).set_file_name("audioplayer-library.db");
-    let Some(path) = dialog.save_file() else { return Ok(None) };
-    if path.exists() {
-        return Err(Problem::new(DatabaseProblem::AlreadyExists, &path));
-    }
-    let result = Database::open(&path).and_then(|mut db| legacy::import(&mut db, &legacy_path).map(|_| ()));
-    if let Err(error) = result {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-        return Err(Problem::failed(&path, error));
-    }
-    Ok(Some(path))
-}
-
 fn apply_settings(ui: &AppWindow, settings: &Settings) {
     let theme = ui.global::<Theme>();
     let appearance = &settings.appearance;
@@ -3050,8 +3028,6 @@ fn show_setup(missing: Option<&Path>, problem: Option<Problem>) {
     setup.on_create_database(move || f(choose_new_database()));
     let f = finish.clone();
     setup.on_open_database(move || f(choose_existing_database()));
-    let f = finish.clone();
-    setup.on_import_legacy(move || f(import_legacy_database()));
     let missing = missing.map(Path::to_owned);
     setup.on_retry(move || {
         if let Some(path) = &missing {

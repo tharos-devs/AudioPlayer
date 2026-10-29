@@ -2,13 +2,12 @@ import { Theme } from "theme.slint";
 import { ThemedButton } from "widgets.slint";
 
 // Problèmes rencontrés en créant ou en ouvrant une base ; le texte est formé ici pour @tr.
-export enum DatabaseProblem { none, already-exists, legacy-file, not-legacy, too-new, unknown-file, failed }
+export enum DatabaseProblem { none, already-exists, legacy-file, too-new, unknown-file, failed }
 
 export global DatabaseProblems {
     pure public function describe(problem: DatabaseProblem, path: string, detail: string) -> string {
         return problem == DatabaseProblem.already-exists ? @tr("“{0}” already exists. Choose a new file name.", path)
-            : problem == DatabaseProblem.legacy-file ? @tr("“{0}” is a v0.1 database: use “Import a v0.1 Database…”.", path)
-            : problem == DatabaseProblem.not-legacy ? @tr("“{0}” is not a v0.1 database.", path)
+            : problem == DatabaseProblem.legacy-file ? @tr("“{0}” is a v0.1 database. Convert it first with the import-v01 command (see the README).", path)
             : problem == DatabaseProblem.too-new ? @tr("“{0}” was created by a newer version of AudioPlayer.", path)
             : problem == DatabaseProblem.unknown-file ? @tr("“{0}” is not an AudioPlayer database.", path)
             : problem == DatabaseProblem.failed ? @tr("Could not use “{0}”: {1}", path, detail)
@@ -16,7 +15,7 @@ export global DatabaseProblems {
     }
 }
 
-// Premier lancement, ou base introuvable : créer, ouvrir ou importer une base.
+// Premier lancement, ou base introuvable : créer ou ouvrir une base.
 export component SetupWindow inherits Window {
     title: "AudioPlayer";
     icon: @image-url("icons/app.png");
@@ -32,7 +31,6 @@ export component SetupWindow inherits Window {
     in property <string> problem-detail;
     callback create-database();
     callback open-database();
-    callback import-legacy();
     callback retry();
 
     VerticalLayout {
@@ -98,16 +96,6 @@ export component SetupWindow inherits Window {
                     text: @tr("Open Database…");
                     clicked => {
                         root.open-database();
-                    }
-                }
-            }
-            HorizontalLayout {
-                alignment: center;
-                ThemedButton {
-                    width: 300px;
-                    text: @tr("Import a v0.1 Database…");
-                    clicked => {
-                        root.import-legacy();
                     }
                 }
             }
