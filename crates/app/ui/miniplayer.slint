@@ -6,12 +6,17 @@ component WindowButton inherits Rectangle {
     in property <image> icon;
     in property <color> hover-color;
     callback clicked();
+    // Couleur de l'icône survolée (accent pour le retour, blanc sur rouge pour fermer).
+    in property <color> hover-icon;
     background: touch.has-hover ? root.hover-color : Theme.mini-overlay-bg;
+    animate background { duration: 120ms; }
     Image {
         source: root.icon;
         width: 15px;
         height: 15px;
-        colorize: touch.has-hover && root.hover-color == Theme.mini-close-bg ? #ffffff : Theme.mini-overlay-text;
+        colorize: touch.has-hover ? root.hover-icon : Theme.mini-overlay-text;
+        transform-scale: touch.has-hover ? 1.15 : 1;
+        animate transform-scale { duration: 120ms; }
     }
     touch := TouchArea {
         clicked => {
@@ -272,6 +277,7 @@ export component MiniPlayerWindow inherits Window {
                 WindowButton {
                     icon: @image-url("icons/mini-up.svg");
                     hover-color: Theme.mini-overlay-hover;
+                    hover-icon: Theme.accent;
                     clicked => {
                         root.restore();
                     }
@@ -279,6 +285,7 @@ export component MiniPlayerWindow inherits Window {
                 WindowButton {
                     icon: @image-url("icons/mini-close.svg");
                     hover-color: Theme.mini-close-bg;
+                    hover-icon: #ffffff;
                     clicked => {
                         root.quit();
                     }

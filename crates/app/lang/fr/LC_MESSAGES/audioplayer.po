@@ -605,3 +605,9 @@ msgstr "Ce fichier n'est pas une image JPG ou PNG lisible."
 
 msgid "Please wait: a scan or a tag update is in progress."
 msgstr "Patientez : un scan ou une mise à jour des tags est en cours."
+
+msgid "Genre…"
+msgstr "Genre…"
+
+msgid "No match"
+msgstr "Aucun résultat"

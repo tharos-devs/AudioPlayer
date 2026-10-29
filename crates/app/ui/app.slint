@@ -167,6 +167,7 @@ export component AppWindow inherits Window {
     callback tags-cancel();
     callback tag-edited(string, string);
     callback tag-field-toggled(string);
+    callback genres-opened();
 
     callback select-library(int);
     callback select-letter(string);
@@ -686,6 +687,9 @@ export component AppWindow inherits Window {
                         }
                         toggle-field(key) => {
                             root.tag-field-toggled(key);
+                        }
+                        genres-opened => {
+                            root.genres-opened();
                         }
                     }
                 }

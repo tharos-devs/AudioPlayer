@@ -2091,8 +2091,6 @@ impl App {
         if !self.tag_tracks.is_empty() {
             self.tag_edits.clear();
             ui.set_tags_editing(true);
-            let genre = self.tag_values.get("genre").filter(|(_, multiple)| !multiple).map(|(v, _)| v.clone()).unwrap_or_default();
-            self.suggest_genres(ui, &genre);
         }
     }
 
@@ -2103,7 +2101,7 @@ impl App {
         }
     }
 
-    // Genres de la v0.1 et ceux de la bibliothèque contenant le texte saisi (hors lui-même).
+    // Genres de la v0.1 et ceux de la bibliothèque contenant le texte saisi ; tous si rien n'est tapé.
     fn suggest_genres(&self, ui: &AppWindow, typed: &str) {
         let library = self.selected_library.map(|i| self.libraries[i].id);
         let mut genres: Vec<String> = library.and_then(|id| self.db.genres(id).ok()).unwrap_or_default();
@@ -2113,8 +2111,7 @@ impl App {
         let typed = typed.trim().to_lowercase();
         let shown: Vec<SharedString> = genres
             .into_iter()
-            .filter(|g| g.to_lowercase() != typed && g.to_lowercase().contains(&typed))
-            .take(8)
+            .filter(|g| g.to_lowercase().contains(&typed))
             .map(SharedString::from)
             .collect();
         ui.set_genre_suggestions(model(shown));
@@ -2716,6 +2713,8 @@ fn launch(path: &Path) -> Result<(), Problem> {
     ui.on_tags_cancel(move || c.update(|app, ui| app.cancel_tags(ui)));
     let c = ctx.clone();
     ui.on_tag_edited(move |key, value| c.update(|app, ui| app.tag_edited(ui, &key, &value)));
+    let c = ctx.clone();
+    ui.on_genres_opened(move || c.update(|app, ui| app.suggest_genres(ui, "")));
     let c = ctx.clone();
     ui.on_artwork_pick(move || c.update(|app, ui| app.pick_artwork(ui)));
     let c = ctx.clone();

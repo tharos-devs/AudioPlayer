@@ -143,52 +143,57 @@ component Choice inherits HorizontalLayout {
     }
 }
 
-// Genre : saisie libre, avec les genres connus qui correspondent à ce qui est tapé.
-component GenreField inherits VerticalLayout {
+// Genre, comme la v0.1 : saisie libre, et au focus une liste des genres proposés,
+// filtrée par ce qui est tapé. La liste est dessinée par le tiroir, par-dessus les
+// champs suivants (une PopupWindow prendrait le focus du champ).
+component GenreField inherits Rectangle {
     in property <string> value;
     in property <string> placeholder;
-    in property <[string]> suggestions;
+    in property <bool> list-open;
+    // Genre choisi dans la liste ; `pick-serial` change à chaque choix.
+    in property <string> picked;
+    in property <int> pick-serial;
     callback edited(string);
+    // Coin bas-gauche du champ dans la fenêtre, et sa largeur.
+    callback opened(length, length, length);
+    callback closed();
     callback accepted();
     callback cancelled();
-    spacing: 2px;
+    property <bool> focused: field.focused;
+    height: field.height;
+
+    function open() {
+        root.opened(root.absolute-position.x, root.absolute-position.y + (root.height + 2px) * Theme.zoom, root.width);
+    }
+    changed focused => {
+        if self.focused {
+            root.open();
+        } else {
+            root.closed();
+        }
+    }
+    changed pick-serial => {
+        field.text = root.picked;
+    }
+
     field := TagField {
+        width: 100%;
         text: root.value;
-        placeholder: root.placeholder;
+        placeholder: root.placeholder != "" ? root.placeholder : @tr("Genre…");
         edited(text) => {
             root.edited(text);
+            if !root.list-open {
+                root.open();
+            }
         }
         accepted => {
             root.accepted();
         }
         cancelled => {
-            root.cancelled();
-        }
-    }
-    if field.focused && root.suggestions.length > 0: Rectangle {
-        border-radius: 3px;
-        border-width: Theme.hairline;
-        border-color: Theme.border-base;
-        background: Theme.footer-bg;
-        VerticalLayout {
-            padding-top: 3px;
-            padding-bottom: 3px;
-            for genre in root.suggestions: Rectangle {
-                height: 22px;
-                background: item.has-hover ? Theme.hover-tint : transparent;
-                Text {
-                    x: 8px;
-                    text: genre;
-                    font-size: 12px;
-                    color: item.has-hover ? Theme.accent : Theme.text-primary;
-                    vertical-alignment: center;
-                }
-                item := TouchArea {
-                    clicked => {
-                        field.text = genre;
-                        root.edited(genre);
-                    }
-                }
+            if root.list-open {
+                root.closed();
+            } else {
+                root.cancelled();
             }
         }
     }
@@ -249,6 +254,16 @@ export component TagsDrawer inherits Rectangle {
     callback cancel();
     callback value-edited(string, string);
     callback toggle-field(string);
+    callback genres-opened();
+    property <bool> genre-open;
+    property <length> genre-x;
+    property <length> genre-y;
+    property <length> genre-width;
+    property <string> genre-picked;
+    property <int> genre-serial;
+    changed editing => {
+        root.genre-open = false;
+    }
     background: Theme.panel-bg;
 
     VerticalLayout {
@@ -340,6 +355,10 @@ export component TagsDrawer inherits Rectangle {
 
         if root.count > 0: scroll := ScrollView {
             vertical-stretch: 1;
+            // Le défilement déplacerait le champ sous la liste : elle se ferme.
+            changed viewport-y => {
+                root.genre-open = false;
+            }
             // Largeur imposée : sans elle, la hauteur d'un texte replié (long commentaire)
             // est calculée pour une seule ligne et le bas est rogné.
             VerticalLayout {
@@ -375,7 +394,20 @@ export component TagsDrawer inherits Rectangle {
                         if root.editing && row.editable && row.key == "genre": GenreField {
                             value: row.value;
                             placeholder: row.multiple ? @tr("Multiple values") : "";
-                            suggestions: root.genre-suggestions;
+                            list-open: root.genre-open;
+                            picked: root.genre-picked;
+                            pick-serial: root.genre-serial;
+                            opened(x, y, width) => {
+                                // Les positions absolues sont dans la fenêtre, donc zoomées.
+                                root.genre-x = (x - root.absolute-position.x) / Theme.zoom;
+                                root.genre-y = (y - root.absolute-position.y) / Theme.zoom;
+                                root.genre-width = width;
+                                root.genre-open = true;
+                                root.genres-opened();
+                            }
+                            closed => {
+                                root.genre-open = false;
+                            }
                             edited(value) => {
                                 root.value-edited(row.key, value);
                             }
@@ -478,6 +510,60 @@ export component TagsDrawer inherits Rectangle {
                         font-size: 11px;
                         color: Theme.text-secondary;
                         horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    if root.genre-open: Rectangle {
+        x: root.genre-x;
+        y: root.genre-y;
+        width: root.genre-width;
+        height: min(220px, genres.preferred-height + 8px, root.height - self.y - 4px);
+        background: Theme.footer-bg;
+        border-radius: 4px;
+        border-width: Theme.hairline;
+        border-color: Theme.border-base;
+        drop-shadow-blur: 16px;
+        drop-shadow-offset-y: 4px;
+        drop-shadow-color: #00000080;
+        clip: true;
+        // Les clics dans la liste ne traversent pas vers les champs dessous.
+        TouchArea { }
+        Flickable {
+            y: 4px;
+            height: parent.height - 8px;
+            content-height: genres.preferred-height;
+            genres := VerticalLayout {
+                for genre in root.genre-suggestions: Rectangle {
+                    height: 26px;
+                    background: genre-item.has-hover ? Theme.hover-tint : transparent;
+                    Text {
+                        x: 14px;
+                        text: genre;
+                        font-size: 12px;
+                        color: genre-item.has-hover ? Theme.accent : Theme.text-secondary;
+                        vertical-alignment: center;
+                    }
+                    genre-item := TouchArea {
+                        clicked => {
+                            root.genre-picked = genre;
+                            root.genre-serial += 1;
+                            root.value-edited("genre", genre);
+                            root.genre-open = false;
+                        }
+                    }
+                }
+                if root.genre-suggestions.length == 0: Rectangle {
+                    height: 28px;
+                    Text {
+                        x: 14px;
+                        text: @tr("No match");
+                        font-size: 12px;
+                        font-italic: true;
+                        color: Theme.text-tertiary;
                         vertical-alignment: center;
                     }
                 }
