@@ -127,7 +127,8 @@ component AlbumHeaderRow inherits Rectangle {
                 overflow: elide;
             }
             Text {
-                text: root.item.artist + " • " + root.item.year + " • " + @tr("{n} track" | "{n} tracks" % root.item.track-count);
+                // Année inconnue (0) : omise.
+                text: root.item.artist + (root.item.year > 0 ? " • " + root.item.year : "") + " • " + @tr("{n} track" | "{n} tracks" % root.item.track-count);
                 font-size: 10px;
                 color: Theme.text-tertiary;
                 horizontal-alignment: center;

@@ -3,21 +3,36 @@
 Lecteur audio de bureau (macOS, Windows, Linux) écrit entièrement en Rust, interface en [Slint](https://slint.dev).
 Refonte complète de la v0.1 (Tauri + Vue), conservée dans `../AudioPlayerOld` comme référence.
 
-> État actuel : **prototype d'interface**. La bibliothèque est générée (≈13 000 morceaux),
-> la lecture est simulée. Pas encore de base SQLite, de scan ni d'audio.
+> État actuel : **prototype d'interface** branché sur une base SQLite importée de la v0.1.
+> La lecture est simulée ; pas encore de scan ni d'audio. Les playlists ne sont pas enregistrées.
 
 ## Lancer
 
+La base se trouve dans le dossier de données de l'utilisateur
+(`~/Library/Application Support/AudioPlayer/library.db` sur macOS) ; la variable
+`AUDIOPLAYER_DB` permet d'en désigner une autre.
+
+Créer la base à partir de celle de la v0.1 (ouverte en lecture seule, jamais modifiée) :
+
 ```bash
+cargo run --release -p audioplayer-db --bin import-v01 -- \
+    "/Volumes/Transcend/Music Librairies/audioplayer.db" \
+    ~/Library/Application\ Support/AudioPlayer/library.db
 cargo run --release
 ```
 
 ## Structure
 
 ```
+crates/db/
+  src/schema.rs      schéma versionné (PRAGMA user_version) et migrations
+  src/catalog.rs     lectures du catalogue d'une bibliothèque
+  src/legacy.rs      import de la base de la v0.1
+  src/bin/import-v01.rs
 crates/app/
   src/main.rs        état de l'application, branchement des callbacks
-  src/library.rs     bibliothèque factice (temporaire)
+  src/library.rs     catalogue de la bibliothèque courante, chargé en mémoire
+  src/covers.rs      décodage des pochettes
   ui/app.slint       fenêtre principale
   ui/theme.slint     thème clair/sombre + couleurs d'accent
   ui/widgets.slint   composants réutilisables

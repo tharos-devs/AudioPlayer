@@ -217,6 +217,8 @@ export component AppWindow inherits Window {
     background: Theme.bg-primary;
     default-font-size: 12px;
 
+    in property <[ListItem]> libraries;
+    in-out property <int> selected-library: -1;
     in property <[ListItem]> artists;
     in property <[ListItem]> albums;
     in property <[ListItem]> playlists;
@@ -261,6 +263,7 @@ export component AppWindow inherits Window {
     in-out property <length> artists-width: 220px;
     in-out property <length> albums-width: 280px;
 
+    callback select-library(int);
     callback select-artist(int);
     callback select-album(int);
     callback select-playlist(int);
@@ -360,6 +363,16 @@ export component AppWindow inherits Window {
                 background: Theme.bg-secondary;
 
                 VerticalLayout {
+                    PanelHeader {
+                        title: @tr("Libraries");
+                    }
+                    for library in root.libraries: SelectableRow {
+                        label: library.label;
+                        selected: library.id == root.selected-library;
+                        clicked => {
+                            root.select-library(library.id);
+                        }
+                    }
                     PanelHeader {
                         title: @tr("Library");
                     }

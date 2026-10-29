@@ -39,6 +39,9 @@ msgstr "Indigo"
 msgid "Language"
 msgstr "Langue"
 
+msgid "Libraries"
+msgstr "Bibliothèques"
+
 msgid "Library"
 msgstr "Bibliothèque"
 

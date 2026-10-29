@@ -12,3 +12,5 @@ slint-build = "1.18"
 rusqlite = { version = "0.41", features = ["bundled"] }
 base64 = "0.23"
 tempfile = "3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+dirs = "7"

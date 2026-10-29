@@ -1,32 +1,39 @@
-// Prototype : valide Slint sur la vue bibliothèque avant la refonte complète.
-// Pas encore de base de données ni d'audio : la bibliothèque et ses jaquettes sont
-// générées, et la lecture est simulée par un minuteur.
+// Prototype : la bibliothèque vient de la base SQLite (importée de la v0.1), mais
+// il n'y a pas encore d'audio : la lecture est simulée par un minuteur.
 
 mod covers;
 mod library;
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
+use audioplayer_db::Database;
 use library::{format_duration, sort_key, Library};
 use slint::{DataTransfer, Image, ModelRc, SharedString, Timer, TimerMode, VecModel};
 
 slint::include_modules!();
 
 const TRACK_PAYLOAD_PREFIX: &str = "audioplayer/track:";
-const ARTIST_COUNT: usize = 400;
-const COVER_COUNT: usize = 48;
+// Vignettes de 80px affichées jusqu'à 80px : 160px suffisent en Retina.
+const COVER_SIZE: u32 = 160;
 
+// Pas encore enregistrées en base : elles retiennent des ids de morceaux.
 struct Playlist {
     name: String,
-    tracks: Vec<usize>,
+    tracks: Vec<i64>,
 }
 
 struct App {
+    db: Database,
+    libraries: Vec<audioplayer_db::Library>,
+    selected_library: Option<usize>,
     library: Library,
-    covers: Vec<Image>,
+    // Décodées à la première demande.
+    covers: RefCell<HashMap<usize, Option<Image>>>,
     artist_order: Vec<usize>,
     artist_album_counts: Vec<usize>,
     album_track_counts: Vec<usize>,
@@ -43,30 +50,22 @@ struct App {
 }
 
 impl App {
-    fn new(library: Library, covers: Vec<Image>) -> Self {
-        let mut artist_order: Vec<usize> = (0..library.artists.len()).collect();
-        artist_order.sort_by(|&a, &b| library.artists[a].sort_key.cmp(&library.artists[b].sort_key));
-
-        let mut artist_album_counts = vec![0; library.artists.len()];
-        let mut album_track_counts = vec![0; library.albums.len()];
-        for album in &library.albums {
-            artist_album_counts[album.artist] += 1;
-        }
-        for track in &library.tracks {
-            album_track_counts[track.album] += 1;
-        }
-
+    fn new(db: Database) -> audioplayer_db::Result<Self> {
+        let libraries = db.libraries()?;
         let playlists = ["Favorites", "Road Trip", "Focus", "Late Night"]
             .into_iter()
             .map(|name| Playlist { name: name.to_owned(), tracks: Vec::new() })
             .collect();
 
-        App {
-            library,
-            covers,
-            artist_order,
-            artist_album_counts,
-            album_track_counts,
+        let mut app = App {
+            db,
+            libraries,
+            selected_library: None,
+            library: Library::default(),
+            covers: RefCell::default(),
+            artist_order: Vec::new(),
+            artist_album_counts: Vec::new(),
+            album_track_counts: Vec::new(),
             selected_artist: None,
             selected_album: None,
             selected_playlist: None,
@@ -76,11 +75,71 @@ impl App {
             playing: None,
             position: 0,
             is_playing: false,
+        };
+        if !app.libraries.is_empty() {
+            app.load_library(0)?;
         }
+        Ok(app)
+    }
+
+    // Remet à zéro la navigation : les index de l'ancienne bibliothèque ne valent plus rien.
+    fn load_library(&mut self, index: usize) -> audioplayer_db::Result<()> {
+        let library = Library::load(&self.db, self.libraries[index].id)?;
+
+        let mut artist_order: Vec<usize> = (0..library.artists.len()).collect();
+        artist_order.sort_by(|&a, &b| library.artists[a].sort_key.cmp(&library.artists[b].sort_key));
+        let mut artist_album_counts = vec![0; library.artists.len()];
+        let mut album_track_counts = vec![0; library.albums.len()];
+        for album in &library.albums {
+            artist_album_counts[album.artist] += 1;
+        }
+        for track in &library.tracks {
+            album_track_counts[track.album] += 1;
+        }
+
+        self.selected_library = Some(index);
+        self.library = library;
+        self.covers.borrow_mut().clear();
+        self.artist_order = artist_order;
+        self.artist_album_counts = artist_album_counts;
+        self.album_track_counts = album_track_counts;
+        self.selected_artist = None;
+        self.selected_album = None;
+        self.visible.clear();
+        self.playing = None;
+        self.position = 0;
+        self.is_playing = false;
+        Ok(())
+    }
+
+    fn select_library(&mut self, ui: &AppWindow, id: i32) {
+        let Some(index) = from_ui_id(id).filter(|&i| i < self.libraries.len()) else { return };
+        if self.selected_library == Some(index) {
+            return;
+        }
+        if let Err(error) = self.load_library(index) {
+            eprintln!("library {}: {error}", self.libraries[index].name);
+            return;
+        }
+        self.selected_playlist = None;
+        self.clear_search(ui);
+        ui.set_selected_track(-1);
+        self.refresh_all(ui);
+    }
+
+    fn refresh_libraries(&self, ui: &AppWindow) {
+        let rows = self.libraries.iter().enumerate().map(|(id, library)| ListItem {
+            id: id as i32,
+            label: library.name.as_str().into(),
+            ..Default::default()
+        });
+        ui.set_libraries(model(rows.collect()));
+        ui.set_selected_library(to_ui_id(self.selected_library));
     }
 
     fn refresh_all(&mut self, ui: &AppWindow) {
         ui.set_library_count(self.library.tracks.len() as i32);
+        self.refresh_libraries(ui);
         self.refresh_artists(ui);
         self.refresh_albums(ui);
         self.refresh_playlists(ui);
@@ -89,8 +148,16 @@ impl App {
     }
 
     fn cover(&self, album: usize) -> (Image, bool) {
-        match self.library.albums[album].cover {
-            Some(cover) => (self.covers[cover].clone(), true),
+        if !self.library.albums[album].has_artwork {
+            return (Image::default(), false);
+        }
+        let mut covers = self.covers.borrow_mut();
+        let cover = covers.entry(album).or_insert_with(|| {
+            let artwork = self.db.artwork(self.library.albums[album].id, COVER_SIZE);
+            artwork.ok().flatten().and_then(|artwork| covers::decode(&artwork.data))
+        });
+        match cover {
+            Some(image) => (image.clone(), true),
             None => (Image::default(), false),
         }
     }
@@ -113,10 +180,8 @@ impl App {
             Some(artist) => (0..albums.len()).filter(|&a| albums[a].artist == artist).collect(),
             None => (0..albums.len()).collect(),
         };
-        match self.selected_artist {
-            Some(_) => ids.sort_by_key(|&a| albums[a].year),
-            None => ids.sort_by(|&a, &b| albums[a].sort_key.cmp(&albums[b].sort_key)),
-        }
+        // Comme la v0.1 : albums par titre, même pour un seul artiste.
+        ids.sort_by(|&a, &b| albums[a].sort_key.cmp(&albums[b].sort_key).then(a.cmp(&b)));
 
         ui.set_albums_count(ids.len() as i32);
         let rows = ids.into_iter().map(|album| {
@@ -137,7 +202,7 @@ impl App {
         let rows = self.playlists.iter().enumerate().map(|(id, playlist)| ListItem {
             id: id as i32,
             label: playlist.name.as_str().into(),
-            count: playlist.tracks.len() as i32,
+            count: playlist.tracks.iter().filter(|&&id| self.library.track_by_id(id).is_some()).count() as i32,
             ..Default::default()
         });
         ui.set_playlists(model(rows.collect()));
@@ -150,10 +215,10 @@ impl App {
         let query = sort_key(self.query.trim());
 
         let mut ids: Vec<usize> = match self.selected_playlist {
-            Some(playlist) => self.playlists[playlist].tracks.clone(),
+            Some(playlist) => self.playlists[playlist].tracks.iter().filter_map(|&id| self.library.track_by_id(id)).collect(),
             None if !query.is_empty() => (0..tracks.len()).collect(),
             None => (0..tracks.len())
-                .filter(|&t| self.selected_artist.is_none_or(|artist| tracks[t].artist == artist))
+                .filter(|&t| self.selected_artist.is_none_or(|artist| self.library.albums[tracks[t].album].artist == artist))
                 .filter(|&t| self.selected_album.is_none_or(|album| tracks[t].album == album))
                 .collect(),
         };
@@ -260,13 +325,14 @@ impl App {
             || self.library.albums[track.album].sort_key.contains(query)
     }
 
-    // Ordre de la bibliothèque : artiste, puis albums par année, puis disque et numéro.
+    // Ordre de la bibliothèque : artiste, puis albums par titre, puis disque et numéro.
     fn compare(&self, a: usize, b: usize) -> Ordering {
         let (lib, ta, tb) = (&self.library, &self.library.tracks[a], &self.library.tracks[b]);
-        lib.artists[ta.artist]
+        let (album_a, album_b) = (&lib.albums[ta.album], &lib.albums[tb.album]);
+        lib.artists[album_a.artist]
             .sort_key
-            .cmp(&lib.artists[tb.artist].sort_key)
-            .then(lib.albums[ta.album].year.cmp(&lib.albums[tb.album].year))
+            .cmp(&lib.artists[album_b.artist].sort_key)
+            .then(album_a.sort_key.cmp(&album_b.sort_key))
             .then(ta.album.cmp(&tb.album))
             .then(ta.disc.cmp(&tb.disc))
             .then(ta.number.cmp(&tb.number))
@@ -403,10 +469,11 @@ impl App {
 
     fn add_to_playlist(&mut self, ui: &AppWindow, playlist: usize, track: usize) {
         let Some(target) = self.playlists.get_mut(playlist) else { return };
-        let kind = if target.tracks.contains(&track) {
+        let id = self.library.tracks[track].id;
+        let kind = if target.tracks.contains(&id) {
             StatusKind::AlreadyInPlaylist
         } else {
-            target.tracks.push(track);
+            target.tracks.push(id);
             StatusKind::AddedToPlaylist
         };
         let status = Status {
@@ -464,16 +531,28 @@ fn select_language(ui: &AppWindow, language: &str) {
     }
 }
 
-fn main() -> Result<(), slint::PlatformError> {
+// `AUDIOPLAYER_DB` permet de pointer une autre base, par exemple pendant les essais.
+fn database_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("AUDIOPLAYER_DB") {
+        return path.into();
+    }
+    let dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("AudioPlayer");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("library.db")
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = AppWindow::new()?;
     // Slint suit la langue du système par défaut : l'interface démarre en anglais.
     select_language(&ui, "en");
 
-    let library = Library::generate(ARTIST_COUNT, COVER_COUNT);
-    let app = App::new(library, covers::generate(COVER_COUNT));
+    let path = database_path();
+    let app = App::new(Database::open(&path).map_err(|e| format!("{}: {e}", path.display()))?)?;
     let ctx = Context { app: Rc::new(RefCell::new(app)), ui: ui.as_weak() };
     ctx.update(|app, ui| app.refresh_all(ui));
 
+    let c = ctx.clone();
+    ui.on_select_library(move |id| c.update(|app, ui| app.select_library(ui, id)));
     let c = ctx.clone();
     ui.on_select_artist(move |id| c.update(|app, ui| app.select_artist(ui, id)));
     let c = ctx.clone();
@@ -523,5 +602,6 @@ fn main() -> Result<(), slint::PlatformError> {
     let ticker = Timer::default();
     ticker.start(TimerMode::Repeated, Duration::from_secs(1), move || c.update(|app, ui| app.tick(ui)));
 
-    ui.run()
+    ui.run()?;
+    Ok(())
 }

@@ -5,6 +5,9 @@ edition.workspace = true
 
 [dependencies]
 slint.workspace = true
+audioplayer-db = { path = "../db" }
+image.workspace = true
+dirs.workspace = true
 
 [build-dependencies]
 slint-build.workspace = true
