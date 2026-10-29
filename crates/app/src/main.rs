@@ -6,6 +6,7 @@ mod library;
 mod location;
 mod media;
 mod settings;
+mod update;
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -173,6 +174,9 @@ struct App {
     mini_position: Option<(i32, i32)>,
     // Album de « Set Album Artwork… » et octets de l'image choisie.
     artwork_request: Option<(usize, Vec<u8>)>,
+    updater: update::Updater,
+    // Vérification demandée par le menu : « à jour » et les erreurs s'affichent aussi.
+    update_manual: bool,
     // Lecture suspendue pendant l'écriture : position et état à reprendre.
     tag_resume: Option<(Duration, bool)>,
 }
@@ -235,6 +239,8 @@ impl App {
             tag_technical: true,
             mini_position: None,
             artwork_request: None,
+            updater: update::Updater::default(),
+            update_manual: false,
             tag_resume: None,
         };
         if !app.libraries.is_empty() {
@@ -1174,6 +1180,7 @@ impl App {
 
     fn tick(&mut self, ui: &AppWindow) {
         self.poll_scan(ui);
+        self.show_update(ui);
         self.handle_media_commands(ui);
         self.sync_controls(ui);
         for event in self.engine.events() {
@@ -2259,6 +2266,75 @@ impl App {
         self.show_status_for(ui, status, Duration::from_secs(if failed.is_empty() { 5 } else { 15 }));
     }
 
+    fn check_for_updates(&mut self, ui: &AppWindow, manual: bool) {
+        // La vérification automatique ne remplace pas une autre déjà lancée ou affichée.
+        if !manual && !matches!(self.updater.state(), update::State::Idle) {
+            return;
+        }
+        self.update_manual = manual;
+        self.updater.check();
+        self.show_update(ui);
+    }
+
+    // État de la mise à jour vers la petite fenêtre ; une vérification automatique ne se
+    // montre que si une version est disponible.
+    fn show_update(&self, ui: &AppWindow) {
+        let state = self.updater.state();
+        let stage = match &state {
+            update::State::Idle => UpdateStage::Hidden,
+            update::State::Checking if self.update_manual => UpdateStage::Checking,
+            update::State::UpToDate if self.update_manual => UpdateStage::UpToDate,
+            update::State::Failed(_) if self.update_manual => UpdateStage::Failed,
+            update::State::Checking | update::State::UpToDate | update::State::Failed(_) => UpdateStage::Hidden,
+            update::State::Available(_) => UpdateStage::Available,
+            update::State::Downloading(..) => UpdateStage::Downloading,
+            update::State::Installing => UpdateStage::Installing,
+            update::State::Installed(_) => UpdateStage::Installed,
+        };
+        if ui.get_update_stage() != stage {
+            ui.set_update_stage(stage);
+        }
+        match state {
+            update::State::Available(available) => {
+                ui.set_update_version(available.version.as_str().into());
+                ui.set_update_installable(available.installable());
+            }
+            update::State::Downloading(received, total) => {
+                ui.set_update_received(received as f32 / 1_048_576.0);
+                ui.set_update_total(total as f32 / 1_048_576.0);
+            }
+            update::State::Installed(version) => ui.set_update_version(version.as_str().into()),
+            update::State::Failed(message) => ui.set_update_message(message.as_str().into()),
+            _ => {}
+        }
+    }
+
+    fn install_update(&mut self, ui: &AppWindow) {
+        if let update::State::Available(available) = self.updater.state() {
+            // Une installation qui échoue doit se voir, même lancée par la vérification automatique.
+            self.update_manual = true;
+            self.updater.install(available);
+            self.show_update(ui);
+        }
+    }
+
+    fn open_update_notes(&self) {
+        let url = match self.updater.state() {
+            update::State::Available(available) => available.url,
+            _ => format!("https://github.com/{}/releases/latest", update::REPO),
+        };
+        let result = if cfg!(target_os = "macos") {
+            std::process::Command::new("open").arg(&url).spawn()
+        } else if cfg!(windows) {
+            std::process::Command::new("explorer").arg(&url).spawn()
+        } else {
+            std::process::Command::new("xdg-open").arg(&url).spawn()
+        };
+        if let Err(error) = result {
+            eprintln!("open {url}: {error}");
+        }
+    }
+
     // « Added last n unités » ; SQLite ne connaît pas les semaines.
     fn set_recent(&mut self, ui: &AppWindow, amount: u32, unit: &str) {
         let amount = amount.clamp(1, 99);
@@ -2714,6 +2790,19 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let c = ctx.clone();
     ui.on_tag_edited(move |key, value| c.update(|app, ui| app.tag_edited(ui, &key, &value)));
     let c = ctx.clone();
+    ui.on_update_check(move || c.update(|app, ui| app.check_for_updates(ui, true)));
+    let c = ctx.clone();
+    ui.on_update_install(move || c.update(|app, ui| app.install_update(ui)));
+    let c = ctx.clone();
+    ui.on_update_dismiss(move || {
+        c.update(|app, ui| {
+            app.updater.dismiss();
+            app.show_update(ui);
+        })
+    });
+    let c = ctx.clone();
+    ui.on_update_notes(move || c.update(|app, _| app.open_update_notes()));
+    let c = ctx.clone();
     ui.on_genres_opened(move || c.update(|app, ui| app.suggest_genres(ui, "")));
     let c = ctx.clone();
     ui.on_artwork_pick(move || c.update(|app, ui| app.pick_artwork(ui)));
@@ -2790,6 +2879,21 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let (c, s) = (ctx.clone(), saved.clone());
     let autosave = Timer::default();
     autosave.start(TimerMode::Repeated, Duration::from_secs(1), move || save_settings(&c, &s));
+    let (c, s) = (ctx.clone(), saved.clone());
+    ui.on_update_restart(move || {
+        if let Err(error) = update::relaunch() {
+            c.update(|_, ui| {
+                ui.set_update_message(error.as_str().into());
+                ui.set_update_stage(UpdateStage::Failed);
+            });
+            return;
+        }
+        save_settings(&c, &s);
+        let _ = slint::quit_event_loop();
+    });
+    // Vérification discrète quelques secondes après l'ouverture.
+    let c = ctx.clone();
+    Timer::single_shot(Duration::from_secs(3), move || c.update(|app, ui| app.check_for_updates(ui, false)));
     let (c, s) = (ctx.clone(), saved.clone());
     ui.window().on_close_requested(move || {
         save_settings(&c, &s);

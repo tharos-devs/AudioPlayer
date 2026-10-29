@@ -1,0 +1,179 @@
+import { Theme } from "theme.slint";
+import { ThemedButton } from "widgets.slint";
+
+export enum UpdateStage { hidden, checking, up-to-date, available, downloading, installing, installed, failed }
+
+// Petite fenêtre de mise à jour en bas à gauche, comme celle de Ronnie : nouvelle version,
+// téléchargement, installation, puis redémarrage.
+export component UpdateCard inherits Rectangle {
+    in property <UpdateStage> stage;
+    in property <string> version;
+    in property <string> current;
+    // Téléchargement : Mo reçus et total (0 : inconnu).
+    in property <float> received;
+    in property <float> total;
+    in property <string> message;
+    // Faux si l'app ne peut pas s'installer elle-même : la page de la version est proposée.
+    in property <bool> installable;
+    callback install();
+    callback dismiss();
+    callback restart();
+    callback open-notes();
+    callback retry();
+
+    width: 310px;
+    height: layout.preferred-height;
+    border-radius: 6px;
+    background: Theme.footer-bg;
+    border-width: Theme.hairline;
+    border-color: Theme.border-base;
+    drop-shadow-blur: 16px;
+    drop-shadow-offset-y: 4px;
+    drop-shadow-color: #00000080;
+
+    // Absorbe les clics : la liste dessous ne les reçoit pas.
+    TouchArea { }
+
+    layout := VerticalLayout {
+        padding: 14px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle {
+                width: 8px;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: root.stage == UpdateStage.failed ? #f56c6c : Theme.accent;
+                    }
+                }
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: root.stage == UpdateStage.checking ? @tr("Checking for updates…")
+                    : root.stage == UpdateStage.up-to-date ? @tr("AudioPlayer is up to date")
+                    : root.stage == UpdateStage.available ? @tr("Update available")
+                    : root.stage == UpdateStage.downloading ? @tr("Downloading the update…")
+                    : root.stage == UpdateStage.installing ? @tr("Installing the update…")
+                    : root.stage == UpdateStage.installed ? @tr("Update installed")
+                    : @tr("Update failed");
+                font-size: 13px;
+                font-weight: 600;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+            }
+        }
+
+        if root.stage == UpdateStage.available: VerticalLayout {
+            spacing: 4px;
+            Text {
+                text: @tr("AudioPlayer {0} is available. You have version {1}.", root.version, root.current);
+                font-size: 12px;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                alignment: start;
+                Text {
+                    text: @tr("What's new");
+                    font-size: 12px;
+                    color: notes.has-hover ? Theme.accent-light-3 : Theme.accent;
+                    notes := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.open-notes();
+                        }
+                    }
+                }
+            }
+        }
+        if root.stage == UpdateStage.up-to-date: Text {
+            text: @tr("Version {0} is the latest.", root.current);
+            font-size: 12px;
+            color: Theme.text-secondary;
+        }
+        if root.stage == UpdateStage.downloading: VerticalLayout {
+            spacing: 6px;
+            Rectangle {
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.progress-bg;
+                Rectangle {
+                    x: 0;
+                    width: root.total > 0 ? parent.width * min(1, root.received / root.total) : 0px;
+                    border-radius: 3px;
+                    background: Theme.accent;
+                }
+            }
+            Text {
+                text: root.total > 0
+                    ? @tr("AudioPlayer {0}: {1} / {2} MB", root.version, root.received.to-fixed(1), root.total.to-fixed(1))
+                    : @tr("AudioPlayer {0}: {1} MB", root.version, root.received.to-fixed(1));
+                font-size: 11px;
+                color: Theme.text-tertiary;
+            }
+        }
+        if root.stage == UpdateStage.installing: Text {
+            text: @tr("AudioPlayer {0} is being installed. Enter your password if the system asks for it.", root.version);
+            font-size: 12px;
+            color: Theme.text-secondary;
+            wrap: word-wrap;
+        }
+        if root.stage == UpdateStage.installed: Text {
+            text: @tr("AudioPlayer {0} is installed. Restart to use the new version.", root.version);
+            font-size: 12px;
+            color: Theme.text-secondary;
+            wrap: word-wrap;
+        }
+        if root.stage == UpdateStage.failed: Text {
+            text: root.message;
+            font-size: 12px;
+            color: Theme.text-secondary;
+            wrap: word-wrap;
+        }
+
+        if root.stage != UpdateStage.downloading && root.stage != UpdateStage.installing && root.stage != UpdateStage.checking: HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+            padding-top: 4px;
+            ThemedButton {
+                height: 26px;
+                text: root.stage == UpdateStage.available || root.stage == UpdateStage.installed ? @tr("Later") : @tr("Close");
+                clicked => {
+                    root.dismiss();
+                }
+            }
+            if root.stage == UpdateStage.failed: ThemedButton {
+                height: 26px;
+                text: @tr("Retry");
+                clicked => {
+                    root.retry();
+                }
+            }
+            if root.stage == UpdateStage.available: ThemedButton {
+                height: 26px;
+                primary: true;
+                text: root.installable ? @tr("Update") : @tr("Download");
+                clicked => {
+                    if root.installable {
+                        root.install();
+                    } else {
+                        root.open-notes();
+                    }
+                }
+            }
+            if root.stage == UpdateStage.installed: ThemedButton {
+                height: 26px;
+                primary: true;
+                text: @tr("Restart Now");
+                clicked => {
+                    root.restart();
+                }
+            }
+        }
+    }
+}

@@ -611,3 +611,66 @@ msgstr "Genre…"
 
 msgid "No match"
 msgstr "Aucun résultat"
+
+msgid "Help"
+msgstr "Aide"
+
+msgid "Check for Updates…"
+msgstr "Rechercher des mises à jour…"
+
+msgid "Checking for updates…"
+msgstr "Recherche de mises à jour…"
+
+msgid "AudioPlayer is up to date"
+msgstr "AudioPlayer est à jour"
+
+msgid "Update available"
+msgstr "Mise à jour disponible"
+
+msgid "Downloading the update…"
+msgstr "Téléchargement de la mise à jour…"
+
+msgid "Installing the update…"
+msgstr "Installation de la mise à jour…"
+
+msgid "Update installed"
+msgstr "Mise à jour installée"
+
+msgid "Update failed"
+msgstr "Échec de la mise à jour"
+
+msgid "AudioPlayer {0} is available. You have version {1}."
+msgstr "AudioPlayer {0} est disponible. Vous avez la version {1}."
+
+msgid "What's new"
+msgstr "Nouveautés"
+
+msgid "Version {0} is the latest."
+msgstr "La version {0} est la plus récente."
+
+msgid "AudioPlayer {0}: {1} / {2} MB"
+msgstr "AudioPlayer {0} : {1} / {2} Mo"
+
+msgid "AudioPlayer {0}: {1} MB"
+msgstr "AudioPlayer {0} : {1} Mo"
+
+msgid "AudioPlayer {0} is being installed. Enter your password if the system asks for it."
+msgstr "AudioPlayer {0} est en cours d'installation. Saisissez votre mot de passe si le système le demande."
+
+msgid "AudioPlayer {0} is installed. Restart to use the new version."
+msgstr "AudioPlayer {0} est installé. Redémarrez pour utiliser la nouvelle version."
+
+msgid "Later"
+msgstr "Plus tard"
+
+msgid "Close"
+msgstr "Fermer"
+
+msgid "Update"
+msgstr "Mettre à jour"
+
+msgid "Download"
+msgstr "Télécharger"
+
+msgid "Restart Now"
+msgstr "Redémarrer"

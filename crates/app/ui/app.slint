@@ -11,8 +11,9 @@ import { SetupWindow, DatabaseProblem, DatabaseProblems } from "setup.slint";
 import { TagsDrawer, TagRow, TagChoice } from "tags.slint";
 import { MiniPlayerWindow } from "miniplayer.slint";
 import { ArtworkDialog } from "artwork.slint";
+import { UpdateCard, UpdateStage } from "update.slint";
 
-export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind, TagRow, TagChoice, MiniPlayerWindow }
+export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind, TagRow, TagChoice, MiniPlayerWindow, UpdateStage }
 
 export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed, tags-writing, tags-saved, tags-failed, tags-invalid, artwork-saved, busy }
 
@@ -225,6 +226,18 @@ export component AppWindow inherits Window {
     in property <int> confirm-count;
     in property <bool> scanning;
     callback confirm-accepted();
+    // Mise à jour (fenêtre en bas à gauche).
+    in property <UpdateStage> update-stage;
+    in property <string> update-version;
+    in property <float> update-received;
+    in property <float> update-total;
+    in property <string> update-message;
+    in property <bool> update-installable;
+    callback update-check();
+    callback update-install();
+    callback update-dismiss();
+    callback update-restart();
+    callback update-notes();
     // « Set Album Artwork… »
     in-out property <bool> artwork-open;
     in property <string> artwork-album;
@@ -310,6 +323,15 @@ export component AppWindow inherits Window {
                 title: @tr("Open Database…");
                 activated => {
                     root.open-database();
+                }
+            }
+        }
+        Menu {
+            title: @tr("Help");
+            MenuItem {
+                title: @tr("Check for Updates…");
+                activated => {
+                    root.update-check();
                 }
             }
         }
@@ -727,6 +749,34 @@ export component AppWindow inherits Window {
                         root.mini-player();
                     }
                 }
+            }
+        }
+
+        // Au-dessus de la barre d'état, à gauche.
+        if root.update-stage != UpdateStage.hidden: UpdateCard {
+            x: 12px;
+            y: parent.height - self.height - 44px - 12px;
+            stage: root.update-stage;
+            version: root.update-version;
+            current: root.version;
+            received: root.update-received;
+            total: root.update-total;
+            message: root.update-message;
+            installable: root.update-installable;
+            install => {
+                root.update-install();
+            }
+            dismiss => {
+                root.update-dismiss();
+            }
+            restart => {
+                root.update-restart();
+            }
+            open-notes => {
+                root.update-notes();
+            }
+            retry => {
+                root.update-check();
             }
         }
     }

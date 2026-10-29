@@ -5,6 +5,8 @@ name: Build Linux
 
 on:
   workflow_dispatch:
+  # Aussi appelé par release.yml.
+  workflow_call:
 
 jobs:
   build:
