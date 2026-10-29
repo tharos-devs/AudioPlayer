@@ -7,6 +7,7 @@ export struct ListItem {
     count: int,
     artwork: image,
     has-artwork: bool,
+    favorite: bool,
 }
 
 // Données partagées par les menus contextuels (morceaux, artistes, albums).
@@ -15,12 +16,35 @@ export global TrackMenu {
     in property <[ListItem]> playlists;
     // Vue d'une playlist : « Retirer de la playlist » est proposé.
     in property <bool> in-playlist;
+    // Vue « Most Played » : « Reset Play Count » est proposé.
+    in property <bool> most-played;
 }
 
-// « Ajouter à la playlist » pour un artiste ou un album : tous ses morceaux.
-component AddToPlaylistArea inherits ContextMenuArea {
+// Menus contextuels des artistes et des albums (ceux de la v0.1, plus la lecture).
+// Les actions sont des chaînes transmises à Rust ; « add-to-playlist:<id> » vise une playlist.
+component ArtistMenuArea inherits ContextMenuArea {
+    in property <bool> favorite;
     callback action(string);
     Menu {
+        MenuItem {
+            title: @tr("Play");
+            activated => {
+                root.action("play");
+            }
+        }
+        MenuItem {
+            title: @tr("Play Next");
+            activated => {
+                root.action("play-next");
+            }
+        }
+        MenuItem {
+            title: @tr("Add to Queue");
+            activated => {
+                root.action("enqueue");
+            }
+        }
+        MenuSeparator { }
         Menu {
             title: @tr("Add to Playlist");
             MenuItem {
@@ -35,6 +59,101 @@ component AddToPlaylistArea inherits ContextMenuArea {
                 activated => {
                     root.action("add-to-playlist:" + playlist.id);
                 }
+            }
+        }
+        MenuItem {
+            title: root.favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites");
+            activated => {
+                root.action("favorite");
+            }
+        }
+        MenuSeparator { }
+        MenuItem {
+            title: @tr("Rescan Audio Tags");
+            activated => {
+                root.action("rescan");
+            }
+        }
+        MenuSeparator { }
+        MenuItem {
+            title: @tr("Delete from Library…");
+            activated => {
+                root.action("delete");
+            }
+        }
+    }
+}
+
+component AlbumMenuArea inherits ContextMenuArea {
+    in property <bool> favorite;
+    callback action(string);
+    Menu {
+        MenuItem {
+            title: @tr("Play");
+            activated => {
+                root.action("play");
+            }
+        }
+        MenuItem {
+            title: @tr("Play Next");
+            activated => {
+                root.action("play-next");
+            }
+        }
+        MenuItem {
+            title: @tr("Add to Queue");
+            activated => {
+                root.action("enqueue");
+            }
+        }
+        MenuSeparator { }
+        MenuItem {
+            title: @tr("Show on Disk");
+            activated => {
+                root.action("show-on-disk");
+            }
+        }
+        MenuItem {
+            title: @tr("Set Album Artwork…");
+            activated => {
+                root.action("set-artwork");
+            }
+        }
+        MenuSeparator { }
+        Menu {
+            title: @tr("Add to Playlist");
+            MenuItem {
+                title: @tr("New Playlist…");
+                activated => {
+                    root.action("add-to-new-playlist");
+                }
+            }
+            if TrackMenu.playlists.length > 0: MenuSeparator { }
+            for playlist in TrackMenu.playlists: MenuItem {
+                title: playlist.label;
+                activated => {
+                    root.action("add-to-playlist:" + playlist.id);
+                }
+            }
+        }
+        MenuItem {
+            title: root.favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites");
+            activated => {
+                root.action("favorite");
+            }
+        }
+        MenuSeparator { }
+        MenuItem {
+            title: @tr("Rescan Audio Tags");
+            activated => {
+                root.action("rescan");
+            }
+        }
+        MenuSeparator { }
+        MenuItem {
+            title: @tr("Delete from Library…");
+            activated => {
+                root.action("delete");
             }
         }
     }
@@ -155,7 +274,8 @@ export component ArtistRow inherits Rectangle {
     DragArea {
         allow-copy: true;
         data: root.payload();
-        AddToPlaylistArea {
+        ArtistMenuArea {
+            favorite: root.item.favorite;
             action(name) => {
                 root.action(name);
             }
@@ -225,7 +345,8 @@ export component AlbumRow inherits Rectangle {
     DragArea {
         allow-copy: true;
         data: root.payload();
-        AddToPlaylistArea {
+        AlbumMenuArea {
+            favorite: root.item.favorite;
             action(name) => {
                 root.action(name);
             }

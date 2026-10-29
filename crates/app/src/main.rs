@@ -69,6 +69,8 @@ enum ConfirmRequest {
     DeletePlaylist(i64),
     DeleteLibrary(usize),
     RemoveMissing { library: i64, tracks: Vec<i64> },
+    // « Delete from Library » : retire de la base, sans toucher aux fichiers.
+    DeleteTracks { library: i64, tracks: Vec<i64> },
 }
 
 /// Messages du fil de scan ou de vérification vers l'interface.
@@ -83,6 +85,7 @@ struct ScanJob {
     library: i64,
     name: String,
     messages: std::sync::mpsc::Receiver<ScanMessage>,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 struct App {
@@ -344,6 +347,7 @@ impl App {
                 id: artist as i32,
                 label: self.library.artists[artist].name.as_str().into(),
                 count: album_counts[artist] as i32,
+                favorite: self.library.artists[artist].is_favorite,
                 ..Default::default()
             })
             .collect();
@@ -376,6 +380,7 @@ impl App {
             ListItem {
                 id: album as i32,
                 label: albums[album].title.as_str().into(),
+                favorite: albums[album].is_favorite,
                 count: self.album_counts[album] as i32,
                 artwork,
                 has_artwork,
@@ -411,6 +416,7 @@ impl App {
         let menu = ui.global::<TrackMenu>();
         menu.set_playlists(model(rows.clone()));
         menu.set_in_playlist(self.view == View::Playlist);
+        menu.set_most_played(self.view == View::MostPlayed);
         ui.set_playlists(model(rows));
         ui.set_selected_playlist(self.selected_playlist.map_or(-1, |id| id as i32));
         let name = self.selected_playlist.and_then(|id| self.playlists.iter().find(|p| p.id == id));
@@ -1132,47 +1138,149 @@ impl App {
     }
 
     fn track_action(&mut self, ui: &AppWindow, id: i32, action: &str) {
-        let Some(track) = from_ui_id(id) else { return };
-        let status = |kind| Status { kind, track: self.library.tracks[track].title.as_str().into(), ..Default::default() };
+        let Some(track) = from_ui_id(id).filter(|&t| t < self.library.tracks.len()) else { return };
         match action {
+            // Un morceau lancé depuis la liste : la file est la liste affichée.
             "play" => self.play(ui, track),
             "show-album" => {
                 self.reveal_album(ui, self.library.tracks[track].album);
                 ui.set_selected_track(id);
             }
-            "favorite" => self.toggle_favorite(ui, track),
-            "play-next" => self.show_status(ui, status(StatusKind::PlayNext)),
-            "enqueue" => self.show_status(ui, status(StatusKind::Enqueued)),
-            "add-to-new-playlist" => self.ask_name(ui, NameDialogKind::NewPlaylist, "", NameRequest::NewPlaylist { tracks: vec![track] }),
             "remove-from-playlist" => self.remove_from_playlist(ui, track),
-            _ => {
-                if let Some(playlist) = action.strip_prefix("add-to-playlist:").and_then(|id| id.parse().ok()) {
-                    self.add_to_playlist(ui, playlist, track);
-                }
-            }
+            "reset-plays" => self.reset_plays(ui, track),
+            _ => self.item_action(ui, Dragged::Track(track), action),
         }
     }
 
-    fn toggle_favorite(&mut self, ui: &AppWindow, track: usize) {
-        let id = self.library.tracks[track].id;
-        let favorite = match self.db.toggle_track_favorite(id) {
-            Ok(favorite) => favorite,
-            Err(error) => return eprintln!("favorite {id}: {error}"),
+    // Favori d'un morceau, d'un album ou d'un artiste.
+    fn toggle_favorite(&mut self, ui: &AppWindow, item: Dragged) {
+        let (result, view) = match item {
+            Dragged::Track(t) => (self.db.toggle_track_favorite(self.library.tracks[t].id), View::FavoriteTracks),
+            Dragged::Album(a) => (self.db.toggle_album_favorite(self.library.albums[a].id), View::FavoriteAlbums),
+            Dragged::Artist(a) => (self.db.toggle_artist_favorite(self.library.artists[a].id), View::FavoriteArtists),
         };
-        self.library.tracks[track].is_favorite = favorite;
-        ui.set_favorite_tracks_count(self.library.tracks.iter().filter(|t| t.is_favorite).count() as i32);
-        if self.view == View::FavoriteTracks {
+        let favorite = match result {
+            Ok(favorite) => favorite,
+            Err(error) => return eprintln!("favorite: {error}"),
+        };
+        match item {
+            Dragged::Track(t) => self.library.tracks[t].is_favorite = favorite,
+            Dragged::Album(a) => self.library.albums[a].is_favorite = favorite,
+            Dragged::Artist(a) => self.library.artists[a].is_favorite = favorite,
+        }
+        let lib = &self.library;
+        ui.set_favorite_tracks_count(lib.tracks.iter().filter(|t| t.is_favorite).count() as i32);
+        ui.set_favorite_albums_count(lib.albums.iter().filter(|a| a.is_favorite).count() as i32);
+        ui.set_favorite_artists_count(lib.artists.iter().filter(|a| a.is_favorite).count() as i32);
+        if self.view == view {
             self.update_scope();
             self.refresh_navigation(ui);
         } else {
+            self.refresh_artists(ui);
+            self.refresh_albums(ui);
             self.refresh_tracks(ui);
         }
         let kind = if favorite { StatusKind::FavoriteAdded } else { StatusKind::FavoriteRemoved };
-        self.show_status(ui, Status { kind, track: self.library.tracks[track].title.as_str().into(), ..Default::default() });
+        self.show_status(ui, Status { kind, track: self.label_of(item).into(), ..Default::default() });
     }
 
-    fn add_to_playlist(&mut self, ui: &AppWindow, playlist: i64, track: usize) {
-        self.add_dragged(ui, playlist, Dragged::Track(track));
+    fn reset_plays(&mut self, ui: &AppWindow, track: usize) {
+        if let Err(error) = self.db.reset_play_counts(&[self.library.tracks[track].id]) {
+            return eprintln!("reset plays: {error}");
+        }
+        self.library.tracks[track].play_count = 0;
+        ui.set_most_played_count(self.library.tracks.iter().filter(|t| t.play_count > 0).count() as i32);
+        if self.view == View::MostPlayed {
+            self.update_scope();
+            self.refresh_navigation(ui);
+        }
+    }
+
+    // « Play » d'un artiste ou d'un album : tous ses morceaux, dans l'ordre.
+    fn play_items(&mut self, ui: &AppWindow, item: Dragged) {
+        let (Some(library), tracks) = (self.selected_library, self.tracks_of(item)) else { return };
+        let Some(&first) = tracks.first() else { return };
+        self.now = Some(NowPlaying { library, track: first, queue: tracks, index: Some(0), next: None });
+        self.failures = 0;
+        self.start(ui);
+    }
+
+    // « Play Next » (juste après le morceau en cours) ou « Add to Queue » (à la fin).
+    // Sans lecture en cours, ou depuis une autre bibliothèque, les morceaux sont lancés.
+    fn queue_items(&mut self, ui: &AppWindow, item: Dragged, next: bool) {
+        let tracks = self.tracks_of(item);
+        let same_library = self.now.as_ref().is_some_and(|now| Some(now.library) == self.selected_library);
+        if tracks.is_empty() {
+            return;
+        }
+        if !same_library || self.stopped {
+            return self.play_items(ui, item);
+        }
+        let now = self.now.as_mut().unwrap();
+        // Un morceau n'est qu'une fois dans la file (le morceau en cours reste à sa place).
+        let current = now.track;
+        now.queue.retain(|t| *t == current || !tracks.contains(t));
+        let index = match now.queue.iter().position(|&t| t == current) {
+            Some(index) => index,
+            None => {
+                now.queue.insert(0, current);
+                0
+            }
+        };
+        now.index = Some(index);
+        let at = if next { index + 1 } else { now.queue.len() };
+        now.queue.splice(at..at, tracks);
+        self.queue_next();
+        let kind = if next { StatusKind::PlayNext } else { StatusKind::Enqueued };
+        self.show_status(ui, Status { kind, track: self.label_of(item).into(), ..Default::default() });
+    }
+
+    // Révèle le fichier (morceau) ou ouvre le dossier (album) dans le gestionnaire de fichiers.
+    fn show_on_disk(&self, item: Dragged) {
+        let path = match item {
+            Dragged::Track(t) => PathBuf::from(&self.library.tracks[t].path),
+            _ => match self.tracks_of(item).first().and_then(|&t| Path::new(&self.library.tracks[t].path).parent()) {
+                Some(dir) => dir.to_owned(),
+                None => return,
+            },
+        };
+        let reveal = matches!(item, Dragged::Track(_));
+        let result = if cfg!(target_os = "macos") {
+            let mut command = std::process::Command::new("open");
+            if reveal {
+                command.arg("-R");
+            }
+            command.arg(&path).spawn()
+        } else if cfg!(target_os = "windows") {
+            let arg = if reveal { format!("/select,{}", path.display()) } else { path.display().to_string() };
+            std::process::Command::new("explorer").arg(arg).spawn()
+        } else {
+            let dir = if reveal { path.parent().map(Path::to_owned).unwrap_or(path) } else { path };
+            std::process::Command::new("xdg-open").arg(dir).spawn()
+        };
+        if let Err(error) = result {
+            eprintln!("show on disk: {error}");
+        }
+    }
+
+    // « Set Album Artwork » : une image choisie devient la vignette de l'album (150px).
+    fn set_album_artwork(&mut self, ui: &AppWindow, album: usize) {
+        let dialog = rfd::FileDialog::new().add_filter("Image", &["jpg", "jpeg", "png", "webp", "gif", "bmp"]);
+        let Some(path) = dialog.pick_file() else { return };
+        let Some(thumbnail) = std::fs::read(&path).ok().and_then(|data| audioplayer_scanner::artwork::thumbnail(&data)) else {
+            return eprintln!("{}: not a readable image", path.display());
+        };
+        let id = self.library.albums[album].id;
+        if let Some(pixels) = covers::decode(&thumbnail.2) {
+            self.add_covers(vec![(id, pixels)]);
+        }
+        if let Err(error) = self.db.set_artwork(id, &[thumbnail]) {
+            return eprintln!("artwork {id}: {error}");
+        }
+        self.refresh_albums(ui);
+        self.refresh_tracks(ui);
+        self.published_track = None;
+        self.refresh_player(ui);
     }
 
     // Morceaux d'un élément glissé, dans l'ordre de la bibliothèque et limités à la vue
@@ -1218,13 +1326,37 @@ impl App {
         self.show_status(ui, Status { kind, track: label, playlist: name.into(), count: added as i32, ..Default::default() });
     }
 
-    // Menu contextuel d'un artiste ou d'un album : « Ajouter à la playlist ».
+    // Menus contextuels : actions communes aux morceaux, albums et artistes.
     fn item_action(&mut self, ui: &AppWindow, item: Dragged, action: &str) {
-        if action == "add-to-new-playlist" {
-            let tracks = self.tracks_of(item);
-            self.ask_name(ui, NameDialogKind::NewPlaylist, &self.label_of(item), NameRequest::NewPlaylist { tracks });
-        } else if let Some(playlist) = action.strip_prefix("add-to-playlist:").and_then(|id| id.parse().ok()) {
-            self.add_dragged(ui, playlist, item);
+        match action {
+            "play" => self.play_items(ui, item),
+            "play-next" => self.queue_items(ui, item, true),
+            "enqueue" => self.queue_items(ui, item, false),
+            "show-on-disk" => self.show_on_disk(item),
+            "set-artwork" => {
+                if let Dragged::Album(album) = item {
+                    self.set_album_artwork(ui, album);
+                }
+            }
+            "favorite" => self.toggle_favorite(ui, item),
+            "rescan" => self.start_rescan(ui, item),
+            "delete" => {
+                let Some(library) = self.selected_library.map(|i| self.libraries[i].id) else { return };
+                let tracks: Vec<i64> = self.tracks_of(item).into_iter().map(|t| self.library.tracks[t].id).collect();
+                ui.set_confirm_count(tracks.len() as i32);
+                let label = self.label_of(item);
+                self.ask_confirmation(ui, ConfirmKind::DeleteTracks, &label, ConfirmRequest::DeleteTracks { library, tracks });
+            }
+            "add-to-new-playlist" => {
+                let tracks = self.tracks_of(item);
+                let name = if matches!(item, Dragged::Track(_)) { String::new() } else { self.label_of(item) };
+                self.ask_name(ui, NameDialogKind::NewPlaylist, &name, NameRequest::NewPlaylist { tracks });
+            }
+            _ => {
+                if let Some(playlist) = action.strip_prefix("add-to-playlist:").and_then(|id| id.parse().ok()) {
+                    self.add_dragged(ui, playlist, item);
+                }
+            }
         }
     }
 
@@ -1328,7 +1460,7 @@ impl App {
                 self.refresh_navigation(ui);
             }
             Some(ConfirmRequest::DeleteLibrary(index)) => self.delete_library(ui, index),
-            Some(ConfirmRequest::RemoveMissing { library, tracks }) => {
+            Some(ConfirmRequest::RemoveMissing { library, tracks } | ConfirmRequest::DeleteTracks { library, tracks }) => {
                 if let Err(error) = self.db.remove_tracks(library, &tracks) {
                     return eprintln!("library {library}: {error}");
                 }
@@ -1398,6 +1530,11 @@ impl App {
             "scan" => self.start_scan(ui, index, audioplayer_scanner::Mode::Changes),
             "rescan" => self.start_scan(ui, index, audioplayer_scanner::Mode::Full),
             "health" => self.check_library(ui, index),
+            "stop-scan" => {
+                if let Some(job) = &self.scan {
+                    job.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
             "delete-library" => self.ask_confirmation(ui, ConfirmKind::DeleteLibrary, &name, ConfirmRequest::DeleteLibrary(index)),
             _ => {}
         }
@@ -1458,18 +1595,37 @@ impl App {
         }
         let library = self.libraries[index].clone();
         let (sender, messages) = std::sync::mpsc::channel();
-        let db_path = self.db_path.clone();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (db_path, stop) = (self.db_path.clone(), cancel.clone());
         std::thread::spawn(move || {
-            let cancel = std::sync::atomic::AtomicBool::new(false);
             let progress = sender.clone();
-            let result = audioplayer_scanner::scan(&db_path, library.id, Path::new(&library.root_path), mode, &cancel, &move |p| {
+            let result = audioplayer_scanner::scan(&db_path, library.id, Path::new(&library.root_path), mode, &stop, &move |p| {
                 let _ = progress.send(ScanMessage::Progress(p));
             });
             let _ = sender.send(ScanMessage::Scanned(result));
         });
-        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages });
+        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel });
         ui.set_scanning(true);
         ui.set_status(Status { kind: StatusKind::ScanListing, track: library.name.into(), ..Default::default() });
+    }
+
+    // « Rescan Audio Tags » : relit les fichiers d'un artiste, d'un album ou d'un morceau.
+    fn start_rescan(&mut self, ui: &AppWindow, item: Dragged) {
+        let Some(index) = self.selected_library.filter(|_| self.scan.is_none()) else { return };
+        let library = self.libraries[index].clone();
+        let paths: Vec<PathBuf> = self.tracks_of(item).into_iter().map(|t| PathBuf::from(&self.library.tracks[t].path)).collect();
+        let (sender, messages) = std::sync::mpsc::channel();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (db_path, stop) = (self.db_path.clone(), cancel.clone());
+        std::thread::spawn(move || {
+            let progress = sender.clone();
+            let result = audioplayer_scanner::rescan_files(&db_path, library.id, &paths, &stop, &move |p| {
+                let _ = progress.send(ScanMessage::Progress(p));
+            });
+            let _ = sender.send(ScanMessage::Scanned(result));
+        });
+        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel });
+        ui.set_scanning(true);
     }
 
     // Vérification : chaque fichier de la bibliothèque existe-t-il encore ?
@@ -1487,7 +1643,8 @@ impl App {
             });
             let _ = sender.send(ScanMessage::Checked(result));
         });
-        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages });
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel });
         ui.set_scanning(true);
         ui.set_status(Status { kind: StatusKind::ScanListing, track: library.name.into(), ..Default::default() });
     }
@@ -1524,7 +1681,7 @@ impl App {
             ScanMessage::Scanned(Ok(report)) => {
                 self.reload_library(ui, library);
                 self.show_status_for(ui, Status {
-                    kind: StatusKind::ScanFinished,
+                    kind: if report.cancelled { StatusKind::ScanStopped } else { StatusKind::ScanFinished },
                     track: name.as_str().into(),
                     count: report.added as i32,
                     total: report.updated as i32,
@@ -1562,11 +1719,19 @@ impl App {
         });
         self.catalogs.remove(&index);
         if self.selected_library == Some(index) {
+            // La navigation est retrouvée par id : les index changent avec le catalogue.
+            let (view, letter, playlist, query) = (self.view, self.letter.clone(), self.selected_playlist, self.query.clone());
+            let artist = self.selected_artist.map(|a| self.library.artists[a].id);
+            let album = self.selected_album.map(|a| self.library.albums[a].id);
             self.selected_library = None;
             self.library = Library::default();
             if let Err(error) = self.load_library(index) {
                 return eprintln!("library {library_id}: {error}");
             }
+            (self.view, self.letter, self.selected_playlist, self.query) = (view, letter, playlist, query);
+            self.update_scope();
+            self.selected_artist = artist.and_then(|id| self.library.artists.iter().position(|a| a.id == id));
+            self.selected_album = album.and_then(|id| self.library.albums.iter().position(|a| a.id == id));
             ui.set_selected_track(-1);
             self.refresh_all(ui);
         } else if let Ok((library, pixels)) = Library::load_with_covers(&self.db, library_id, COVER_SIZE) {

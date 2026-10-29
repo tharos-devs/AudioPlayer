@@ -38,6 +38,7 @@ global Metrics {
 }
 
 // Les actions sont des chaînes transmises à Rust ; « add-to-playlist:<id> » vise une playlist.
+// Les actions sont des chaînes transmises à Rust ; « add-to-playlist:<id> » vise une playlist.
 component TrackContextArea inherits ContextMenuArea {
     in property <bool> favorite;
     callback action(string);
@@ -69,11 +70,12 @@ component TrackContextArea inherits ContextMenuArea {
             }
         }
         MenuItem {
-            title: root.favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites");
+            title: @tr("Show on Disk");
             activated => {
-                root.action("favorite");
+                root.action("show-on-disk");
             }
         }
+        MenuSeparator { }
         Menu {
             title: @tr("Add to Playlist");
             MenuItem {
@@ -90,16 +92,41 @@ component TrackContextArea inherits ContextMenuArea {
                 }
             }
         }
+        MenuItem {
+            title: root.favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites");
+            activated => {
+                root.action("favorite");
+            }
+        }
+        if TrackMenu.most-played: MenuItem {
+            title: @tr("Reset Play Count");
+            activated => {
+                root.action("reset-plays");
+            }
+        }
+        MenuSeparator { }
+        MenuItem {
+            title: @tr("Rescan Audio Tags");
+            activated => {
+                root.action("rescan");
+            }
+        }
+        MenuItem {
+            title: @tr("Edit Tags…");
+            enabled: false;
+        }
+        MenuSeparator { }
         if TrackMenu.in-playlist: MenuItem {
             title: @tr("Remove from Playlist");
             activated => {
                 root.action("remove-from-playlist");
             }
         }
-        MenuSeparator { }
-        MenuItem {
-            title: @tr("Edit Tags…");
-            enabled: false;
+        if !TrackMenu.in-playlist: MenuItem {
+            title: @tr("Delete from Library…");
+            activated => {
+                root.action("delete");
+            }
         }
     }
 }

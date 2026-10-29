@@ -90,8 +90,6 @@ msgstr "Affichage"
 msgid "{0} h {1} min"
 msgstr "{0} h {1} min"
 
-msgid "“{0}” added to the queue (not wired yet)"
-msgstr "« {0} » ajouté à la file (non branché)"
 
 msgid "“{0}” added to “{1}”"
 msgstr "« {0} » ajouté à « {1} »"
@@ -99,8 +97,6 @@ msgstr "« {0} » ajouté à « {1} »"
 msgid "“{0}” is already in “{1}”"
 msgstr "« {0} » est déjà dans « {1} »"
 
-msgid "“{0}” will play next (not wired yet)"
-msgstr "« {0} » sera lu ensuite (non branché)"
 
 msgid "{n} track"
 msgid_plural "{n} tracks"
@@ -381,3 +377,38 @@ msgid "{n} track of “{0}” has a missing file"
 msgid_plural "{n} tracks of “{0}” have missing files"
 msgstr[0] "{n} morceau de « {0} » a un fichier manquant"
 msgstr[1] "{n} morceaux de « {0} » ont un fichier manquant"
+
+msgid "Show on Disk"
+msgstr "Afficher dans le Finder"
+
+msgid "Set Album Artwork…"
+msgstr "Définir la pochette…"
+
+msgid "Rescan Audio Tags"
+msgstr "Relire les tags"
+
+msgid "Delete from Library…"
+msgstr "Supprimer de la bibliothèque…"
+
+msgid "Reset Play Count"
+msgstr "Remettre les écoutes à zéro"
+
+msgid "Stop Scan"
+msgstr "Arrêter le scan"
+
+msgid "“{0}” will play next"
+msgstr "« {0} » sera lu ensuite"
+
+msgid "“{0}” added to the queue"
+msgstr "« {0} » ajouté à la file"
+
+msgid "Scan of “{0}” stopped: {1} added, {2} updated so far"
+msgstr "Scan de « {0} » arrêté : {1} ajoutés, {2} mis à jour jusque-là"
+
+msgid "Play counts, favorites and playlist entries are lost. The music files are not touched: the next scan of the folder adds them back."
+msgstr "Écoutes, favoris et places dans les playlists sont perdus. Les fichiers ne sont pas touchés : le prochain scan du dossier les rajoutera."
+
+msgid "Delete “{0}” from the library ({n} track)?"
+msgid_plural "Delete “{0}” from the library ({n} tracks)?"
+msgstr[0] "Supprimer « {0} » de la bibliothèque ({n} morceau) ?"
+msgstr[1] "Supprimer « {0} » de la bibliothèque ({n} morceaux) ?"

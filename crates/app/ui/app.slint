@@ -11,7 +11,7 @@ import { SetupWindow, DatabaseProblem, DatabaseProblems } from "setup.slint";
 
 export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind }
 
-export enum StatusKind { summary, added-to-playlist, already-in-playlist, play-next, enqueued, tracks-added, scan-listing, scan-reading, scan-finished, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed }
+export enum StatusKind { summary, added-to-playlist, already-in-playlist, play-next, enqueued, tracks-added, scan-listing, scan-reading, scan-finished, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed }
 
 // Les messages d'état sont formatés ici (et non en Rust) pour passer par @tr.
 export struct Status {
@@ -87,15 +87,17 @@ export component AppWindow inherits Window {
         : root.status.kind == StatusKind.already-in-playlist
         ? @tr("“{0}” is already in “{1}”", root.status.track, root.status.playlist)
         : root.status.kind == StatusKind.play-next
-        ? @tr("“{0}” will play next (not wired yet)", root.status.track)
+        ? @tr("“{0}” will play next", root.status.track)
         : root.status.kind == StatusKind.enqueued
-        ? @tr("“{0}” added to the queue (not wired yet)", root.status.track)
+        ? @tr("“{0}” added to the queue", root.status.track)
         : root.status.kind == StatusKind.scan-listing
         ? @tr("Scanning “{0}”: {1} folders…", root.status.track, root.status.count)
         : root.status.kind == StatusKind.scan-reading
         ? @tr("Scanning “{0}”: {1} / {2} files — {3}", root.status.track, root.status.count, root.status.total, root.status.playlist)
         : root.status.kind == StatusKind.scan-finished
         ? @tr("Scan of “{0}” finished: {1} added, {2} updated, {3} removed", root.status.track, root.status.count, root.status.total, root.status.removed)
+        : root.status.kind == StatusKind.scan-stopped
+        ? @tr("Scan of “{0}” stopped: {1} added, {2} updated so far", root.status.track, root.status.count, root.status.total)
         : root.status.kind == StatusKind.scan-root-missing
         ? @tr("Folder of “{0}” not found: {1}. Nothing was changed.", root.status.track, root.status.playlist)
         : root.status.kind == StatusKind.scan-root-empty

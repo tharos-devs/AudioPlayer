@@ -100,7 +100,12 @@ pub fn scan(
         if folders % 50 == 0 {
             progress(Progress::Listing { folders });
         }
+        !cancel.load(Ordering::Relaxed)
     });
+    // Liste incomplète : surtout ne rien retirer.
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(Report { cancelled: true, ..Report::default() });
+    }
     if found.is_empty() && !known.is_empty() {
         return Err(Error::RootEmpty(root.to_owned()));
     }
@@ -121,7 +126,7 @@ pub fn scan(
         })
         .collect();
 
-    // Pochette déjà présente en grande taille : rien à chercher dans ces dossiers.
+    // Pochette déjà présente : rien à chercher dans ces dossiers.
     let mut art: HashMap<PathBuf, FolderArt> = db
         .folders_with_artwork(library_id, artwork::SIZE)?
         .into_iter()
@@ -130,8 +135,39 @@ pub fn scan(
     if mode == Mode::Full {
         art.clear();
     }
-    let art = Mutex::new(art);
+    process(&mut db, library_id, &known, &to_read, art, cancel, progress, &mut report)?;
 
+    if cancel.load(Ordering::Relaxed) {
+        report.cancelled = true;
+        return Ok(report);
+    }
+
+    // Disparus : absents du dossier et introuvables sur le disque (double vérification).
+    let present: HashSet<String> = found.iter().map(|f| f.path.to_string_lossy().into_owned()).collect();
+    let removed: Vec<i64> = known
+        .iter()
+        .filter(|(path, _)| !present.contains(*path) && !Path::new(path).exists())
+        .map(|(_, k)| k.track_id)
+        .collect();
+    report.removed = removed.len();
+    db.remove_tracks(library_id, &removed)?;
+    db.mark_scanned(library_id)?;
+    Ok(report)
+}
+
+// Lit `to_read` sur tous les cœurs et écrit les résultats par lots.
+#[allow(clippy::too_many_arguments)]
+fn process(
+    db: &mut Database,
+    library_id: i64,
+    known: &HashMap<String, audioplayer_db::KnownFile>,
+    to_read: &[&files::AudioFile],
+    art: HashMap<PathBuf, FolderArt>,
+    cancel: &AtomicBool,
+    progress: &(dyn Fn(Progress) + Sync),
+    report: &mut Report,
+) -> Result<(), Error> {
+    let art = Mutex::new(art);
     let total = to_read.len();
     let next = AtomicUsize::new(0);
     let (sender, receiver) = mpsc::sync_channel::<Read>(BATCH * 2);
@@ -141,15 +177,14 @@ pub fn scan(
     std::thread::scope(|scope| -> Result<(), Error> {
         for _ in 0..threads {
             let sender = sender.clone();
-            let (to_read, next, art) = (&to_read, &next, &art);
+            let (next, art) = (&next, &art);
             scope.spawn(move || loop {
                 if cancel.load(Ordering::Relaxed) {
                     return;
                 }
                 let index = next.fetch_add(1, Ordering::Relaxed);
                 let Some(file) = to_read.get(index) else { return };
-                let read = read_file(file, art);
-                if sender.send(read).is_err() {
+                if sender.send(read_file(file, art)).is_err() {
                     return;
                 }
             });
@@ -188,27 +223,48 @@ pub fn scan(
             }
             batch.push(read);
             if batch.len() >= BATCH {
-                flush(&mut batch, &mut report)?;
+                flush(&mut batch, report)?;
             }
         }
-        flush(&mut batch, &mut report)
-    })?;
+        flush(&mut batch, report)
+    })
+}
 
-    if cancel.load(Ordering::Relaxed) {
-        report.cancelled = true;
-        return Ok(report);
+/// « Rescan Audio Tags » de la v0.1 : relit ces fichiers (et leur pochette) même
+/// inchangés ; ceux qui n'existent plus sont retirés de la bibliothèque.
+pub fn rescan_files(
+    db_path: &Path,
+    library_id: i64,
+    paths: &[PathBuf],
+    cancel: &AtomicBool,
+    progress: &(dyn Fn(Progress) + Sync),
+) -> Result<Report, Error> {
+    let mut db = Database::open(db_path)?;
+    let known = db.library_files(library_id)?;
+    let mut report = Report::default();
+    let mut missing = Vec::new();
+    let mut present = Vec::new();
+    for path in paths {
+        match std::fs::metadata(path) {
+            Ok(meta) if meta.is_file() => {
+                let mtime = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_secs() as i64);
+                present.push(files::AudioFile { path: path.clone(), size: meta.len(), mtime });
+            }
+            _ => {
+                if let Some(file) = known.get(path.to_string_lossy().as_ref()) {
+                    missing.push(file.track_id);
+                }
+            }
+        }
     }
-
-    // Disparus : absents du dossier et introuvables sur le disque (double vérification).
-    let present: HashSet<String> = found.iter().map(|f| f.path.to_string_lossy().into_owned()).collect();
-    let removed: Vec<i64> = known
-        .iter()
-        .filter(|(path, _)| !present.contains(*path) && !Path::new(path).exists())
-        .map(|(_, k)| k.track_id)
-        .collect();
-    report.removed = removed.len();
-    db.remove_tracks(library_id, &removed)?;
-    db.mark_scanned(library_id)?;
+    let to_read: Vec<&files::AudioFile> = present.iter().collect();
+    process(&mut db, library_id, &known, &to_read, HashMap::new(), cancel, progress, &mut report)?;
+    report.removed = missing.len();
+    db.remove_tracks(library_id, &missing)?;
     Ok(report)
 }
 

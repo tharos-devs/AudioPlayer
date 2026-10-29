@@ -135,3 +135,21 @@ fn scans_tags_artwork_changes_and_removals() {
     assert!(matches!(run(&db_path, library, &empty, Mode::Changes), Err(Error::RootEmpty(_))));
     assert_eq!(db.tracks(library).unwrap().len(), 3);
 }
+
+#[test]
+fn rescan_files_rereads_even_unchanged_and_drops_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("Music");
+    let db_path = dir.path().join("library.db");
+    let (one, two) = (root.join("A/One/01.wav"), root.join("B/Two/01.wav"));
+    tagged(&one, "First", "A", None, "One", 1, None);
+    tagged(&two, "Second", "B", None, "Two", 1, None);
+    let library = Database::open(&db_path).unwrap().create_library("L", &root.to_string_lossy()).unwrap().unwrap();
+    run(&db_path, library, &root, Mode::Changes).unwrap();
+
+    std::fs::remove_file(&two).unwrap();
+    let report = audioplayer_scanner::rescan_files(&db_path, library, &[one, two], &AtomicBool::new(false), &|_| {}).unwrap();
+    assert_eq!((report.updated, report.removed), (1, 1));
+    let titles: Vec<_> = Database::open(&db_path).unwrap().albums(library).unwrap().into_iter().map(|a| a.title).collect();
+    assert_eq!(titles, ["One"]);
+}

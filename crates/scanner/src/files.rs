@@ -25,12 +25,15 @@ fn hidden(path: &Path) -> bool {
 }
 
 /// Parcourt `root` récursivement, sans suivre les liens symboliques (pas de boucle possible).
-/// Un dossier illisible est ignoré ; `on_folder` est appelé pour chaque dossier visité.
-pub fn find(root: &Path, mut on_folder: impl FnMut(&Path)) -> Vec<AudioFile> {
+/// Un dossier illisible est ignoré ; `on_folder` est appelé pour chaque dossier visité et
+/// arrête le parcours en renvoyant `false`.
+pub fn find(root: &Path, mut on_folder: impl FnMut(&Path) -> bool) -> Vec<AudioFile> {
     let mut files = Vec::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
-        on_folder(&dir);
+        if !on_folder(&dir) {
+            break;
+        }
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         for entry in entries.flatten() {
             let path = entry.path();

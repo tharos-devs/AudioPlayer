@@ -8,6 +8,7 @@ use audioplayer_db::Database;
 use crate::covers::{self, Pixels};
 
 pub struct Artist {
+    pub id: i64,
     pub name: String,
     pub sort_key: String,
     pub is_favorite: bool,
@@ -55,6 +56,7 @@ impl Library {
         for artist in db.artists(library_id)? {
             artist_index.insert(artist.id, library.artists.len());
             library.artists.push(Artist {
+                id: artist.id,
                 sort_key: sort_key(&artist.name),
                 name: artist.name,
                 is_favorite: artist.is_favorite,

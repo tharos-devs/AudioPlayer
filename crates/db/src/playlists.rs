@@ -119,15 +119,41 @@ impl Database {
 
     /// Date de mise en favori, ou rien ; renvoie le nouvel état.
     pub fn toggle_track_favorite(&self, track_id: i64) -> Result<bool> {
+        self.toggle_favorite("tracks", track_id)
+    }
+
+    pub fn toggle_album_favorite(&self, album_id: i64) -> Result<bool> {
+        self.toggle_favorite("albums", album_id)
+    }
+
+    pub fn toggle_artist_favorite(&self, artist_id: i64) -> Result<bool> {
+        self.toggle_favorite("artists", artist_id)
+    }
+
+    // `table` est une constante interne (tracks, albums, artists), jamais une saisie.
+    fn toggle_favorite(&self, table: &str, id: i64) -> Result<bool> {
         self.conn.execute(
-            "UPDATE tracks SET favorited_at = CASE WHEN favorited_at IS NULL THEN datetime('now') END WHERE id = ?1",
-            [track_id],
+            &format!("UPDATE {table} SET favorited_at = CASE WHEN favorited_at IS NULL THEN datetime('now') END WHERE id = ?1"),
+            [id],
         )?;
         let favorite: Option<bool> = self
             .conn
-            .query_row("SELECT favorited_at IS NOT NULL FROM tracks WHERE id = ?1", [track_id], |row| row.get(0))
+            .query_row(&format!("SELECT favorited_at IS NOT NULL FROM {table} WHERE id = ?1"), [id], |row| row.get(0))
             .optional()?;
         Ok(favorite.unwrap_or(false))
+    }
+
+    /// « Reset Play Count » de la v0.1 (vue Most Played).
+    pub fn reset_play_counts(&mut self, track_ids: &[i64]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut reset = tx.prepare("UPDATE tracks SET play_count = 0, last_played_at = NULL WHERE id = ?1")?;
+            for id in track_ids {
+                reset.execute([id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
     }
 }
 

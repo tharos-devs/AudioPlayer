@@ -294,11 +294,19 @@ fn playlists_belong_to_one_library() {
 
 #[test]
 fn favorite_toggles() {
-    let db = Database::open_in_memory().unwrap();
+    let mut db = Database::open_in_memory().unwrap();
     sample(&db);
     assert!(db.toggle_track_favorite(100).unwrap());
     assert!(db.tracks(1).unwrap().iter().any(|t| t.id == 100 && t.is_favorite));
     assert!(!db.toggle_track_favorite(100).unwrap());
+    assert!(db.toggle_album_favorite(10).unwrap());
+    assert!(db.albums(1).unwrap().iter().any(|a| a.id == 10 && a.is_favorite));
+    assert!(db.toggle_artist_favorite(2).unwrap());
+    assert!(db.artists(1).unwrap().iter().any(|a| a.id == 2 && a.is_favorite));
+
+    db.record_play(100).unwrap();
+    db.reset_play_counts(&[100]).unwrap();
+    assert!(db.tracks(1).unwrap().iter().any(|t| t.id == 100 && t.play_count == 0));
 }
 
 #[test]
