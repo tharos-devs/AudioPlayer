@@ -45,6 +45,8 @@ export component AppWindow inherits Window {
     in-out property <bool> search-visible;
     in-out property <bool> random-mode;
     in-out property <bool> loop-mode;
+    in-out property <float> volume: 70;
+    in-out property <bool> muted;
     in property <[ListItem]> artists;
     in property <[ListItem]> albums;
     in property <[ListItem]> playlists;
@@ -112,6 +114,11 @@ export component AppWindow inherits Window {
 
     function toggle-theme() {
         Theme.dark = !Theme.dark;
+        root.sync-color-scheme();
+    }
+
+    // Les widgets standard (défilement, etc.) suivent le thème de l'app.
+    public function sync-color-scheme() {
         Palette.color-scheme = Theme.dark ? ColorScheme.dark : ColorScheme.light;
     }
 
@@ -161,8 +168,14 @@ export component AppWindow inherits Window {
         transform-scale: Theme.zoom;
         transform-origin: { x: 0px, y: 0px };
 
-        // Cmd/Ctrl+F affiche la recherche, comme la v0.1.
+        // Cmd/Ctrl+F affiche la recherche, comme la v0.1. Minuscule exprès : à chaque
+        // redimensionnement, Slint fait défiler les listes pour montrer l'élément focalisé,
+        // et un FocusScope couvrant tout le contenu zoomé décalait la liste des morceaux.
         keys := FocusScope {
+            x: 0;
+            y: 0;
+            width: 1px;
+            height: 1px;
             key-pressed(event) => {
                 if (event.modifiers.meta || event.modifiers.control) && (event.text == "f" || event.text == "F") {
                     root.search-visible = true;
@@ -171,7 +184,9 @@ export component AppWindow inherits Window {
                 }
                 return reject;
             }
+        }
 
+        Rectangle {
             VerticalLayout {
                 control-bar := ControlBar {
                     title: root.now-title;
@@ -188,6 +203,8 @@ export component AppWindow inherits Window {
                     search-text <=> root.search-text;
                     random-mode <=> root.random-mode;
                     loop-mode <=> root.loop-mode;
+                    volume <=> root.volume;
+                    muted <=> root.muted;
                     show-current => {
                         root.show-current();
                     }
@@ -205,6 +222,9 @@ export component AppWindow inherits Window {
                     }
                     search(text) => {
                         root.search(text);
+                    }
+                    search-closed => {
+                        keys.focus();
                     }
                 }
 

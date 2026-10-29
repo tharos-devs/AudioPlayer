@@ -3,6 +3,7 @@
 
 mod covers;
 mod library;
+mod settings;
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -13,7 +14,8 @@ use std::time::Duration;
 
 use audioplayer_db::Database;
 use library::{format_duration, sort_key, Library};
-use slint::{DataTransfer, Image, ModelRc, SharedString, Timer, TimerMode, VecModel};
+use settings::Settings;
+use slint::{DataTransfer, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 
 slint::include_modules!();
 
@@ -60,7 +62,8 @@ struct App {
 }
 
 impl App {
-    fn new(db: Database) -> audioplayer_db::Result<Self> {
+    /// `library` : nom de la bibliothèque à ouvrir, la première sinon.
+    fn new(db: Database, library: Option<&str>) -> audioplayer_db::Result<Self> {
         let libraries = db.libraries()?;
         let recent_cutoff = db.datetime_from_now(RECENT_MODIFIER)?;
 
@@ -89,7 +92,8 @@ impl App {
             status_timer: Timer::default(),
         };
         if !app.libraries.is_empty() {
-            app.load_library(0)?;
+            let index = library.and_then(|name| app.libraries.iter().position(|l| l.name == name));
+            app.load_library(index.unwrap_or(0))?;
         }
         Ok(app)
     }
@@ -670,24 +674,117 @@ fn select_language(ui: &AppWindow, language: &str) {
     }
 }
 
-// `AUDIOPLAYER_DB` permet de pointer une autre base, par exemple pendant les essais.
-fn database_path() -> PathBuf {
-    if let Some(path) = std::env::var_os("AUDIOPLAYER_DB") {
-        return path.into();
-    }
+fn data_dir() -> PathBuf {
     let dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("AudioPlayer");
     let _ = std::fs::create_dir_all(&dir);
-    dir.join("library.db")
+    dir
+}
+
+// `AUDIOPLAYER_DB` et `AUDIOPLAYER_SETTINGS` permettent d'autres fichiers, par exemple pendant les essais.
+fn database_path() -> PathBuf {
+    std::env::var_os("AUDIOPLAYER_DB").map_or_else(|| data_dir().join("library.db"), PathBuf::from)
+}
+
+fn settings_path() -> PathBuf {
+    std::env::var_os("AUDIOPLAYER_SETTINGS").map_or_else(|| settings::path(&data_dir()), PathBuf::from)
+}
+
+fn apply_settings(ui: &AppWindow, settings: &Settings) {
+    let theme = ui.global::<Theme>();
+    theme.set_dark(settings.dark);
+    if let Some(accent) = theme.get_accents().iter().find(|a| a.id == settings.accent.as_str()) {
+        theme.set_accent_id(accent.id);
+        theme.set_accent(accent.value);
+    }
+    theme.set_zoom(settings.zoom.clamp(theme.get_zoom_min(), theme.get_zoom_max()));
+    ui.invoke_sync_color_scheme();
+    select_language(ui, &settings.language);
+
+    ui.window().set_size(slint::LogicalSize::new(settings.window.width, settings.window.height));
+    ui.set_artists_width(settings.panels.artists_width);
+    ui.set_albums_width(settings.panels.albums_width);
+    ui.set_volume(settings.player.volume.clamp(0.0, 100.0));
+    ui.set_muted(settings.player.muted);
+    ui.set_random_mode(settings.player.random);
+    ui.set_loop_mode(settings.player.repeat);
+
+    ui.set_show_equalizer(settings.equalizer.visible);
+    let equalizer = ui.global::<EqualizerState>();
+    equalizer.set_enabled(settings.equalizer.enabled);
+    equalizer.set_preset(settings.equalizer.preset.as_str().into());
+    // Un fichier modifié à la main ne doit pas casser l'égaliseur : 7 bandes, ±12 dB.
+    let count = equalizer.get_frequencies().row_count();
+    let gains: Vec<f32> = (0..count).map(|i| settings.equalizer.gains.get(i).copied().unwrap_or(0.0).clamp(-12.0, 12.0)).collect();
+    equalizer.set_gains(model(gains));
+}
+
+// `previous` garde la taille d'avant agrandissement, que la fenêtre agrandie ne donne pas.
+fn capture_settings(ui: &AppWindow, app: &App, previous: &Settings) -> Settings {
+    let theme = ui.global::<Theme>();
+    let equalizer = ui.global::<EqualizerState>();
+    let window = ui.window();
+    let maximized = window.is_maximized();
+    let size = window.size().to_logical(window.scale_factor());
+    Settings {
+        dark: theme.get_dark(),
+        accent: theme.get_accent_id().into(),
+        zoom: theme.get_zoom(),
+        language: ui.get_language().into(),
+        library: app.selected_library.map(|i| app.libraries[i].name.clone()),
+        window: settings::WindowSettings {
+            width: if maximized { previous.window.width } else { size.width },
+            height: if maximized { previous.window.height } else { size.height },
+            maximized,
+        },
+        panels: settings::PanelSettings {
+            artists_width: ui.get_artists_width(),
+            albums_width: ui.get_albums_width(),
+        },
+        player: settings::PlayerSettings {
+            volume: ui.get_volume(),
+            muted: ui.get_muted(),
+            random: ui.get_random_mode(),
+            repeat: ui.get_loop_mode(),
+        },
+        equalizer: settings::EqualizerSettings {
+            visible: ui.get_show_equalizer(),
+            enabled: equalizer.get_enabled(),
+            preset: equalizer.get_preset().into(),
+            gains: equalizer.get_gains().iter().collect(),
+        },
+    }
+}
+
+/// Enregistre les réglages quand ils changent (vérifié chaque seconde) et à la fermeture.
+struct SettingsStore {
+    path: PathBuf,
+    saved: RefCell<Settings>,
+}
+
+impl SettingsStore {
+    fn save_if_changed(&self, current: Settings) {
+        if *self.saved.borrow() != current {
+            if let Err(error) = current.save(&self.path) {
+                eprintln!("{}: {error}", self.path.display());
+            }
+            *self.saved.borrow_mut() = current;
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = AppWindow::new()?;
-    // Slint suit la langue du système par défaut : l'interface démarre en anglais.
-    select_language(&ui, "en");
     ui.set_version(env!("CARGO_PKG_VERSION").into());
+    // Slint suivrait la langue du système : la langue vient des réglages (anglais par défaut).
+    let store = Rc::new(SettingsStore { path: settings_path(), saved: RefCell::new(Settings::default()) });
+    let initial = Settings::load(&store.path);
+    apply_settings(&ui, &initial);
+    *store.saved.borrow_mut() = initial.clone();
 
     let path = database_path();
-    let app = App::new(Database::open(&path).map_err(|e| format!("{}: {e}", path.display()))?)?;
+    let db = Database::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let app = App::new(db, initial.library.as_deref())?;
+    let first = app.selected_library;
     let ctx = Context { app: Rc::new(RefCell::new(app)), ui: ui.as_weak() };
     ctx.update(|app, ui| app.refresh_all(ui));
 
@@ -744,7 +841,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Préchargement des autres bibliothèques, sur une connexion dédiée.
     let (sender, receiver) = std::sync::mpsc::channel();
-    let pending: Vec<(usize, i64)> = ctx.app.borrow().libraries.iter().enumerate().skip(1).map(|(i, l)| (i, l.id)).collect();
+    let pending: Vec<(usize, i64)> = ctx.app.borrow().libraries.iter().enumerate()
+        .filter(|&(i, _)| Some(i) != first)
+        .map(|(i, l)| (i, l.id))
+        .collect();
     std::thread::spawn(move || {
         let Ok(db) = Database::open(&path) else { return };
         for (index, id) in pending {
@@ -764,6 +864,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         while let Ok((index, (library, pixels))) = receiver.try_recv() {
             c.app.borrow_mut().add_preloaded(index, library, pixels);
         }
+    });
+
+    // L'agrandissement ne s'applique qu'à une fenêtre affichée.
+    let w = ui.as_weak();
+    let maximized = initial.window.maximized;
+    Timer::single_shot(Duration::ZERO, move || {
+        if let Some(ui) = w.upgrade() {
+            ui.window().set_maximized(maximized);
+        }
+    });
+    let (c, s) = (ctx.clone(), store.clone());
+    let autosave = Timer::default();
+    autosave.start(TimerMode::Repeated, Duration::from_secs(1), move || {
+        if let Some(ui) = c.ui.upgrade() {
+            let current = capture_settings(&ui, &c.app.borrow(), &s.saved.borrow());
+            s.save_if_changed(current);
+        }
+    });
+    let (c, s) = (ctx.clone(), store.clone());
+    ui.window().on_close_requested(move || {
+        if let Some(ui) = c.ui.upgrade() {
+            let current = capture_settings(&ui, &c.app.borrow(), &s.saved.borrow());
+            s.save_if_changed(current);
+        }
+        slint::CloseRequestResponse::HideWindow
     });
 
     let c = ctx.clone();

@@ -11,6 +11,9 @@ Refonte complète de la v0.1 (Tauri + Vue), conservée dans `../AudioPlayerOld` 
 La base se trouve dans le dossier de données de l'utilisateur
 (`~/Library/Application Support/AudioPlayer/library.db` sur macOS) ; la variable
 `AUDIOPLAYER_DB` permet d'en désigner une autre.
+Les réglages de l'interface (thème, accent, zoom, égaliseur, volume, bibliothèque ouverte,
+taille de la fenêtre…) sont enregistrés à côté, dans `settings.toml`, à chaque changement ;
+`AUDIOPLAYER_SETTINGS` permet d'utiliser un autre fichier.
 
 Créer la base à partir de celle de la v0.1 (ouverte en lecture seule, jamais modifiée) :
 

@@ -466,12 +466,15 @@ export component ControlBar inherits Rectangle {
     in-out property <string> search-text;
     in-out property <bool> random-mode;
     in-out property <bool> loop-mode;
+    in-out property <float> volume: 70;
+    in-out property <bool> muted;
     callback show-current();
     callback previous();
     callback toggle-play();
     callback next();
     callback seek(float);
     callback search(string);
+    callback search-closed();
 
     height: 60px;
     background: Theme.control-bar-bg;
@@ -514,6 +517,8 @@ export component ControlBar inherits Rectangle {
                     remaining-text: root.remaining-text;
                     random-mode <=> root.random-mode;
                     loop-mode <=> root.loop-mode;
+                    volume <=> root.volume;
+                    muted <=> root.muted;
                     show-current => {
                         root.show-current();
                     }
@@ -545,6 +550,7 @@ export component ControlBar inherits Rectangle {
                     }
                     cancelled => {
                         root.search-visible = false;
+                        root.search-closed();
                     }
                 }
             }

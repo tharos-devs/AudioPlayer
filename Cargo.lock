@@ -437,8 +437,11 @@ dependencies = [
  "audioplayer-db",
  "dirs",
  "image",
+ "serde",
  "slint",
  "slint-build",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]
