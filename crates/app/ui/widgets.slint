@@ -82,24 +82,19 @@ export component Artwork inherits Rectangle {
 export component ArtistRow inherits Rectangle {
     in property <ListItem> item;
     in property <bool> selected;
-    // Position du curseur clavier : Entrée la sélectionne.
+    // Position du curseur clavier (Entrée la sélectionne) : barre gauche en demi-teinte.
     in property <bool> cursor;
     callback clicked();
     height: 48px;
 
+    // Angles droits et barre d'accent à gauche, comme les albums et les morceaux.
     Rectangle {
-        x: 4px;
-        width: parent.width - 8px;
-        border-radius: 6px;
-        clip: true;
-        border-width: root.cursor ? 1px : 0px;
-        border-color: Theme.accent;
-        background: root.selected ? Theme.selected-bg : (touch.has-hover ? Theme.item-hover : transparent);
+        background: root.selected ? Theme.selected-bg : (root.cursor || touch.has-hover ? Theme.item-hover : transparent);
 
         Rectangle {
             x: 0;
             width: 3px;
-            background: root.selected ? Theme.accent : transparent;
+            background: root.selected ? Theme.accent : root.cursor ? Theme.accent.with-alpha(0.5) : transparent;
         }
 
         VerticalLayout {
@@ -136,14 +131,13 @@ export component AlbumRow inherits Rectangle {
     in property <bool> cursor;
     callback clicked();
     height: 61px;
-    border-width: root.cursor ? 1px : 0px;
-    border-color: Theme.accent;
-    background: root.selected ? Theme.selected-bg : (touch.has-hover ? Theme.item-hover : transparent);
+    background: root.selected ? Theme.selected-bg : (root.cursor || touch.has-hover ? Theme.item-hover : transparent);
 
+    // Sélection : barre d'accent pleine ; curseur clavier : la même en demi-teinte.
     Rectangle {
         x: 0;
         width: 3px;
-        background: root.selected ? Theme.accent : transparent;
+        background: root.selected ? Theme.accent : root.cursor ? Theme.accent.with-alpha(0.5) : transparent;
     }
     Rectangle {
         y: parent.height - 1px;
