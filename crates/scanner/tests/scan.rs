@@ -16,9 +16,7 @@ fn wav(path: &Path) {
     bytes.extend_from_slice(b"RIFF");
     bytes.extend_from_slice(&(36 + data).to_le_bytes());
     bytes.extend_from_slice(b"WAVEfmt ");
-    for v in [16u32] {
-        bytes.extend_from_slice(&v.to_le_bytes());
-    }
+    bytes.extend_from_slice(&16u32.to_le_bytes());
     for v in [1u16, 1] {
         bytes.extend_from_slice(&v.to_le_bytes());
     }
