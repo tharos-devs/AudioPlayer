@@ -8,10 +8,11 @@ import { ControlBar } from "controlbar.slint";
 import { StatusBar, StatusSource } from "statusbar.slint";
 import { EqualizerState } from "equalizer.slint";
 import { SetupWindow, DatabaseProblem, DatabaseProblems } from "setup.slint";
+import { TagsDrawer, TagRow } from "tags.slint";
 
-export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind }
+export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind, TagRow }
 
-export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed }
+export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed, tags-writing, tags-saved, tags-failed, tags-invalid, artwork-saved }
 
 // Les messages d'état sont formatés ici (et non en Rust) pour passer par @tr.
 export struct Status {
@@ -128,6 +129,16 @@ export component AppWindow inherits Window {
         ? @tr("Cannot play “{0}”: {1}", root.status.track, root.status.playlist)
         : root.status.kind == StatusKind.no-output
         ? @tr("No audio output: {0}", root.status.playlist)
+        : root.status.kind == StatusKind.tags-writing
+        ? @tr("Writing tags: {0} / {1} files…", root.status.count, root.status.total)
+        : root.status.kind == StatusKind.tags-saved
+        ? @tr("Tags saved in {n} file" | "Tags saved in {n} files" % root.status.count)
+        : root.status.kind == StatusKind.artwork-saved
+        ? @tr("Artwork saved in {n} file" | "Artwork saved in {n} files" % root.status.count)
+        : root.status.kind == StatusKind.tags-failed
+        ? @tr("{n} file could not be written: “{0}”: {1}" | "{n} files could not be written, including “{0}”: {1}" % root.status.count, root.status.track, root.status.playlist)
+        : root.status.kind == StatusKind.tags-invalid
+        ? @tr("“{0}” is not a valid number", root.status.track)
         : root.status.kind == StatusKind.database-problem
         ? DatabaseProblems.describe(root.status.problem, root.status.track, root.status.playlist)
         : @tr("{n} track" | "{n} tracks" % root.tracks-count) + " · "
@@ -136,6 +147,18 @@ export component AppWindow inherits Window {
 
     in-out property <length> artists-width: 255px;
     in-out property <length> albums-width: 300px;
+    // Tiroir des tags (bouton « i » de la barre d'état).
+    in-out property <bool> tags-open;
+    in-out property <length> tags-width: 320px;
+    in property <[TagRow]> tag-rows;
+    in property <int> tag-count;
+    in property <bool> tags-editing;
+    in property <bool> tags-saving;
+    callback tags-toggled();
+    callback tags-edit();
+    callback tags-save();
+    callback tags-cancel();
+    callback tag-edited(int, string);
 
     callback select-library(int);
     callback select-letter(string);
@@ -201,6 +224,9 @@ export component AppWindow inherits Window {
         keys.focus();
     }
     callback activate();
+    public function focus-keys() {
+        keys.focus();
+    }
     // Un clic dans la liste des morceaux la rend active.
     changed selected-track => {
         if root.selected-track != -1 {
@@ -596,6 +622,34 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+
+                    if root.tags-open: Splitter {
+                        target <=> root.tags-width;
+                        minimum: 220px;
+                        reversed: true;
+                    }
+
+                    if root.tags-open: TagsDrawer {
+                        width: root.tags-width;
+                        rows: root.tag-rows;
+                        count: root.tag-count;
+                        editing: root.tags-editing;
+                        saving: root.tags-saving;
+                        edit => {
+                            root.tags-edit();
+                        }
+                        save => {
+                            keys.focus();
+                            root.tags-save();
+                        }
+                        cancel => {
+                            keys.focus();
+                            root.tags-cancel();
+                        }
+                        value-edited(index, value) => {
+                            root.tag-edited(index, value);
+                        }
+                    }
                 }
 
                 StatusBar {
@@ -609,6 +663,10 @@ export component AppWindow inherits Window {
                     message: root.status.kind == StatusKind.summary ? "" : root.status-text;
                     version: root.version;
                     show-equalizer <=> root.show-equalizer;
+                    show-tags <=> root.tags-open;
+                    tags-toggled => {
+                        root.tags-toggled();
+                    }
                     zoom-edited(value) => {
                         root.zoom-edited(value);
                     }

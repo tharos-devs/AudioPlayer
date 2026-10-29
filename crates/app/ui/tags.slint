@@ -1,0 +1,243 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { ThemedButton } from "widgets.slint";
+
+// Une ligne du tiroir : `key` désigne le champ (libellé et format choisis ici, pour @tr).
+export struct TagRow {
+    key: string,
+    value: string,
+    // Les morceaux sélectionnés n'ont pas tous la même valeur.
+    multiple: bool,
+    editable: bool,
+}
+
+global TagLabels {
+    pure public function label(key: string) -> string {
+        return key == "title" ? @tr("Title") : key == "artist" ? @tr("Artist")
+            : key == "album-artist" ? @tr("Album Artist") : key == "album" ? @tr("Album")
+            : key == "track-number" ? @tr("Track No.") : key == "disc-number" ? @tr("Disc No.")
+            : key == "year" ? @tr("Year") : key == "genre" ? @tr("Genre")
+            : key == "composer" ? @tr("Composer") : key == "conductor" ? @tr("Conductor")
+            : key == "lyricist" ? @tr("Lyricist") : key == "grouping" ? @tr("Grouping")
+            : key == "work" ? @tr("Work") : key == "comment" ? @tr("Comment")
+            : key == "publisher" ? @tr("Publisher") : key == "catalog-number" ? @tr("Catalog Number")
+            : key == "barcode" ? @tr("Barcode") : key == "disc-subtitle" ? @tr("Disc Subtitle")
+            : key == "compilation" ? @tr("Part of a Compilation")
+            : key == "codec" ? @tr("Format") : key == "bitrate" ? @tr("Bitrate")
+            : key == "sample-rate" ? @tr("Sample Rate") : key == "bit-depth" ? @tr("Bit Depth")
+            : key == "channels" ? @tr("Channels") : key == "duration" ? @tr("Duration")
+            : key == "file-size" ? @tr("File Size") : key == "path" ? @tr("File") : key;
+    }
+
+    // Valeurs brutes envoyées par Rust, mises en forme ici.
+    pure public function format(key: string, value: string) -> string {
+        if key == "bitrate" { return value + " kbps"; }
+        if key == "sample-rate" { return value + " Hz"; }
+        if key == "bit-depth" { return value + " bit"; }
+        if key == "compilation" { return value == "1" ? @tr("Yes") : @tr("No"); }
+        if key == "duration" {
+            let seconds = value.to-float();
+            let rest = Math.mod(floor(seconds), 60);
+            return floor(seconds / 60) + ":" + (rest < 10 ? "0" : "") + rest;
+        }
+        if key == "file-size" { return (round(value.to-float() / 104857.6) / 10) + " MB"; }
+        return value;
+    }
+}
+
+// Champ de saisie au style de l'app (le LineEdit standard suit l'accent du système).
+component TagField inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    callback edited(string);
+    callback accepted();
+    callback cancelled();
+    height: 26px;
+    border-radius: 3px;
+    border-width: Theme.hairline;
+    border-color: input.has-focus ? Theme.accent : Theme.border-base;
+    background: Theme.bg-primary;
+
+    HorizontalLayout {
+        padding-left: 7px;
+        padding-right: 7px;
+        Rectangle {
+            if root.text == "" && !input.has-focus: Text {
+                x: 0;
+                height: 100%;
+                text: root.placeholder;
+                font-size: 12px;
+                font-italic: true;
+                color: Theme.text-disabled;
+                vertical-alignment: center;
+            }
+            input := TextInput {
+                text <=> root.text;
+                font-size: 12px;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+                single-line: true;
+                edited => {
+                    root.edited(self.text);
+                }
+                // Entrée enregistre, Échap annule, comme dans les dialogues.
+                accepted => {
+                    root.accepted();
+                }
+                key-pressed(event) => {
+                    if event.text == Key.Escape {
+                        root.cancelled();
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
+        }
+    }
+}
+
+// Tiroir d'informations (« Track Info » de la v0.1), à droite des morceaux.
+export component TagsDrawer inherits Rectangle {
+    in property <[TagRow]> rows;
+    // Nombre de morceaux affichés.
+    in property <int> count;
+    in property <bool> editing;
+    in property <bool> saving;
+    callback edit();
+    callback save();
+    callback cancel();
+    callback value-edited(int, string);
+    background: Theme.panel-bg;
+
+    VerticalLayout {
+        Rectangle {
+            height: 36px;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 8px;
+                spacing: 6px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: (root.saving ? @tr("Saving Tags…")
+                        : root.editing ? @tr("Edit Tags")
+                        : root.count <= 1 ? @tr("Track Info")
+                        : @tr("{n} track selected" | "{n} tracks selected" % root.count)).to-uppercase();
+                    font-size: 11px;
+                    font-weight: 600;
+                    letter-spacing: 0.5px;
+                    color: root.editing ? Theme.accent : Theme.text-secondary;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                if !root.editing && !root.saving && root.count > 0: VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 24px;
+                        height: 24px;
+                        border-radius: 3px;
+                        border-width: Theme.hairline;
+                        border-color: pen.has-hover ? Theme.accent : Theme.button-border;
+                        background: pen.has-hover ? Theme.hover-tint : Theme.button-bg;
+                        Image {
+                            source: @image-url("icons/ep-edit-pen.svg");
+                            width: 13px;
+                            height: 13px;
+                            colorize: pen.has-hover ? Theme.accent : Theme.button-text;
+                        }
+                        pen := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.edit();
+                            }
+                        }
+                    }
+                }
+                if root.editing && !root.saving: VerticalLayout {
+                    alignment: center;
+                    HorizontalLayout {
+                        spacing: 6px;
+                        ThemedButton {
+                            height: 24px;
+                            text: @tr("Save");
+                            primary: true;
+                            clicked => {
+                                root.save();
+                            }
+                        }
+                        ThemedButton {
+                            height: 24px;
+                            text: @tr("Cancel");
+                            clicked => {
+                                root.cancel();
+                            }
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                y: parent.height - Theme.hairline;
+                height: Theme.hairline;
+                background: Theme.border;
+            }
+        }
+
+        if root.count == 0: VerticalLayout {
+            vertical-stretch: 1;
+            alignment: center;
+            spacing: 8px;
+            Text {
+                text: "i";
+                font-family: "Georgia";
+                font-italic: true;
+                font-weight: 700;
+                font-size: 28px;
+                color: Theme.text-disabled;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: @tr("Select a track to see its tags");
+                font-size: 12px;
+                color: Theme.text-tertiary;
+                horizontal-alignment: center;
+            }
+        }
+
+        if root.count > 0: ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding: 12px;
+                spacing: 9px;
+                for row[index] in root.rows: VerticalLayout {
+                    spacing: 3px;
+                    // En édition, les champs non modifiables s'estompent comme dans la v0.1.
+                    opacity: root.editing && !row.editable ? 0.55 : 1;
+                    Text {
+                        text: TagLabels.label(row.key);
+                        font-size: 10px;
+                        color: Theme.text-tertiary;
+                    }
+                    if !(root.editing && row.editable): Text {
+                        text: row.multiple ? @tr("Multiple values") : row.value == "" ? "—" : TagLabels.format(row.key, row.value);
+                        font-size: 12px;
+                        font-italic: row.multiple;
+                        color: row.multiple || row.value == "" ? Theme.text-disabled : Theme.text-primary;
+                        wrap: word-wrap;
+                    }
+                    if root.editing && row.editable: TagField {
+                        text: row.value;
+                        placeholder: row.multiple ? @tr("Multiple values") : "";
+                        edited(value) => {
+                            root.value-edited(index, value);
+                        }
+                        accepted => {
+                            root.save();
+                        }
+                        cancelled => {
+                            root.cancel();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

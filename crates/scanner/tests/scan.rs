@@ -148,11 +148,15 @@ fn rescan_files_rereads_even_unchanged_and_drops_missing() {
     let library = Database::open(&db_path).unwrap().create_library("L", &root.to_string_lossy()).unwrap().unwrap();
     run(&db_path, library, &root, Mode::Changes).unwrap();
 
+    // Année modifiée dans le fichier : la relecture la reprend (le scan normal garde la première connue).
+    audioplayer_scanner::write::write_tags(&one, &[(audioplayer_scanner::write::Field::Year, Some("1990".into()))], None).unwrap();
+    run(&db_path, library, &root, Mode::Changes).unwrap();
+    audioplayer_scanner::write::write_tags(&one, &[(audioplayer_scanner::write::Field::Year, Some("2001".into()))], None).unwrap();
     std::fs::remove_file(&two).unwrap();
     let report = audioplayer_scanner::rescan_files(&db_path, library, &[one, two], &AtomicBool::new(false), &|_| {}).unwrap();
     assert_eq!((report.updated, report.removed), (1, 1));
-    let titles: Vec<_> = Database::open(&db_path).unwrap().albums(library).unwrap().into_iter().map(|a| a.title).collect();
-    assert_eq!(titles, ["One"]);
+    let albums: Vec<_> = Database::open(&db_path).unwrap().albums(library).unwrap().into_iter().map(|a| (a.title, a.year)).collect();
+    assert_eq!(albums, [("One".to_string(), Some(2001))]);
 }
 
 #[test]

@@ -435,3 +435,128 @@ msgid "Delete {n} track from the library?"
 msgid_plural "Delete {n} tracks from the library?"
 msgstr[0] "Supprimer {n} morceau de la bibliothèque ?"
 msgstr[1] "Supprimer {n} morceaux de la bibliothèque ?"
+
+msgid "Artist"
+msgstr "Artiste"
+
+msgid "Album Artist"
+msgstr "Artiste de l'album"
+
+msgid "Album"
+msgstr "Album"
+
+msgid "Track No."
+msgstr "N° de piste"
+
+msgid "Disc No."
+msgstr "N° de disque"
+
+msgid "Year"
+msgstr "Année"
+
+msgid "Genre"
+msgstr "Genre"
+
+msgid "Composer"
+msgstr "Compositeur"
+
+msgid "Conductor"
+msgstr "Chef d'orchestre"
+
+msgid "Lyricist"
+msgstr "Parolier"
+
+msgid "Grouping"
+msgstr "Regroupement"
+
+msgid "Work"
+msgstr "Œuvre"
+
+msgid "Comment"
+msgstr "Commentaire"
+
+msgid "Publisher"
+msgstr "Éditeur"
+
+msgid "Catalog Number"
+msgstr "Numéro de catalogue"
+
+msgid "Barcode"
+msgstr "Code-barres"
+
+msgid "Disc Subtitle"
+msgstr "Sous-titre du disque"
+
+msgid "Part of a Compilation"
+msgstr "Fait partie d'une compilation"
+
+msgid "Format"
+msgstr "Format"
+
+msgid "Bitrate"
+msgstr "Débit"
+
+msgid "Sample Rate"
+msgstr "Fréquence d'échantillonnage"
+
+msgid "Bit Depth"
+msgstr "Résolution"
+
+msgid "Channels"
+msgstr "Canaux"
+
+msgid "Duration"
+msgstr "Durée"
+
+msgid "File Size"
+msgstr "Taille du fichier"
+
+msgid "Yes"
+msgstr "Oui"
+
+msgid "No"
+msgstr "Non"
+
+msgid "Saving Tags…"
+msgstr "Enregistrement des tags…"
+
+msgid "Edit Tags"
+msgstr "Modifier les tags"
+
+msgid "Track Info"
+msgstr "Infos du morceau"
+
+msgid "Select a track to see its tags"
+msgstr "Sélectionnez un morceau pour voir ses tags"
+
+msgid "Multiple values"
+msgstr "Valeurs multiples"
+
+msgid "Save"
+msgstr "Enregistrer"
+
+msgid "Writing tags: {0} / {1} files…"
+msgstr "Écriture des tags : {0} / {1} fichiers…"
+
+msgid "“{0}” is not a valid number"
+msgstr "« {0} » n'est pas un nombre valide"
+
+msgid "{n} track selected"
+msgid_plural "{n} tracks selected"
+msgstr[0] "{n} morceau sélectionné"
+msgstr[1] "{n} morceaux sélectionnés"
+
+msgid "Tags saved in {n} file"
+msgid_plural "Tags saved in {n} files"
+msgstr[0] "Tags enregistrés dans {n} fichier"
+msgstr[1] "Tags enregistrés dans {n} fichiers"
+
+msgid "Artwork saved in {n} file"
+msgid_plural "Artwork saved in {n} files"
+msgstr[0] "Pochette enregistrée dans {n} fichier"
+msgstr[1] "Pochette enregistrée dans {n} fichiers"
+
+msgid "{n} file could not be written: “{0}”: {1}"
+msgid_plural "{n} files could not be written, including “{0}”: {1}"
+msgstr[0] "{n} fichier n'a pas pu être écrit : « {0} » : {1}"
+msgstr[1] "{n} fichiers n'ont pas pu être écrits, dont « {0} » : {1}"

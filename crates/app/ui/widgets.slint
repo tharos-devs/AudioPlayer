@@ -192,6 +192,7 @@ export global Menus {
             { action: "", label: @tr("Add to Playlist"), enabled: true, separated: true, submenu: true },
             { action: "favorite", label: favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites"), enabled: true },
             { action: "rescan", label: @tr("Rescan Audio Tags"), enabled: true, separated: true },
+            { action: "edit-tags", label: @tr("Edit Tags…"), enabled: true },
             { action: "delete", label: @tr("Delete from Library…"), enabled: true, separated: true, danger: true },
         ];
     }
@@ -203,6 +204,7 @@ export global Menus {
             { action: "", label: @tr("Add to Playlist"), enabled: true, separated: true, submenu: true },
             { action: "favorite", label: favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites"), enabled: true },
             { action: "rescan", label: @tr("Rescan Audio Tags"), enabled: true, separated: true },
+            { action: "edit-tags", label: @tr("Edit Tags…"), enabled: true },
             { action: "delete", label: @tr("Delete from Library…"), enabled: true, separated: true, danger: true },
         ];
     }
@@ -215,7 +217,7 @@ export global Menus {
             { action: "favorite", label: favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites"), enabled: true },
             { action: "reset-plays", label: @tr("Reset Play Count"), enabled: true, hidden: !TrackMenu.most-played },
             { action: "rescan", label: @tr("Rescan Audio Tags"), enabled: true, separated: true },
-            { action: "edit-tags", label: @tr("Edit Tags…"), enabled: false },
+            { action: "edit-tags", label: @tr("Edit Tags…"), enabled: true },
             { action: "remove-from-playlist", label: @tr("Remove from Playlist"), enabled: true, separated: true, hidden: !TrackMenu.in-playlist },
             { action: "delete", label: @tr("Delete from Library…"), enabled: true, separated: true, danger: true, hidden: TrackMenu.in-playlist },
         ];
@@ -468,6 +470,8 @@ export component Splitter inherits Rectangle {
     in-out property <length> target;
     in property <length> minimum: 120px;
     in property <length> maximum: 600px;
+    // Panneau à droite du séparateur (tiroir des tags) : tirer à gauche l'élargit.
+    in property <bool> reversed;
     width: 5px;
 
     Rectangle {
@@ -478,7 +482,7 @@ export component Splitter inherits Rectangle {
     touch := TouchArea {
         mouse-cursor: col-resize;
         moved => {
-            root.target = clamp(root.target + self.mouse-x - self.pressed-x, root.minimum, root.maximum);
+            root.target = clamp(root.target + (root.reversed ? -1 : 1) * (self.mouse-x - self.pressed-x), root.minimum, root.maximum);
         }
     }
 }

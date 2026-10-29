@@ -106,6 +106,8 @@ export component StatusBar inherits Rectangle {
     property <float> zoom-min: Theme.zoom-min;
     property <float> zoom-max: Theme.zoom-max;
     in-out property <bool> show-equalizer;
+    in-out property <bool> show-tags;
+    callback tags-toggled();
     callback zoom-edited(float);
     callback toggle-theme();
     // Chemin de la base, affiché à la place de la barre par l'icône de gauche.
@@ -293,7 +295,7 @@ export component StatusBar inherits Rectangle {
                         }
                     }
                 }
-                // Mini-lecteur et fiche du morceau : pas encore branchés.
+                // Mini-lecteur : pas encore branché.
                 VerticalLayout {
                     alignment: center;
                     SquareButton {
@@ -304,6 +306,11 @@ export component StatusBar inherits Rectangle {
                     alignment: center;
                     SquareButton {
                         glyph: "i";
+                        active: root.show-tags;
+                        clicked => {
+                            root.show-tags = !root.show-tags;
+                            root.tags-toggled();
+                        }
                     }
                 }
                 Text {

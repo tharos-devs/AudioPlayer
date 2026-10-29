@@ -262,6 +262,8 @@ pub fn rescan_files(
             }
         }
     }
+    let rescanned: Vec<i64> = present.iter().filter_map(|f| known.get(f.path.to_string_lossy().as_ref())).map(|k| k.track_id).collect();
+    db.reset_album_years(&rescanned)?;
     let to_read: Vec<&files::AudioFile> = present.iter().collect();
     process(&mut db, library_id, &known, &to_read, HashMap::new(), cancel, progress, &mut report)?;
     report.removed = missing.len();

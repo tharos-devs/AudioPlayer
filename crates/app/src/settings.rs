@@ -46,6 +46,8 @@ pub struct WindowSettings {
 pub struct PanelSettings {
     pub artists_width: f32,
     pub albums_width: f32,
+    pub tags_width: f32,
+    pub tags_visible: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -94,7 +96,7 @@ impl Default for WindowSettings {
 
 impl Default for PanelSettings {
     fn default() -> Self {
-        PanelSettings { artists_width: 255.0, albums_width: 300.0 }
+        PanelSettings { artists_width: 255.0, albums_width: 300.0, tags_width: 320.0, tags_visible: false }
     }
 }
 

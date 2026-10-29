@@ -15,7 +15,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use audioplayer_audio::{Engine, Event};
-use audioplayer_db::{legacy, Database, FileKind};
+use audioplayer_db::{legacy, Database, FileKind, TrackDetails};
+use audioplayer_scanner::write::Field;
 use library::{format_duration, sort_key, Library};
 use settings::Settings;
 use slint::{DataTransfer, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
@@ -83,6 +84,14 @@ enum ScanMessage {
     // Vérification : `None` si le dossier est introuvable, sinon les morceaux absents.
     Checked(Option<Vec<i64>>),
     CheckStopped,
+    // Écriture de tags ou d'une pochette dans les fichiers, avant leur relecture.
+    Writing { done: usize, total: usize },
+    Written {
+        written: usize,
+        failed: Vec<(PathBuf, String)>,
+        artwork: bool,
+        result: Result<audioplayer_scanner::Report, audioplayer_scanner::Error>,
+    },
 }
 
 struct ScanJob {
@@ -151,6 +160,13 @@ struct App {
     published_track: Option<(usize, usize)>,
     published_state: Option<(bool, i32, std::time::Instant)>,
     status_timer: Timer,
+    // Tiroir des tags : morceaux montrés (ids en base, stables d'un rechargement à
+    // l'autre), lignes d'origine et saisies par ligne.
+    tag_tracks: Vec<i64>,
+    tag_rows: Vec<TagRow>,
+    tag_edits: HashMap<usize, String>,
+    // Lecture suspendue pendant l'écriture : position et état à reprendre.
+    tag_resume: Option<(Duration, bool)>,
 }
 
 impl App {
@@ -204,6 +220,10 @@ impl App {
             published_state: None,
             rng: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0x5eed, |d| d.as_nanos() as u64) | 1,
             status_timer: Timer::default(),
+            tag_tracks: Vec::new(),
+            tag_rows: Vec::new(),
+            tag_edits: HashMap::new(),
+            tag_resume: None,
         };
         if !app.libraries.is_empty() {
             let index = library.and_then(|name| app.libraries.iter().position(|l| l.name == name));
@@ -499,6 +519,7 @@ impl App {
         ui.set_tracks_count(ids.len() as i32);
         ui.set_tracks_duration(total);
         self.visible = ids;
+        self.refresh_tags(ui);
     }
 
     fn grouped_items(&self, ids: &[usize]) -> Vec<TrackItem> {
@@ -926,6 +947,7 @@ impl App {
             }
         }
         ui.set_selected_track(to_ui_id(current));
+        self.refresh_tags(ui);
     }
 
     fn select_only(&mut self, ui: &AppWindow, track: usize) {
@@ -1371,6 +1393,10 @@ impl App {
 
     // « Set Album Artwork » : une image choisie devient la vignette de l'album (150px).
     fn set_album_artwork(&mut self, ui: &AppWindow, album: usize) {
+        // Les fichiers reçoivent aussi l'image : pas pendant un scan.
+        if self.scan.is_some() {
+            return;
+        }
         let dialog = rfd::FileDialog::new().add_filter("Image", &["jpg", "jpeg", "png", "webp", "gif", "bmp"]);
         let Some(path) = dialog.pick_file() else { return };
         let Some(thumbnail) = std::fs::read(&path).ok().and_then(|data| audioplayer_scanner::artwork::thumbnail(&data)) else {
@@ -1380,9 +1406,12 @@ impl App {
         if let Some(pixels) = covers::decode(&thumbnail.2) {
             self.add_covers(vec![(id, pixels)]);
         }
+        let cover = (thumbnail.1.clone(), thumbnail.2.clone());
         if let Err(error) = self.db.set_artwork(id, &[thumbnail]) {
             return eprintln!("artwork {id}: {error}");
         }
+        let paths = self.library.tracks.iter().filter(|t| t.album == album).map(|t| PathBuf::from(&t.path)).collect();
+        self.write_files(ui, paths, Vec::new(), Some(cover));
         self.refresh_albums(ui);
         self.refresh_tracks(ui);
         self.published_track = None;
@@ -1461,6 +1490,15 @@ impl App {
             }
             "favorite" => self.toggle_favorite(ui, item),
             "rescan" => self.start_rescan(ui, item),
+            "edit-tags" => {
+                if self.scan.is_none() {
+                    let ids = self.tracks_of(item).into_iter().map(|t| self.library.tracks[t].id).collect();
+                    ui.set_tags_open(true);
+                    ui.set_tags_editing(false);
+                    self.show_tags(ui, ids);
+                    ui.set_tags_editing(!self.tag_tracks.is_empty());
+                }
+            }
             "delete" => {
                 let Some(library) = self.selected_library.map(|i| self.libraries[i].id) else { return };
                 let tracks: Vec<i64> = self.tracks_of(item).into_iter().map(|t| self.library.tracks[t].id).collect();
@@ -1796,6 +1834,9 @@ impl App {
                         ..Default::default()
                     });
                 }
+                ScanMessage::Writing { done, total } => {
+                    ui.set_status(Status { kind: StatusKind::TagsWriting, count: done as i32 + 1, total: total as i32, ..Default::default() });
+                }
                 other => finished = Some(other),
             }
         }
@@ -1833,7 +1874,11 @@ impl App {
                 self.ask_confirmation(ui, ConfirmKind::RemoveMissing, &name, ConfirmRequest::RemoveMissing { library, tracks: missing });
             }
             ScanMessage::CheckStopped => ui.set_status(Status::default()),
-            ScanMessage::Progress(_) => {}
+            ScanMessage::Written { written, failed, artwork, result } => {
+                ui.set_status(Status::default());
+                self.files_written(ui, library, written, failed, artwork, result);
+            }
+            ScanMessage::Progress(_) | ScanMessage::Writing { .. } => {}
         }
     }
 
@@ -1888,6 +1933,202 @@ impl App {
             self.published_track = None;
             self.refresh_player(ui);
         }
+    }
+
+    // Le tiroir suit la sélection, sauf pendant une édition.
+    fn refresh_tags(&mut self, ui: &AppWindow) {
+        if !ui.get_tags_open() || ui.get_tags_editing() {
+            return;
+        }
+        let ids: Vec<i64> = self.tracks_of(Dragged::Selection).into_iter().map(|t| self.library.tracks[t].id).collect();
+        if ids != self.tag_tracks || self.tag_rows.is_empty() {
+            self.show_tags(ui, ids);
+        }
+    }
+
+    fn show_tags(&mut self, ui: &AppWindow, ids: Vec<i64>) {
+        let details = self.db.track_details(&ids).unwrap_or_else(|error| {
+            eprintln!("tags: {error}");
+            Vec::new()
+        });
+        let mut rows = Vec::new();
+        let mut push = |key: &str, values: Vec<String>, editable: bool| {
+            let multiple = values.windows(2).any(|pair| pair[0] != pair[1]);
+            let value = if multiple { String::new() } else { values.into_iter().next().unwrap_or_default() };
+            rows.push(TagRow { key: key.into(), value: value.into(), multiple, editable });
+        };
+        for field in Field::ALL {
+            push(field.key(), details.iter().map(|d| field_value(d, field)).collect(), true);
+        }
+        let number = |value: Option<u32>| value.map_or(String::new(), |n| n.to_string());
+        push("compilation", details.iter().map(|d| u8::from(d.compilation).to_string()).collect(), false);
+        push("codec", details.iter().map(|d| d.codec.clone().unwrap_or_default()).collect(), false);
+        push("bitrate", details.iter().map(|d| number(d.bitrate)).collect(), false);
+        push("sample-rate", details.iter().map(|d| number(d.sample_rate)).collect(), false);
+        push("bit-depth", details.iter().map(|d| number(d.bit_depth)).collect(), false);
+        push("channels", details.iter().map(|d| number(d.channels)).collect(), false);
+        // Durée et taille : le total de la sélection.
+        let seconds: u64 = details.iter().map(|d| d.duration_ms / 1000).sum();
+        push("duration", vec![if details.is_empty() { String::new() } else { seconds.to_string() }], false);
+        let size = details.iter().map(|d| d.file_size).sum::<Option<u64>>();
+        push("file-size", vec![size.map_or(String::new(), |s| s.to_string())], false);
+        push("path", details.iter().map(|d| d.path.clone()).collect(), false);
+
+        self.tag_tracks = details.iter().map(|d| d.id).collect();
+        self.tag_edits.clear();
+        ui.set_tag_count(self.tag_tracks.len() as i32);
+        ui.set_tag_rows(model(rows.clone()));
+        self.tag_rows = rows;
+    }
+
+    fn edit_tags(&mut self, ui: &AppWindow) {
+        if self.scan.is_none() && !self.tag_tracks.is_empty() {
+            self.tag_edits.clear();
+            ui.set_tags_editing(true);
+        }
+    }
+
+    fn cancel_tags(&mut self, ui: &AppWindow) {
+        ui.set_tags_editing(false);
+        // Les champs reprennent leurs valeurs d'origine.
+        self.tag_rows.clear();
+        self.refresh_tags(ui);
+    }
+
+    fn save_tags(&mut self, ui: &AppWindow) {
+        if self.scan.is_some() {
+            return;
+        }
+        let mut edits = Vec::new();
+        let mut rows: Vec<_> = self.tag_edits.iter().collect();
+        rows.sort();
+        for (&row, value) in rows {
+            let Some(original) = self.tag_rows.get(row) else { continue };
+            let Some(field) = Field::from_key(&original.key) else { continue };
+            let value = value.trim();
+            // Valeurs multiples : un champ laissé vide garde la valeur de chaque morceau.
+            if (original.multiple && value.is_empty()) || (!original.multiple && value == original.value.trim()) {
+                continue;
+            }
+            if field.is_numeric() && !value.is_empty() && value.parse::<u16>().is_err() {
+                return self.show_status(ui, Status { kind: StatusKind::TagsInvalid, track: value.into(), ..Default::default() });
+            }
+            edits.push((field, (!value.is_empty()).then(|| value.to_owned())));
+        }
+        if edits.is_empty() {
+            return self.cancel_tags(ui);
+        }
+        let paths = self.tag_tracks.iter().filter_map(|&id| self.library.track_by_id(id)).map(|t| PathBuf::from(&self.library.tracks[t].path)).collect();
+        ui.set_tags_saving(true);
+        self.write_files(ui, paths, edits, None);
+    }
+
+    // Écrit tags ou pochette dans les fichiers en arrière-plan, puis les relit dans la base.
+    fn write_files(&mut self, ui: &AppWindow, mut paths: Vec<PathBuf>, edits: Vec<audioplayer_scanner::write::Edit>, cover: Option<(String, Vec<u8>)>) {
+        let Some(index) = self.selected_library.filter(|_| self.scan.is_none() && !paths.is_empty()) else {
+            ui.set_tags_saving(false);
+            return;
+        };
+        self.tag_resume = self.suspend_playback(&mut paths);
+        let library = self.libraries[index].clone();
+        let (sender, messages) = std::sync::mpsc::channel();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (db_path, stop) = (self.db_path.clone(), cancel.clone());
+        let artwork = cover.is_some();
+        std::thread::spawn(move || {
+            let mut failed = Vec::new();
+            let total = paths.len();
+            for (done, path) in paths.iter().enumerate() {
+                let _ = sender.send(ScanMessage::Writing { done, total });
+                let cover = cover.as_ref().map(|(mime, data)| (mime.as_str(), data.as_slice()));
+                if let Err(error) = audioplayer_scanner::write::write_tags(path, &edits, cover) {
+                    failed.push((path.clone(), error));
+                }
+            }
+            let progress = sender.clone();
+            let result = audioplayer_scanner::rescan_files(&db_path, library.id, &paths, &stop, &move |p| {
+                let _ = progress.send(ScanMessage::Progress(p));
+            });
+            let _ = sender.send(ScanMessage::Written { written: total - failed.len(), failed, artwork, result });
+        });
+        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel });
+        ui.set_scanning(true);
+        ui.set_status(Status { kind: StatusKind::TagsWriting, total: 0, ..Default::default() });
+    }
+
+    // Un fichier ouvert par le moteur (en cours ou déjà en file) ne doit pas être réécrit
+    // sous ses pieds : la lecture s'arrête et le morceau en cours passe en dernier.
+    fn suspend_playback(&mut self, paths: &mut Vec<PathBuf>) -> Option<(Duration, bool)> {
+        if self.stopped {
+            return None;
+        }
+        let now = self.now.as_ref()?;
+        let lib = self.library_at(now.library)?;
+        let current = PathBuf::from(&lib.tracks[now.track].path);
+        let next = now.next.map(|n| PathBuf::from(&lib.tracks[n].path));
+        if !paths.iter().any(|p| *p == current || Some(p) == next.as_ref()) {
+            return None;
+        }
+        if let Some(at) = paths.iter().position(|p| *p == current) {
+            let path = paths.remove(at);
+            paths.push(path);
+        }
+        let resume = (self.engine.position(), self.is_playing);
+        self.engine.stop();
+        Some(resume)
+    }
+
+    fn resume_playback(&mut self) {
+        let Some((position, playing)) = self.tag_resume.take() else { return };
+        let Some(now) = &self.now else { return };
+        let Some(lib) = self.library_at(now.library) else { return };
+        let path = PathBuf::from(&lib.tracks[now.track].path);
+        let next = now.next.map(|n| PathBuf::from(&lib.tracks[n].path));
+        self.engine.play(&path, next.as_deref());
+        self.engine.seek(position);
+        if !playing {
+            self.engine.pause();
+        }
+    }
+
+    fn files_written(
+        &mut self,
+        ui: &AppWindow,
+        library: i64,
+        written: usize,
+        failed: Vec<(PathBuf, String)>,
+        artwork: bool,
+        result: Result<audioplayer_scanner::Report, audioplayer_scanner::Error>,
+    ) {
+        if let Err(error) = &result {
+            eprintln!("rescan after writing: {error}");
+        }
+        // Le rechargement perd la sélection (index) : on la retrouve par id.
+        let selected: Vec<i64> = self.tracks_of(Dragged::Selection).into_iter().map(|t| self.library.tracks[t].id).collect();
+        self.reload_library(ui, library);
+        self.resume_playback();
+        let selection: std::collections::HashSet<usize> =
+            selected.iter().filter_map(|&id| self.library.track_by_id(id)).filter(|t| self.visible.contains(t)).collect();
+        let current = selection.iter().copied().min_by_key(|t| self.visible.iter().position(|v| v == t));
+        ui.set_tags_saving(false);
+        ui.set_tags_editing(false);
+        self.set_selection(ui, selection, current);
+        if !artwork {
+            // Le tiroir garde les morceaux édités, même s'ils ont quitté la vue.
+            let ids = self.tag_tracks.clone();
+            self.show_tags(ui, ids);
+        }
+        let status = match failed.first() {
+            None => Status { kind: if artwork { StatusKind::ArtworkSaved } else { StatusKind::TagsSaved }, count: written as i32, ..Default::default() },
+            Some((path, error)) => Status {
+                kind: StatusKind::TagsFailed,
+                track: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().into(),
+                playlist: error.as_str().into(),
+                count: failed.len() as i32,
+                ..Default::default()
+            },
+        };
+        self.show_status_for(ui, status, Duration::from_secs(if failed.is_empty() { 5 } else { 15 }));
     }
 
     // « Added last n unités » ; SQLite ne connaît pas les semaines.
@@ -1952,6 +2193,32 @@ fn to_ui_id(id: Option<usize>) -> i32 {
 
 fn from_ui_id(id: i32) -> Option<usize> {
     usize::try_from(id).ok()
+}
+
+// Valeur d'un champ modifiable, telle que la base la connaît.
+fn field_value(d: &TrackDetails, field: Field) -> String {
+    let text = |value: &Option<String>| value.clone().unwrap_or_default();
+    let number = |value: Option<u32>| value.map_or(String::new(), |n| n.to_string());
+    match field {
+        Field::Title => d.title.clone(),
+        Field::Artist => d.artist.clone(),
+        Field::AlbumArtist => d.album_artist.clone(),
+        Field::Album => d.album.clone(),
+        Field::TrackNumber => number(d.track_number),
+        Field::DiscNumber => number(d.disc_number),
+        Field::Year => d.year.map_or(String::new(), |y| y.to_string()),
+        Field::Genre => text(&d.genre),
+        Field::Composer => text(&d.composer),
+        Field::Conductor => text(&d.conductor),
+        Field::Lyricist => text(&d.lyricist),
+        Field::Grouping => text(&d.grouping),
+        Field::Work => text(&d.work),
+        Field::Comment => text(&d.comment),
+        Field::Publisher => text(&d.publisher),
+        Field::CatalogNumber => text(&d.catalog_number),
+        Field::Barcode => text(&d.barcode),
+        Field::DiscSubtitle => text(&d.disc_subtitle),
+    }
 }
 
 fn select_language(ui: &AppWindow, language: &str) {
@@ -2045,6 +2312,8 @@ fn apply_settings(ui: &AppWindow, settings: &Settings) {
     ui.window().set_size(slint::LogicalSize::new(settings.window.width, settings.window.height));
     ui.set_artists_width(settings.panels.artists_width);
     ui.set_albums_width(settings.panels.albums_width);
+    ui.set_tags_width(settings.panels.tags_width.clamp(220.0, 600.0));
+    ui.set_tags_open(settings.panels.tags_visible);
     ui.set_volume(settings.player.volume.clamp(0.0, 100.0));
     ui.set_muted(settings.player.muted);
     ui.set_random_mode(settings.player.random);
@@ -2083,6 +2352,8 @@ fn capture_settings(ui: &AppWindow, app: &App, previous: &Settings) -> Settings 
         panels: settings::PanelSettings {
             artists_width: ui.get_artists_width(),
             albums_width: ui.get_albums_width(),
+            tags_width: ui.get_tags_width(),
+            tags_visible: ui.get_tags_open(),
         },
         player: settings::PlayerSettings {
             volume: ui.get_volume(),
@@ -2253,6 +2524,29 @@ fn launch(path: &Path) -> Result<(), Problem> {
     });
     let c = ctx.clone();
     ui.on_stop_scan(move || c.update(|app, _| app.stop_scan()));
+    let c = ctx.clone();
+    ui.on_tags_toggled(move || {
+        c.update(|app, ui| {
+            if ui.get_tags_open() {
+                app.refresh_tags(ui);
+            } else if !ui.get_tags_saving() {
+                // Fermé en pleine édition : les saisies sont abandonnées.
+                ui.set_tags_editing(false);
+            }
+        })
+    });
+    let c = ctx.clone();
+    ui.on_tags_edit(move || c.update(|app, ui| app.edit_tags(ui)));
+    let c = ctx.clone();
+    ui.on_tags_save(move || c.update(|app, ui| app.save_tags(ui)));
+    let c = ctx.clone();
+    ui.on_tags_cancel(move || c.update(|app, ui| app.cancel_tags(ui)));
+    let c = ctx.clone();
+    ui.on_tag_edited(move |row, value| {
+        c.update(|app, _| {
+            app.tag_edits.insert(row as usize, value.into());
+        })
+    });
     let c = ctx.clone();
     ui.on_playlist_menu(move |action| c.update(|app, ui| app.playlist_menu(ui, &action)));
     let c = ctx.clone();
