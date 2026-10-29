@@ -38,6 +38,7 @@ crates/app/
   ui/widgets.slint   composants réutilisables
   ui/tracks.slint    table des morceaux (tri, glisser-déposer, menu contextuel)
   lang/<langue>/LC_MESSAGES/audioplayer.po   traductions
+vendor/i-slint-core  Slint corrigé localement (inertie du défilement sur macOS), voir vendor/README.md
 ```
 
 ## Traductions

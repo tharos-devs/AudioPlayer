@@ -1,0 +1,13 @@
+--- a/items/flickable.rs
++++ b/items/flickable.rs
+@@ -569,6 +569,10 @@
+                 self.last_scroll_event = Some((crate::animations::current_tick(), position));
+             }
+             TouchPhase::Ended => {
++                // AudioPlayer : macOS envoie déjà ses propres événements d'inertie après le geste
++                // (et un Ended quand on repose le doigt) ; relancer une animation ici doublait
++                // l'inertie et empêchait de s'arrêter net. Voir vendor/README.md.
++                #[cfg(not(target_os = "macos"))]
+                 if self.capture_events.is_some_and(|capture| capture == CaptureEvents::MouseWheel) {
+                     self.animate(flick, flick_rc);
+                 }

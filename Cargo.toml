@@ -19,3 +19,7 @@ dirs = "7"
 # Les dépendances (décodage d'images, SQLite, rendu) restent optimisées même en debug.
 [profile.dev.package."*"]
 opt-level = 3
+
+# Correctif local de Slint (inertie du défilement sur macOS) ; voir vendor/README.md.
+[patch.crates-io]
+i-slint-core = { path = "vendor/i-slint-core" }
