@@ -260,6 +260,17 @@ export component TrackList inherits VerticalLayout {
     in property <[TrackItem]> items;
     in property <int> playing-track: -1;
     in property <bool> running;
+    // Ligne à rendre visible (en-têtes d'album compris) ; `reveal-serial` change à chaque demande.
+    in property <int> reveal-row;
+    in property <int> reveal-serial;
+    changed reveal-serial => {
+        let top = root.reveal-row * Metrics.row;
+        if top < -list.content-y {
+            list.content-y = -top;
+        } else if top + Metrics.row > -list.content-y + list.visible-height {
+            list.content-y = -(top + Metrics.row - list.visible-height);
+        }
+    }
     in-out property <int> selected-track: -1;
     callback play-track(int);
     callback track-action(int, string);
@@ -309,7 +320,7 @@ export component TrackList inherits VerticalLayout {
     }
 
     // ListView n'instancie que les lignes visibles : 10 000+ morceaux restent fluides.
-    ListView {
+    list := ListView {
         for item in root.items: Rectangle {
             height: Metrics.row;
 
@@ -441,6 +452,16 @@ component PlaylistTrackRow inherits Rectangle {
 
 export component PlaylistTrackList inherits ListView {
     in property <[TrackItem]> items;
+    in property <int> reveal-row;
+    in property <int> reveal-serial;
+    changed reveal-serial => {
+        let top = root.reveal-row * 52px;
+        if top < -root.content-y {
+            root.content-y = -top;
+        } else if top + 52px > -root.content-y + root.visible-height {
+            root.content-y = -(top + 52px - root.visible-height);
+        }
+    }
     in property <int> playing-track: -1;
     in property <bool> running;
     in-out property <int> selected-track: -1;

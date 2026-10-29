@@ -116,6 +116,10 @@ export component AppWindow inherits Window {
     callback next();
     callback seek(float);
     callback seek-by(int);
+    callback move-selection(int);
+    callback play-selected();
+    in property <int> reveal-row;
+    in property <int> reveal-serial;
     callback track-action(int, string);
     callback drop-on-playlist(int, data-transfer);
     pure callback track-payload(int) -> data-transfer;
@@ -233,6 +237,15 @@ export component AppWindow inherits Window {
                 if (event.modifiers.meta || event.modifiers.control) && (event.text == "f" || event.text == "F") {
                     root.search-visible = true;
                     control-bar.focus-search();
+                    return accept;
+                }
+                // ↑/↓ déplacent la sélection dans la liste des morceaux, Entrée la lance.
+                if event.text == Key.UpArrow || event.text == Key.DownArrow {
+                    root.move-selection(event.text == Key.UpArrow ? -1 : 1);
+                    return accept;
+                }
+                if event.text == Key.Return {
+                    root.play-selected();
                     return accept;
                 }
                 if event.text == Key.LeftArrow || event.text == Key.RightArrow {
@@ -401,6 +414,8 @@ export component AppWindow inherits Window {
                                 badge: @tr("{n} track" | "{n} tracks" % root.tracks-count);
                             }
                             TrackList {
+                                reveal-row: root.reveal-row;
+                                reveal-serial: root.reveal-serial;
                                 items: root.track-items;
                                 playing-track: root.playing-track;
                                 running: root.playing;
@@ -423,6 +438,8 @@ export component AppWindow inherits Window {
                                 badge: @tr("{n} track" | "{n} tracks" % root.tracks-count);
                             }
                             PlaylistTrackList {
+                                reveal-row: root.reveal-row;
+                                reveal-serial: root.reveal-serial;
                                 items: root.playlist-items;
                                 playing-track: root.playing-track;
                                 running: root.playing;

@@ -75,6 +75,9 @@ struct App {
     playlists: Vec<Playlist>,
     // Morceaux affichés, dans l'ordre : sert aussi à précédent/suivant.
     visible: Vec<usize>,
+    // Ligne de chaque morceau affiché (les en-têtes d'album occupent aussi des lignes).
+    rows: HashMap<usize, usize>,
+    reveal_serial: i32,
     engine: Engine,
     now: Option<NowPlaying>,
     is_playing: bool,
@@ -121,6 +124,8 @@ impl App {
             // Les playlists de la base arriveront avec leur enregistrement.
             playlists: Vec::new(),
             visible: Vec::new(),
+            rows: HashMap::new(),
+            reveal_serial: 0,
             engine: Engine::start(),
             now: None,
             is_playing: false,
@@ -366,13 +371,21 @@ impl App {
         if self.view == View::Playlist {
             let items = ids.iter().enumerate().map(|(position, &t)| self.track_item(t, position as i32 + 1, false));
             ui.set_playlist_items(model(items.collect()));
+            self.rows = ids.iter().enumerate().map(|(row, &t)| (t, row)).collect();
         } else {
             if self.view == View::MostPlayed {
                 ids.sort_by(|&a, &b| tracks[b].play_count.cmp(&tracks[a].play_count).then(self.compare(a, b)));
             } else {
                 ids.sort_by(|&a, &b| self.compare(a, b));
             }
-            ui.set_track_items(model(self.grouped_items(&ids)));
+            let items = self.grouped_items(&ids);
+            self.rows = items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| item.kind == TrackItemKind::Track)
+                .map(|(row, item)| (item.id as usize, row))
+                .collect();
+            ui.set_track_items(model(items));
         }
 
         let total: i32 = ids.iter().map(|&t| tracks[t].duration).sum();
@@ -685,6 +698,37 @@ impl App {
         self.engine.set_next(path.as_deref());
     }
 
+    // Fait défiler la liste jusqu'au morceau, s'il y est affiché.
+    fn reveal(&mut self, ui: &AppWindow, track: usize) {
+        if let Some(&row) = self.rows.get(&track) {
+            self.reveal_serial += 1;
+            ui.set_reveal_row(row as i32);
+            ui.set_reveal_serial(self.reveal_serial);
+        }
+    }
+
+    // ↑/↓ : morceau précédent/suivant de la liste ; sans sélection, le premier (↓) ou le dernier (↑).
+    fn move_selection(&mut self, ui: &AppWindow, delta: isize) {
+        if self.visible.is_empty() {
+            return;
+        }
+        let current = from_ui_id(ui.get_selected_track()).and_then(|t| self.visible.iter().position(|&v| v == t));
+        let index = match current {
+            Some(index) => index.saturating_add_signed(delta).min(self.visible.len() - 1),
+            None if delta < 0 => self.visible.len() - 1,
+            None => 0,
+        };
+        let track = self.visible[index];
+        ui.set_selected_track(track as i32);
+        self.reveal(ui, track);
+    }
+
+    fn play_selected(&mut self, ui: &AppWindow) {
+        if let Some(track) = from_ui_id(ui.get_selected_track()).filter(|t| self.visible.contains(t)) {
+            self.play(ui, track);
+        }
+    }
+
     fn show_current(&mut self, ui: &AppWindow) {
         let Some((library, track)) = self.now.as_ref().map(|now| (now.library, now.track)) else { return };
         if self.selected_library != Some(library) {
@@ -693,6 +737,7 @@ impl App {
         if self.selected_library == Some(library) {
             self.reveal_album(ui, self.library.tracks[track].album);
             ui.set_selected_track(track as i32);
+            self.reveal(ui, track);
         }
     }
 
@@ -1225,6 +1270,10 @@ fn launch(path: &Path) -> Result<(), Problem> {
     ui.on_seek(move |ratio| c.update(|app, ui| app.seek(ui, ratio)));
     let c = ctx.clone();
     ui.on_seek_by(move |seconds| c.update(|app, ui| app.seek_by(ui, seconds)));
+    let c = ctx.clone();
+    ui.on_move_selection(move |delta| c.update(|app, ui| app.move_selection(ui, delta as isize)));
+    let c = ctx.clone();
+    ui.on_play_selected(move || c.update(|app, ui| app.play_selected(ui)));
     let c = ctx.clone();
     ui.on_track_action(move |id, action| c.update(|app, ui| app.track_action(ui, id, &action)));
     let c = ctx.clone();
