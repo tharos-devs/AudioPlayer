@@ -45,10 +45,17 @@ struct NowPlaying {
     next: Option<usize>,
 }
 
-// Pas encore enregistrées en base : elles retiennent des ids de morceaux.
-struct Playlist {
-    name: String,
-    tracks: Vec<i64>,
+/// Action en attente de la saisie d'un nom.
+enum NameRequest {
+    // Avec un morceau à y ajouter aussitôt (menu « Ajouter à la playlist → Nouvelle playlist… »).
+    NewPlaylist { track: Option<usize> },
+    RenamePlaylist(i64),
+    RenameLibrary(usize),
+}
+
+enum ConfirmRequest {
+    DeletePlaylist(i64),
+    DeleteLibrary(usize),
 }
 
 struct App {
@@ -69,9 +76,14 @@ struct App {
     album_counts: Vec<usize>,
     selected_artist: Option<usize>,
     selected_album: Option<usize>,
-    selected_playlist: Option<usize>,
+    // Id en base de la playlist affichée.
+    selected_playlist: Option<i64>,
     query: String,
-    playlists: Vec<Playlist>,
+    // Playlists de la bibliothèque affichée.
+    playlists: Vec<audioplayer_db::Playlist>,
+    name_request: Option<NameRequest>,
+    confirm_request: Option<ConfirmRequest>,
+    recent: (u32, String),
     // Morceaux affichés, dans l'ordre : sert aussi à précédent/suivant.
     visible: Vec<usize>,
     // Ligne de chaque morceau affiché (les en-têtes d'album occupent aussi des lignes).
@@ -122,8 +134,10 @@ impl App {
             selected_album: None,
             selected_playlist: None,
             query: String::new(),
-            // Les playlists de la base arriveront avec leur enregistrement.
             playlists: Vec::new(),
+            name_request: None,
+            confirm_request: None,
+            recent: (2, "weeks".into()),
             visible: Vec::new(),
             rows: HashMap::new(),
             reveal_serial: 0,
@@ -340,16 +354,36 @@ impl App {
         ui.set_selected_album(to_ui_id(self.selected_album));
     }
 
-    fn refresh_playlists(&self, ui: &AppWindow) {
-        let rows = self.playlists.iter().enumerate().map(|(id, playlist)| ListItem {
-            id: id as i32,
-            label: playlist.name.as_str().into(),
-            count: playlist.tracks.iter().filter(|&&id| self.library.track_by_id(id).is_some()).count() as i32,
-            ..Default::default()
-        });
-        ui.set_playlists(model(rows.collect()));
-        ui.set_selected_playlist(to_ui_id(self.selected_playlist));
-        ui.set_playlist_name(self.selected_playlist.map_or("", |p| self.playlists[p].name.as_str()).into());
+    fn refresh_playlists(&mut self, ui: &AppWindow) {
+        let library = self.selected_library.map(|i| self.libraries[i].id);
+        self.playlists = match library.map(|id| self.db.playlists(id)) {
+            Some(Ok(playlists)) => playlists,
+            Some(Err(error)) => {
+                eprintln!("playlists: {error}");
+                Vec::new()
+            }
+            None => Vec::new(),
+        };
+        if self.selected_playlist.is_some_and(|id| !self.playlists.iter().any(|p| p.id == id)) {
+            self.selected_playlist = None;
+        }
+        let rows: Vec<ListItem> = self
+            .playlists
+            .iter()
+            .map(|playlist| ListItem {
+                id: playlist.id as i32,
+                label: playlist.name.as_str().into(),
+                count: playlist.track_count as i32,
+                ..Default::default()
+            })
+            .collect();
+        let menu = ui.global::<TrackMenu>();
+        menu.set_playlists(model(rows.clone()));
+        menu.set_in_playlist(self.view == View::Playlist);
+        ui.set_playlists(model(rows));
+        ui.set_selected_playlist(self.selected_playlist.map_or(-1, |id| id as i32));
+        let name = self.selected_playlist.and_then(|id| self.playlists.iter().find(|p| p.id == id));
+        ui.set_playlist_name(name.map_or("", |p| p.name.as_str()).into());
     }
 
     fn refresh_tracks(&mut self, ui: &AppWindow) {
@@ -363,7 +397,13 @@ impl App {
         };
 
         let mut ids: Vec<usize> = match self.selected_playlist.filter(|_| self.view == View::Playlist) {
-            Some(playlist) => self.playlists[playlist].tracks.iter().filter_map(|&id| self.library.track_by_id(id)).collect(),
+            Some(playlist) => {
+                let ids = self.db.playlist_tracks(playlist).unwrap_or_else(|error| {
+                    eprintln!("playlist {playlist}: {error}");
+                    Vec::new()
+                });
+                ids.into_iter().filter_map(|id| self.library.track_by_id(id)).collect()
+            }
             None => (0..tracks.len())
                 .filter(|&t| listed && self.in_scope(t))
                 .filter(|&t| self.selected_artist.is_none_or(|artist| self.library.albums[tracks[t].album].artist == artist))
@@ -449,6 +489,7 @@ impl App {
             artwork,
             has_artwork,
             first_in_album,
+            favorite: t.is_favorite,
         }
     }
 
@@ -595,11 +636,10 @@ impl App {
     }
 
     fn select_playlist(&mut self, ui: &AppWindow, id: i32) {
-        let playlist = from_ui_id(id);
-        if playlist.is_none() || (self.view == View::Playlist && self.selected_playlist == playlist) {
-            self.reset_navigation();
-        } else {
-            self.reset_navigation();
+        let playlist = (id >= 0).then_some(id as i64);
+        let toggled_off = self.view == View::Playlist && self.selected_playlist == playlist;
+        self.reset_navigation();
+        if playlist.is_some() && !toggled_off {
             self.view = View::Playlist;
             self.selected_playlist = playlist;
         }
@@ -1063,33 +1103,218 @@ impl App {
                 self.reveal_album(ui, self.library.tracks[track].album);
                 ui.set_selected_track(id);
             }
-            "favorite" => self.add_to_playlist(ui, 0, track),
+            "favorite" => self.toggle_favorite(ui, track),
             "play-next" => self.show_status(ui, status(StatusKind::PlayNext)),
             "enqueue" => self.show_status(ui, status(StatusKind::Enqueued)),
-            _ => {}
+            "add-to-new-playlist" => self.ask_name(ui, NameDialogKind::NewPlaylist, "", NameRequest::NewPlaylist { track: Some(track) }),
+            "remove-from-playlist" => self.remove_from_playlist(ui, track),
+            _ => {
+                if let Some(playlist) = action.strip_prefix("add-to-playlist:").and_then(|id| id.parse().ok()) {
+                    self.add_to_playlist(ui, playlist, track);
+                }
+            }
         }
     }
 
-    fn add_to_playlist(&mut self, ui: &AppWindow, playlist: usize, track: usize) {
-        let Some(target) = self.playlists.get_mut(playlist) else { return };
+    fn toggle_favorite(&mut self, ui: &AppWindow, track: usize) {
         let id = self.library.tracks[track].id;
-        let kind = if target.tracks.contains(&id) {
-            StatusKind::AlreadyInPlaylist
-        } else {
-            target.tracks.push(id);
-            StatusKind::AddedToPlaylist
+        let favorite = match self.db.toggle_track_favorite(id) {
+            Ok(favorite) => favorite,
+            Err(error) => return eprintln!("favorite {id}: {error}"),
         };
-        let status = Status {
-            kind,
-            track: self.library.tracks[track].title.as_str().into(),
-            playlist: target.name.as_str().into(),
-            ..Default::default()
+        self.library.tracks[track].is_favorite = favorite;
+        ui.set_favorite_tracks_count(self.library.tracks.iter().filter(|t| t.is_favorite).count() as i32);
+        if self.view == View::FavoriteTracks {
+            self.update_scope();
+            self.refresh_navigation(ui);
+        } else {
+            self.refresh_tracks(ui);
+        }
+        let kind = if favorite { StatusKind::FavoriteAdded } else { StatusKind::FavoriteRemoved };
+        self.show_status(ui, Status { kind, track: self.library.tracks[track].title.as_str().into(), ..Default::default() });
+    }
+
+    fn add_to_playlist(&mut self, ui: &AppWindow, playlist: i64, track: usize) {
+        let Some(name) = self.playlists.iter().find(|p| p.id == playlist).map(|p| p.name.clone()) else { return };
+        let id = self.library.tracks[track].id;
+        let kind = match self.db.add_to_playlist(playlist, &[id]) {
+            Ok(0) => StatusKind::AlreadyInPlaylist,
+            Ok(_) => StatusKind::AddedToPlaylist,
+            Err(error) => return eprintln!("playlist {playlist}: {error}"),
         };
         self.refresh_playlists(ui);
         if self.view == View::Playlist && self.selected_playlist == Some(playlist) {
             self.refresh_tracks(ui);
         }
-        self.show_status(ui, status);
+        let track = self.library.tracks[track].title.as_str().into();
+        self.show_status(ui, Status { kind, track, playlist: name.into(), ..Default::default() });
+    }
+
+    fn remove_from_playlist(&mut self, ui: &AppWindow, track: usize) {
+        let Some(playlist) = self.selected_playlist.filter(|_| self.view == View::Playlist) else { return };
+        if let Err(error) = self.db.remove_from_playlist(playlist, &[self.library.tracks[track].id]) {
+            return eprintln!("playlist {playlist}: {error}");
+        }
+        self.refresh_playlists(ui);
+        self.refresh_tracks(ui);
+    }
+
+    fn ask_name(&mut self, ui: &AppWindow, kind: NameDialogKind, text: &str, request: NameRequest) {
+        self.name_request = Some(request);
+        ui.set_dialog_kind(kind);
+        ui.set_dialog_text(text.into());
+        ui.set_dialog_taken(false);
+        ui.invoke_open_dialog();
+    }
+
+    fn name_accepted(&mut self, ui: &AppWindow, name: &str) {
+        let name = name.trim();
+        let Some(request) = self.name_request.as_ref() else { return ui.invoke_close_dialog() };
+        if name.is_empty() {
+            return;
+        }
+        let result = match *request {
+            NameRequest::NewPlaylist { track } => {
+                let Some(library) = self.selected_library.map(|i| self.libraries[i].id) else { return };
+                match self.db.create_playlist(library, name) {
+                    Ok(Some(playlist)) => {
+                        if let Some(track) = track {
+                            if let Err(error) = self.db.add_to_playlist(playlist, &[self.library.tracks[track].id]) {
+                                eprintln!("playlist {playlist}: {error}");
+                            }
+                        }
+                        Ok(true)
+                    }
+                    Ok(None) => Ok(false),
+                    Err(error) => Err(error),
+                }
+            }
+            NameRequest::RenamePlaylist(playlist) => self.db.rename_playlist(playlist, name),
+            NameRequest::RenameLibrary(index) => {
+                let result = self.db.rename_library(self.libraries[index].id, name);
+                if let Ok(true) = result {
+                    self.libraries[index].name = name.to_owned();
+                }
+                result
+            }
+        };
+        match result {
+            Ok(true) => {
+                self.name_request = None;
+                ui.invoke_close_dialog();
+                self.refresh_all(ui);
+            }
+            // Nom déjà pris : la saisie reste ouverte avec un avertissement.
+            Ok(false) => ui.set_dialog_taken(true),
+            Err(error) => {
+                eprintln!("rename: {error}");
+                self.name_request = None;
+                ui.invoke_close_dialog();
+            }
+        }
+    }
+
+    fn ask_confirmation(&mut self, ui: &AppWindow, kind: ConfirmKind, subject: &str, request: ConfirmRequest) {
+        self.confirm_request = Some(request);
+        ui.set_confirm_kind(kind);
+        ui.set_confirm_subject(subject.into());
+        ui.invoke_open_confirm();
+    }
+
+    fn confirmed(&mut self, ui: &AppWindow) {
+        match self.confirm_request.take() {
+            Some(ConfirmRequest::DeletePlaylist(playlist)) => {
+                if let Err(error) = self.db.delete_playlist(playlist) {
+                    return eprintln!("playlist {playlist}: {error}");
+                }
+                if self.selected_playlist == Some(playlist) {
+                    self.reset_navigation();
+                }
+                self.refresh_navigation(ui);
+            }
+            Some(ConfirmRequest::DeleteLibrary(index)) => self.delete_library(ui, index),
+            None => {}
+        }
+    }
+
+    // Les index des bibliothèques changent : catalogues et lecture sont recalés par id.
+    fn delete_library(&mut self, ui: &AppWindow, index: usize) {
+        let id = self.libraries[index].id;
+        if let Err(error) = self.db.delete_library(id) {
+            return eprintln!("library {id}: {error}");
+        }
+        if self.now.as_ref().is_some_and(|now| now.library == index) {
+            self.engine.stop();
+            self.now = None;
+            self.is_playing = false;
+        }
+        let old: Vec<i64> = self.libraries.iter().map(|l| l.id).collect();
+        self.libraries = self.db.libraries().unwrap_or_default();
+        let remap = |i: usize| self.libraries.iter().position(|l| l.id == old[i]);
+        let catalogs = std::mem::take(&mut self.catalogs);
+        self.catalogs = catalogs.into_iter().filter_map(|(i, library)| Some((remap(i)?, library))).collect();
+        let now_library = self.now.as_ref().and_then(|now| remap(now.library));
+        if let (Some(now), Some(library)) = (self.now.as_mut(), now_library) {
+            now.library = library;
+        }
+        let current = self.selected_library.filter(|&i| i != index).and_then(remap);
+        self.selected_library = None;
+        self.library = Library::default();
+        match current.or((!self.libraries.is_empty()).then_some(0)) {
+            Some(next) => {
+                if let Err(error) = self.load_library(next) {
+                    eprintln!("library: {error}");
+                }
+            }
+            None => self.reset_navigation(),
+        }
+        ui.set_selected_track(-1);
+        self.refresh_all(ui);
+    }
+
+    fn playlist_menu(&mut self, ui: &AppWindow, action: &str) {
+        let current = self.selected_playlist.and_then(|id| self.playlists.iter().find(|p| p.id == id)).cloned();
+        match (action, current) {
+            ("new-playlist", _) => self.ask_name(ui, NameDialogKind::NewPlaylist, "", NameRequest::NewPlaylist { track: None }),
+            ("rename-playlist", Some(playlist)) => {
+                self.ask_name(ui, NameDialogKind::RenamePlaylist, &playlist.name, NameRequest::RenamePlaylist(playlist.id))
+            }
+            ("delete-playlist", Some(playlist)) => {
+                self.ask_confirmation(ui, ConfirmKind::DeletePlaylist, &playlist.name, ConfirmRequest::DeletePlaylist(playlist.id))
+            }
+            _ => {}
+        }
+    }
+
+    fn library_menu(&mut self, ui: &AppWindow, action: &str) {
+        let Some(index) = self.selected_library else { return };
+        let name = self.libraries[index].name.clone();
+        match action {
+            "rename-library" => self.ask_name(ui, NameDialogKind::RenameLibrary, &name, NameRequest::RenameLibrary(index)),
+            "delete-library" => self.ask_confirmation(ui, ConfirmKind::DeleteLibrary, &name, ConfirmRequest::DeleteLibrary(index)),
+            _ => {}
+        }
+    }
+
+    // « Added last n unités » ; SQLite ne connaît pas les semaines.
+    fn set_recent(&mut self, ui: &AppWindow, amount: u32, unit: &str) {
+        let amount = amount.clamp(1, 99);
+        let unit = match unit {
+            "days" | "months" | "years" => unit,
+            _ => "weeks",
+        };
+        let modifier = if unit == "weeks" { format!("-{} days", amount * 7) } else { format!("-{amount} {unit}") };
+        match self.db.datetime_from_now(&modifier) {
+            Ok(cutoff) => self.recent_cutoff = cutoff,
+            Err(error) => eprintln!("recent: {error}"),
+        }
+        self.recent = (amount, unit.to_owned());
+        ui.set_recent_amount(amount as i32);
+        ui.set_recent_unit(unit.into());
+        if self.view == View::Recent {
+            self.update_scope();
+            self.refresh_navigation(ui);
+        }
     }
 }
 
@@ -1270,6 +1495,7 @@ fn capture_settings(ui: &AppWindow, app: &App, previous: &Settings) -> Settings 
             preset: equalizer.get_preset().into(),
             gains: equalizer.get_gains().iter().collect(),
         },
+        recent: settings::RecentSettings { amount: app.recent.0, unit: app.recent.1.clone() },
     }
 }
 
@@ -1316,6 +1542,7 @@ fn launch(path: &Path) -> Result<(), Problem> {
     ui.set_version(env!("CARGO_PKG_VERSION").into());
     apply_settings(&ui, &initial);
     let ctx = Context { app: Rc::new(RefCell::new(app)), ui: ui.as_weak() };
+    ctx.update(|app, ui| app.set_recent(ui, initial.recent.amount, &initial.recent.unit));
     ctx.update(|app, ui| app.refresh_all(ui));
 
     let c = ctx.clone();
@@ -1363,8 +1590,8 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let c = ctx.clone();
     ui.on_drop_on_playlist(move |playlist, data| {
         c.update(|app, ui| {
-            if let (Some(playlist), Some(track)) = (from_ui_id(playlist), payload_track(&data)) {
-                app.add_to_playlist(ui, playlist, track);
+            if let Some(track) = payload_track(&data).filter(|_| playlist >= 0) {
+                app.add_to_playlist(ui, playlist as i64, track);
             }
         })
     });
@@ -1378,6 +1605,20 @@ fn launch(path: &Path) -> Result<(), Problem> {
     ui.on_is_track_payload(|data| payload_track(&data).is_some());
 
     ui.set_database_path(path.display().to_string().into());
+    let c = ctx.clone();
+    ui.on_library_menu(move |action| match action.as_str() {
+        "new-database" => database_action(&c, choose_new_database),
+        "open-database" => database_action(&c, choose_existing_database),
+        action => c.update(|app, ui| app.library_menu(ui, action)),
+    });
+    let c = ctx.clone();
+    ui.on_playlist_menu(move |action| c.update(|app, ui| app.playlist_menu(ui, &action)));
+    let c = ctx.clone();
+    ui.on_dialog_accepted(move |name| c.update(|app, ui| app.name_accepted(ui, &name)));
+    let c = ctx.clone();
+    ui.on_confirm_accepted(move || c.update(|app, ui| app.confirmed(ui)));
+    let c = ctx.clone();
+    ui.on_recent_changed(move |amount, unit| c.update(|app, ui| app.set_recent(ui, amount.max(1) as u32, &unit)));
     let c = ctx.clone();
     ui.on_new_database(move || database_action(&c, choose_new_database));
     let c = ctx.clone();

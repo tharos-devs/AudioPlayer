@@ -1,6 +1,6 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Artwork, PlayingIndicator } from "widgets.slint";
+import { Artwork, PlayingIndicator, ListItem } from "widgets.slint";
 
 export enum TrackItemKind { album-header, track }
 
@@ -19,6 +19,15 @@ export struct TrackItem {
     artwork: image,
     has-artwork: bool,
     first-in-album: bool,
+    favorite: bool,
+}
+
+// Données partagées par tous les menus contextuels de morceaux.
+export global TrackMenu {
+    // Playlists de la bibliothèque, pour « Ajouter à la playlist ».
+    in property <[ListItem]> playlists;
+    // Vue d'une playlist : « Retirer de la playlist » est proposé.
+    in property <bool> in-playlist;
 }
 
 // Mesures de la v0.1 : lignes de 43px, colonne de jaquette de 92px (80px + marge).
@@ -33,7 +42,9 @@ global Metrics {
     out property <length> disc: 50px;
 }
 
+// Les actions sont des chaînes transmises à Rust ; « add-to-playlist:<id> » vise une playlist.
 component TrackContextArea inherits ContextMenuArea {
+    in property <bool> favorite;
     callback action(string);
 
     Menu {
@@ -63,9 +74,31 @@ component TrackContextArea inherits ContextMenuArea {
             }
         }
         MenuItem {
-            title: @tr("Add to Favorites");
+            title: root.favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites");
             activated => {
                 root.action("favorite");
+            }
+        }
+        Menu {
+            title: @tr("Add to Playlist");
+            MenuItem {
+                title: @tr("New Playlist…");
+                activated => {
+                    root.action("add-to-new-playlist");
+                }
+            }
+            if TrackMenu.playlists.length > 0: MenuSeparator { }
+            for playlist in TrackMenu.playlists: MenuItem {
+                title: playlist.label;
+                activated => {
+                    root.action("add-to-playlist:" + playlist.id);
+                }
+            }
+        }
+        if TrackMenu.in-playlist: MenuItem {
+            title: @tr("Remove from Playlist");
+            activated => {
+                root.action("remove-from-playlist");
             }
         }
         MenuSeparator { }
@@ -167,6 +200,7 @@ component TrackListRow inherits Rectangle {
         data: root.payload(root.item.id);
 
         TrackContextArea {
+            favorite: root.item.favorite;
             action(name) => {
                 root.action(name);
             }
@@ -378,6 +412,7 @@ component PlaylistTrackRow inherits Rectangle {
         data: root.payload(root.item.id);
 
         TrackContextArea {
+            favorite: root.item.favorite;
             action(name) => {
                 root.action(name);
             }

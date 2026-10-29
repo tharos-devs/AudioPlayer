@@ -252,3 +252,97 @@ fn record_play_counts_and_dates() {
     let played: Option<String> = db.connection().query_row("SELECT last_played_at FROM tracks WHERE id = 100", [], |r| r.get(0)).unwrap();
     assert!(played.is_some());
 }
+
+#[test]
+fn playlists_belong_to_one_library() {
+    let mut db = Database::open_in_memory().unwrap();
+    sample(&db);
+    let mix = db.create_playlist(1, "Mix").unwrap().unwrap();
+    assert_eq!(db.create_playlist(1, "Mix").unwrap(), None, "name already used in this library");
+    assert!(db.create_playlist(2, "Mix").unwrap().is_some(), "same name in another library is fine");
+
+    assert_eq!(db.add_to_playlist(mix, &[102, 100, 102]).unwrap(), 2);
+    assert_eq!(db.add_to_playlist(mix, &[100, 103]).unwrap(), 1);
+    assert_eq!(db.playlist_tracks(mix).unwrap(), [102, 100, 103]);
+    // Morceau 104 : bibliothèque CLASSIC, refusé par le garde-fou.
+    assert!(db.add_to_playlist(mix, &[104]).is_err());
+    assert_eq!(db.playlist_tracks(mix).unwrap(), [102, 100, 103]);
+
+    db.remove_from_playlist(mix, &[100]).unwrap();
+    assert_eq!(db.playlist_tracks(mix).unwrap(), [102, 103]);
+    let positions: Vec<i64> = db
+        .connection()
+        .prepare("SELECT position FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position")
+        .unwrap()
+        .query_map([mix], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(positions, [0, 1]);
+
+    let listed: Vec<_> = db.playlists(1).unwrap().into_iter().map(|p| (p.name, p.track_count)).collect();
+    assert_eq!(listed, [("Mix".to_string(), 2)]);
+    let other = db.create_playlist(1, "Other").unwrap().unwrap();
+    assert!(!db.rename_playlist(other, "Mix").unwrap());
+    assert!(db.rename_playlist(other, "Road").unwrap());
+    db.delete_playlist(mix).unwrap();
+    assert_eq!(db.playlists(1).unwrap().len(), 1);
+    // Supprimer la bibliothèque emporte ses playlists.
+    db.connection().execute("DELETE FROM libraries WHERE id = 1", []).unwrap();
+    assert!(db.playlists(1).unwrap().is_empty());
+}
+
+#[test]
+fn favorite_toggles() {
+    let db = Database::open_in_memory().unwrap();
+    sample(&db);
+    assert!(db.toggle_track_favorite(100).unwrap());
+    assert!(db.tracks(1).unwrap().iter().any(|t| t.id == 100 && t.is_favorite));
+    assert!(!db.toggle_track_favorite(100).unwrap());
+}
+
+#[test]
+fn v2_playlists_are_attached_to_their_tracks_library() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("v2.db");
+    {
+        let mut conn = Connection::open(&path).unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        let tx = conn.transaction().unwrap();
+        tx.execute_batch(schema::MIGRATIONS[0]).unwrap();
+        tx.execute_batch(schema::MIGRATIONS[1]).unwrap();
+        tx.pragma_update(None, "user_version", 2).unwrap();
+        tx.commit().unwrap();
+        conn.execute_batch(
+            "INSERT INTO libraries (id, name, root_path) VALUES (1, 'OST', '/ost'), (2, 'CLASSIC', '/classic');
+             INSERT INTO artists (id, library_id, name) VALUES (1, 1, 'A'), (2, 2, 'B');
+             INSERT INTO albums (id, library_id, artist_id, title) VALUES (10, 1, 1, 'X'), (20, 2, 2, 'Y');
+             INSERT INTO tracks (id, album_id, artist_id, title, file_path) VALUES
+                 (1, 20, 2, 'c1', '/classic/1'), (2, 10, 1, 'o1', '/ost/1'), (3, 20, 2, 'c2', '/classic/2');
+             INSERT INTO playlists (id, name) VALUES (5, 'Mostly classic'), (6, 'Empty');
+             INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (5, 1, 3), (5, 2, 7), (5, 3, 9);",
+        )
+        .unwrap();
+    }
+    let db = Database::open(&path).unwrap();
+    assert_eq!(schema::version(db.connection()).unwrap(), schema::MIGRATIONS.len());
+    let classic: Vec<_> = db.playlists(2).unwrap().into_iter().map(|p| p.name).collect();
+    assert_eq!(classic, ["Mostly classic"]);
+    // Le morceau d'OST est écarté, les positions sont renumérotées.
+    assert_eq!(db.playlist_tracks(5).unwrap(), [1, 3]);
+    // Playlist vide : première bibliothèque.
+    let ost: Vec<_> = db.playlists(1).unwrap().into_iter().map(|p| p.name).collect();
+    assert_eq!(ost, ["Empty"]);
+}
+
+#[test]
+fn libraries_rename_and_delete() {
+    let db = Database::open_in_memory().unwrap();
+    sample(&db);
+    assert!(!db.rename_library(1, "CLASSIC").unwrap());
+    assert!(db.rename_library(1, "Soundtracks").unwrap());
+    db.delete_library(2).unwrap();
+    let names: Vec<_> = db.libraries().unwrap().into_iter().map(|l| l.name).collect();
+    assert_eq!(names, ["Soundtracks"]);
+    assert!(db.artists(2).unwrap().is_empty() && db.tracks(2).unwrap().is_empty());
+}

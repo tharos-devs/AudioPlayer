@@ -1,6 +1,6 @@
-import { ScrollView } from "std-widgets.slint";
+import { ScrollView, SpinBox, ComboBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { ListItem } from "widgets.slint";
+import { ListItem, ThemedButton } from "widgets.slint";
 import { Equalizer } from "equalizer.slint";
 
 // Ce que montrent les panneaux Artistes / Albums / Morceaux.
@@ -32,10 +32,73 @@ export component SmallButton inherits Rectangle {
     }
 }
 
+// Entrée des menus « + » ; `action` est transmise à Rust.
+export struct MenuEntry {
+    action: string,
+    label: string,
+    enabled: bool,
+    danger: bool,
+    // Filet au-dessus de l'entrée.
+    separated: bool,
+}
+
+// Menu déroulant de la v0.1 : sous le bouton, aligné à droite, items 8px 12px.
+component DropdownMenu inherits PopupWindow {
+    in property <[MenuEntry]> entries;
+    callback selected(string);
+    width: 172px;
+
+    Rectangle {
+        background: Theme.footer-bg;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: Theme.border-base;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #0000004d;
+
+        VerticalLayout {
+            padding-top: 6px;
+            padding-bottom: 6px;
+            for entry in root.entries: VerticalLayout {
+                if entry.separated: Rectangle {
+                    height: 9px;
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.border;
+                    }
+                }
+                Rectangle {
+                    height: 30px;
+                    background: entry.enabled && item.has-hover ? Theme.hover-tint : transparent;
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        Text {
+                            text: entry.label;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            color: !entry.enabled ? Theme.text-disabled
+                                : entry.danger ? #f56c6c
+                                : item.has-hover ? Theme.accent : Theme.text-primary;
+                        }
+                    }
+                    item := TouchArea {
+                        enabled: entry.enabled;
+                        clicked => {
+                            root.selected(entry.action);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 component SectionTitle inherits HorizontalLayout {
     in property <string> title;
-    in property <bool> addable;
-    callback add();
+    in property <[MenuEntry]> menu;
+    callback selected(string);
     height: 24px;
 
     Text {
@@ -47,10 +110,85 @@ component SectionTitle inherits HorizontalLayout {
         vertical-alignment: center;
         horizontal-stretch: 1;
     }
-    if root.addable: SmallButton {
-        icon: @image-url("icons/ep-plus.svg");
-        clicked => {
-            root.add();
+    anchor := Rectangle {
+        width: 36px;
+        SmallButton {
+            icon: @image-url("icons/ep-plus.svg");
+            active: false;
+            clicked => {
+                popup.show();
+            }
+        }
+        popup := DropdownMenu {
+            x: anchor.width - self.width;
+            y: anchor.height + 2px;
+            entries: root.menu;
+            selected(action) => {
+                root.selected(action);
+            }
+        }
+    }
+}
+
+// Roue crantée de « Added last… » : « Last [n] [unité] », Annuler / Appliquer.
+component RecentPopup inherits PopupWindow {
+    in property <int> amount;
+    in property <string> unit;
+    callback apply(int, string);
+    property <[string]> units: ["days", "weeks", "months", "years"];
+    width: 280px;
+    close-policy: close-on-click-outside;
+
+    Rectangle {
+        background: Theme.footer-bg;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.border-base;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #0000004d;
+
+        VerticalLayout {
+            padding: 12px;
+            spacing: 10px;
+            HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: @tr("Last");
+                    font-size: 11px;
+                    color: Theme.text-primary;
+                    vertical-alignment: center;
+                }
+                amount-box := SpinBox {
+                    width: 80px;
+                    minimum: 1;
+                    maximum: 99;
+                    value: root.amount;
+                }
+                unit-box := ComboBox {
+                    horizontal-stretch: 1;
+                    min-width: 110px;
+                    model: [@tr("days"), @tr("weeks"), @tr("months"), @tr("years")];
+                    current-index: root.unit == "days" ? 0 : root.unit == "months" ? 2 : root.unit == "years" ? 3 : 1;
+                }
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: end;
+                ThemedButton {
+                    text: @tr("Cancel");
+                    clicked => {
+                        root.close();
+                    }
+                }
+                ThemedButton {
+                    text: @tr("Apply");
+                    primary: true;
+                    clicked => {
+                        root.apply(amount-box.value, root.units[unit-box.current-index]);
+                        root.close();
+                    }
+                }
+            }
         }
     }
 }
@@ -115,8 +253,10 @@ component SmartRow inherits Rectangle {
     in property <string> count;
     in property <bool> selected;
     in property <bool> configurable;
+    in property <int> amount;
+    in property <string> unit;
     callback clicked();
-    callback configure();
+    callback configure(int, string);
     height: 22px;
     border-radius: 4px;
     background: root.selected ? (touch.has-hover ? Theme.tint-strong : Theme.tint) : touch.has-hover ? Theme.tree-hover : transparent;
@@ -143,8 +283,11 @@ component SmartRow inherits Rectangle {
             color: Theme.tree-info;
             vertical-alignment: center;
         }
-        if root.configurable: VerticalLayout {
+        // Toujours présent (un PopupWindow ne peut pas être conditionnel), masqué sinon.
+        VerticalLayout {
             alignment: center;
+            visible: root.configurable;
+            width: root.configurable ? 18px : 0px;
             Rectangle {
                 width: 18px;
                 height: 18px;
@@ -158,7 +301,16 @@ component SmartRow inherits Rectangle {
                 }
                 gear := TouchArea {
                     clicked => {
-                        root.configure();
+                        recent-popup.show();
+                    }
+                }
+                recent-popup := RecentPopup {
+                    x: (parent.width - self.width) / 2;
+                    y: parent.height + 4px;
+                    amount: root.amount;
+                    unit: root.unit;
+                    apply(amount, unit) => {
+                        root.configure(amount, unit);
                     }
                 }
             }
@@ -261,7 +413,11 @@ export component Sidebar inherits Rectangle {
     in property <int> favorite-albums-count;
     in property <int> favorite-tracks-count;
     in property <bool> show-equalizer;
+    in property <bool> playlist-selected;
     callback select-letter(string);
+    callback library-menu(string);
+    callback playlist-menu(string);
+    callback recent-changed(int, string);
     callback select-library(int);
     callback select-view(View);
     callback select-playlist(int);
@@ -308,9 +464,22 @@ export component Sidebar inherits Rectangle {
                     height: 24px;
                 }
 
+                // Les entrées liées aux dossiers attendent le scan (étape suivante).
                 SectionTitle {
                     title: @tr("Libraries");
-                    addable: true;
+                    menu: [
+                        { action: "new-library", label: @tr("New Library…"), enabled: false },
+                        { action: "rename-library", label: @tr("Rename Library…"), enabled: root.selected-library != -1 },
+                        { action: "add-folder", label: @tr("Add Folder…"), enabled: false },
+                        { action: "scan", label: @tr("Scan New Additions"), enabled: false },
+                        { action: "health", label: @tr("Check Library Health"), enabled: false },
+                        { action: "delete-library", label: @tr("Delete Library…"), enabled: root.selected-library != -1, danger: true, separated: true },
+                        { action: "new-database", label: @tr("New Database…"), enabled: true, separated: true },
+                        { action: "open-database", label: @tr("Open Database…"), enabled: true },
+                    ];
+                    selected(action) => {
+                        root.library-menu(action);
+                    }
                 }
                 Rectangle {
                     height: 6px;
@@ -332,6 +501,11 @@ export component Sidebar inherits Rectangle {
                 SmartRow {
                     label: root.recent-label;
                     configurable: true;
+                    amount: root.recent-amount;
+                    unit: root.recent-unit;
+                    configure(amount, unit) => {
+                        root.recent-changed(amount, unit);
+                    }
                     selected: root.view == View.recent;
                     clicked => {
                         root.select-view(View.recent);
@@ -360,7 +534,14 @@ export component Sidebar inherits Rectangle {
 
                 SectionTitle {
                     title: @tr("Playlists");
-                    addable: true;
+                    menu: [
+                        { action: "new-playlist", label: @tr("New Playlist…"), enabled: root.selected-library != -1 },
+                        { action: "rename-playlist", label: @tr("Rename Playlist…"), enabled: root.playlist-selected },
+                        { action: "delete-playlist", label: @tr("Delete Playlist…"), enabled: root.playlist-selected, danger: true },
+                    ];
+                    selected(action) => {
+                        root.playlist-menu(action);
+                    }
                 }
                 Rectangle {
                     height: 6px;

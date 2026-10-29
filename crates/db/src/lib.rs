@@ -2,6 +2,7 @@
 //! et import depuis la base de la v0.1.
 
 mod catalog;
+mod playlists;
 mod preferences;
 pub mod legacy;
 pub mod schema;
@@ -12,6 +13,7 @@ use std::path::Path;
 use rusqlite::Connection;
 
 pub use catalog::{Album, Artist, Artwork, Library, Track};
+pub use playlists::Playlist;
 
 #[derive(Debug)]
 pub enum Error {

@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { ThemedButton } from "widgets.slint";
 
 // Problèmes rencontrés en créant ou en ouvrant une base ; le texte est formé ici pour @tr.
 export enum DatabaseProblem { none, already-exists, legacy-file, not-legacy, too-new, unknown-file, failed }
@@ -12,34 +13,6 @@ export global DatabaseProblems {
             : problem == DatabaseProblem.unknown-file ? @tr("“{0}” is not an AudioPlayer database.", path)
             : problem == DatabaseProblem.failed ? @tr("Could not use “{0}”: {1}", path, detail)
             : "";
-    }
-}
-
-// Bouton Element Plus taille normale : 32px de haut, rayon 4px.
-component Button inherits Rectangle {
-    in property <string> text;
-    in property <bool> primary;
-    in property <bool> enabled: true;
-    callback clicked();
-    height: 32px;
-    min-width: label.preferred-width + 30px;
-    border-radius: 4px;
-    border-width: 1px;
-    opacity: root.enabled ? 1 : 0.5;
-    border-color: root.primary ? Theme.accent : touch.has-hover && root.enabled ? Theme.accent : Theme.button-border;
-    background: root.primary ? (touch.has-hover && root.enabled ? Theme.accent-light-3 : Theme.accent)
-        : touch.has-hover && root.enabled ? Theme.hover-tint : Theme.button-bg;
-
-    label := Text {
-        text: root.text;
-        font-size: 14px;
-        color: root.primary ? Theme.on-accent : touch.has-hover && root.enabled ? Theme.accent : Theme.button-text;
-    }
-    touch := TouchArea {
-        enabled: root.enabled;
-        clicked => {
-            root.clicked();
-        }
     }
 }
 
@@ -97,7 +70,7 @@ export component SetupWindow inherits Window {
             padding-top: 8px;
             if root.missing-path != "": HorizontalLayout {
                 alignment: center;
-                Button {
+                ThemedButton {
                     width: 300px;
                     text: @tr("Retry");
                     primary: true;
@@ -108,7 +81,7 @@ export component SetupWindow inherits Window {
             }
             HorizontalLayout {
                 alignment: center;
-                Button {
+                ThemedButton {
                     width: 300px;
                     text: @tr("Create Database…");
                     primary: root.missing-path == "";
@@ -119,7 +92,7 @@ export component SetupWindow inherits Window {
             }
             HorizontalLayout {
                 alignment: center;
-                Button {
+                ThemedButton {
                     width: 300px;
                     text: @tr("Open Database…");
                     clicked => {
@@ -129,7 +102,7 @@ export component SetupWindow inherits Window {
             }
             HorizontalLayout {
                 alignment: center;
-                Button {
+                ThemedButton {
                     width: 300px;
                     text: @tr("Import a v0.1 Database…");
                     clicked => {

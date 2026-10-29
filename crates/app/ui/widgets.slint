@@ -272,3 +272,31 @@ export component AlbumList inherits ListView {
         }
     }
 }
+
+// Bouton Element Plus taille normale : 32px de haut, rayon 4px.
+export component ThemedButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 32px;
+    min-width: label.preferred-width + 30px;
+    border-radius: 4px;
+    border-width: 1px;
+    opacity: root.enabled ? 1 : 0.5;
+    border-color: root.primary ? Theme.accent : touch.has-hover && root.enabled ? Theme.accent : Theme.button-border;
+    background: root.primary ? (touch.has-hover && root.enabled ? Theme.accent-light-3 : Theme.accent)
+        : touch.has-hover && root.enabled ? Theme.hover-tint : Theme.button-bg;
+
+    label := Text {
+        text: root.text;
+        font-size: 14px;
+        color: root.primary ? Theme.on-accent : touch.has-hover && root.enabled ? Theme.accent : Theme.button-text;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+}

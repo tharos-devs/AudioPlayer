@@ -236,3 +236,99 @@ msgstr "Impossible de lire « {0} » : {1}"
 
 msgid "No audio output: {0}"
 msgstr "Aucune sortie audio : {0}"
+
+msgid "Remove from Favorites"
+msgstr "Retirer des favoris"
+
+msgid "Add to Playlist"
+msgstr "Ajouter à la playlist"
+
+msgid "New Playlist…"
+msgstr "Nouvelle playlist…"
+
+msgid "Remove from Playlist"
+msgstr "Retirer de la playlist"
+
+msgid "New Library…"
+msgstr "Nouvelle bibliothèque…"
+
+msgid "Rename Library…"
+msgstr "Renommer la bibliothèque…"
+
+msgid "Add Folder…"
+msgstr "Ajouter un dossier…"
+
+msgid "Scan New Additions"
+msgstr "Rechercher les nouveautés"
+
+msgid "Check Library Health"
+msgstr "Vérifier la bibliothèque"
+
+msgid "Delete Library…"
+msgstr "Supprimer la bibliothèque…"
+
+msgid "Rename Playlist…"
+msgstr "Renommer la playlist…"
+
+msgid "Delete Playlist…"
+msgstr "Supprimer la playlist…"
+
+msgid "Last"
+msgstr "Derniers"
+
+msgid "days"
+msgstr "jours"
+
+msgid "weeks"
+msgstr "semaines"
+
+msgid "months"
+msgstr "mois"
+
+msgid "years"
+msgstr "ans"
+
+msgid "Cancel"
+msgstr "Annuler"
+
+msgid "Apply"
+msgstr "Appliquer"
+
+msgid "New Playlist"
+msgstr "Nouvelle playlist"
+
+msgid "Rename Playlist"
+msgstr "Renommer la playlist"
+
+msgid "Rename Library"
+msgstr "Renommer la bibliothèque"
+
+msgid "Name"
+msgstr "Nom"
+
+msgid "This name is already used."
+msgstr "Ce nom est déjà utilisé."
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Delete the playlist “{0}”?"
+msgstr "Supprimer la playlist « {0} » ?"
+
+msgid "Delete the library “{0}”?"
+msgstr "Supprimer la bibliothèque « {0} » ?"
+
+msgid "The tracks stay in the library."
+msgstr "Les morceaux restent dans la bibliothèque."
+
+msgid "Its artists, albums, tracks and playlists are removed from the database. The music files are not touched."
+msgstr "Ses artistes, albums, morceaux et playlists sont retirés de la base. Les fichiers musicaux ne sont pas touchés."
+
+msgid "Delete"
+msgstr "Supprimer"
+
+msgid "“{0}” added to favorites"
+msgstr "« {0} » ajouté aux favoris"
+
+msgid "“{0}” removed from favorites"
+msgstr "« {0} » retiré des favoris"

@@ -117,19 +117,28 @@ fn copy(db: &mut Database) -> Result<ImportReport> {
         }
     }
 
+    // La v0.1 n'attachait pas les playlists à une bibliothèque : on prend celle de leur
+    // premier morceau, la première bibliothèque sinon ; les morceaux d'une autre sont écartés.
     report.playlists = tx.execute(
-        "INSERT INTO playlists (id, name, created_at, updated_at)
-         SELECT id, name, coalesce(created_at, datetime('now')), coalesce(updated_at, created_at, datetime('now'))
-         FROM old.playlists",
+        "INSERT INTO playlists (id, library_id, name, created_at, updated_at)
+         SELECT p.id,
+                coalesce((SELECT t.library_id FROM old.playlist_tracks pt JOIN old.tracks t ON t.id = pt.track_id
+                          WHERE pt.playlist_id = p.id ORDER BY pt.position LIMIT 1),
+                         (SELECT min(id) FROM libraries)),
+                p.name, coalesce(p.created_at, datetime('now')), coalesce(p.updated_at, p.created_at, datetime('now'))
+         FROM old.playlists p",
         [],
     )?;
     // Positions renumérotées sans trou.
     tx.execute(
         "INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at)
-         SELECT playlist_id, track_id,
-                row_number() OVER (PARTITION BY playlist_id ORDER BY position, id) - 1,
-                coalesce(added_at, datetime('now'))
-         FROM old.playlist_tracks",
+         SELECT pt.playlist_id, pt.track_id,
+                row_number() OVER (PARTITION BY pt.playlist_id ORDER BY pt.position, pt.id) - 1,
+                coalesce(pt.added_at, datetime('now'))
+         FROM old.playlist_tracks pt
+         JOIN old.tracks t ON t.id = pt.track_id
+         JOIN playlists p ON p.id = pt.playlist_id
+         WHERE t.library_id = p.library_id",
         [],
     )?;
 

@@ -12,6 +12,7 @@ pub struct Settings {
     pub panels: PanelSettings,
     pub player: PlayerSettings,
     pub equalizer: EqualizerSettings,
+    pub recent: RecentSettings,
 }
 
 // Tout champ absent prend sa valeur par défaut : on peut en ajouter sans migration.
@@ -63,6 +64,20 @@ pub struct EqualizerSettings {
     pub enabled: bool,
     pub preset: String,
     pub gains: Vec<f32>,
+}
+
+/// « Added last 2 weeks » : quantité et unité (days, weeks, months, years).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RecentSettings {
+    pub amount: u32,
+    pub unit: String,
+}
+
+impl Default for RecentSettings {
+    fn default() -> Self {
+        RecentSettings { amount: 2, unit: "weeks".into() }
+    }
 }
 
 impl Default for Appearance {
@@ -127,6 +142,7 @@ impl Settings {
             panels: read(db, "panels"),
             player: read(db, "player"),
             equalizer: read(db, "equalizer"),
+            recent: read(db, "recent"),
         }
     }
 
@@ -137,7 +153,8 @@ impl Settings {
         write(db, "window", &self.window, &previous.window)?;
         write(db, "panels", &self.panels, &previous.panels)?;
         write(db, "player", &self.player, &previous.player)?;
-        write(db, "equalizer", &self.equalizer, &previous.equalizer)
+        write(db, "equalizer", &self.equalizer, &previous.equalizer)?;
+        write(db, "recent", &self.recent, &previous.recent)
     }
 }
 

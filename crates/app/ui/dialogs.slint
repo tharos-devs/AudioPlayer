@@ -1,0 +1,171 @@
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { ThemedButton } from "widgets.slint";
+
+export enum NameDialogKind { new-playlist, rename-playlist, rename-library }
+
+// Saisie d'un nom par-dessus la fenêtre : Entrée valide, Échap annule.
+export component NameDialog inherits Rectangle {
+    in property <NameDialogKind> kind;
+    in-out property <string> text;
+    // Le nom proposé est déjà utilisé : la fenêtre reste ouverte.
+    in property <bool> taken;
+    callback accepted(string);
+    callback cancelled();
+
+    background: #00000080;
+
+    public function focus-input() {
+        input.focus();
+        input.select-all();
+    }
+
+    // Absorbe les clics hors de la boîte.
+    TouchArea { }
+
+    Rectangle {
+        width: 360px;
+        height: layout.preferred-height;
+        border-radius: 6px;
+        background: Theme.footer-bg;
+        border-width: 1px;
+        border-color: Theme.border-base;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #00000080;
+
+        keys := FocusScope {
+            key-pressed(event) => {
+                if event.text == Key.Escape {
+                    root.cancelled();
+                    return accept;
+                }
+                return reject;
+            }
+
+            layout := VerticalLayout {
+                padding: 16px;
+                spacing: 10px;
+                Text {
+                    text: root.kind == NameDialogKind.new-playlist ? @tr("New Playlist")
+                        : root.kind == NameDialogKind.rename-playlist ? @tr("Rename Playlist")
+                        : @tr("Rename Library");
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: Theme.text-primary;
+                }
+                input := LineEdit {
+                    text <=> root.text;
+                    placeholder-text: @tr("Name");
+                    accepted(value) => {
+                        root.accepted(value);
+                    }
+                }
+                if root.taken: Text {
+                    text: @tr("This name is already used.");
+                    font-size: 11px;
+                    color: #f56c6c;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    ThemedButton {
+                        text: @tr("Cancel");
+                        clicked => {
+                            root.cancelled();
+                        }
+                    }
+                    ThemedButton {
+                        text: @tr("OK");
+                        primary: true;
+                        enabled: root.text != "";
+                        clicked => {
+                            root.accepted(root.text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export enum ConfirmKind { delete-playlist, delete-library }
+
+// Confirmation d'une suppression ; Entrée confirme, Échap annule.
+export component ConfirmDialog inherits Rectangle {
+    in property <ConfirmKind> kind;
+    in property <string> subject;
+    callback confirmed();
+    callback cancelled();
+
+    background: #00000080;
+
+    public function focus-keys() {
+        keys.focus();
+    }
+
+    TouchArea { }
+
+    Rectangle {
+        width: 380px;
+        height: layout.preferred-height;
+        border-radius: 6px;
+        background: Theme.footer-bg;
+        border-width: 1px;
+        border-color: Theme.border-base;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #00000080;
+
+        keys := FocusScope {
+            key-pressed(event) => {
+                if event.text == Key.Escape {
+                    root.cancelled();
+                    return accept;
+                }
+                if event.text == Key.Return {
+                    root.confirmed();
+                    return accept;
+                }
+                return reject;
+            }
+
+            layout := VerticalLayout {
+                padding: 16px;
+                spacing: 10px;
+                Text {
+                    text: root.kind == ConfirmKind.delete-playlist
+                        ? @tr("Delete the playlist “{0}”?", root.subject)
+                        : @tr("Delete the library “{0}”?", root.subject);
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: Theme.text-primary;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.kind == ConfirmKind.delete-playlist
+                        ? @tr("The tracks stay in the library.")
+                        : @tr("Its artists, albums, tracks and playlists are removed from the database. The music files are not touched.");
+                    font-size: 12px;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    ThemedButton {
+                        text: @tr("Cancel");
+                        clicked => {
+                            root.cancelled();
+                        }
+                    }
+                    ThemedButton {
+                        text: @tr("Delete");
+                        primary: true;
+                        clicked => {
+                            root.confirmed();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

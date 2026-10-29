@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::{Error, Result};
 
-pub const MIGRATIONS: &[&str] = &[V1, V2];
+pub const MIGRATIONS: &[&str] = &[V1, V2, V3];
 
 // Les dates sont du texte UTC « AAAA-MM-JJ HH:MM:SS », comme `datetime('now')`.
 const V1: &str = "
@@ -126,6 +126,68 @@ CREATE TABLE preferences (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 ) STRICT;
+";
+
+// Les playlists appartiennent à une bibliothèque, comme ses artistes et albums.
+// Les tables sont reconstruites (SQLite ne sait pas ajouter une colonne NOT NULL
+// liée) : la bibliothèque d'une playlist existante est celle de ses morceaux, la
+// première sinon. Les tables filles sont supprimées avant les mères pour ne pas
+// déclencher les suppressions en cascade.
+const V3: &str = "
+CREATE TABLE playlists_v3 (
+    id         INTEGER PRIMARY KEY,
+    library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (library_id, name)
+) STRICT;
+
+CREATE TABLE playlist_tracks_v3 (
+    id          INTEGER PRIMARY KEY,
+    playlist_id INTEGER NOT NULL REFERENCES playlists_v3(id) ON DELETE CASCADE,
+    track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL,
+    added_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (playlist_id, track_id)
+) STRICT;
+
+INSERT INTO playlists_v3 (id, library_id, name, created_at, updated_at)
+SELECT p.id,
+       coalesce((SELECT al.library_id FROM playlist_tracks pt
+                 JOIN tracks t ON t.id = pt.track_id JOIN albums al ON al.id = t.album_id
+                 WHERE pt.playlist_id = p.id ORDER BY pt.position LIMIT 1),
+                (SELECT min(id) FROM libraries)),
+       p.name, p.created_at, p.updated_at
+FROM playlists p
+WHERE EXISTS (SELECT 1 FROM libraries);
+
+-- Seuls les morceaux de la bibliothèque de la playlist sont gardés.
+INSERT INTO playlist_tracks_v3 (playlist_id, track_id, position, added_at)
+SELECT pt.playlist_id, pt.track_id,
+       row_number() OVER (PARTITION BY pt.playlist_id ORDER BY pt.position, pt.id) - 1,
+       pt.added_at
+FROM playlist_tracks pt
+JOIN playlists_v3 p ON p.id = pt.playlist_id
+JOIN tracks t ON t.id = pt.track_id
+JOIN albums al ON al.id = t.album_id
+WHERE al.library_id = p.library_id;
+
+DROP TABLE playlist_tracks;
+DROP TABLE playlists;
+ALTER TABLE playlists_v3 RENAME TO playlists;
+ALTER TABLE playlist_tracks_v3 RENAME TO playlist_tracks;
+CREATE INDEX playlist_tracks_order ON playlist_tracks (playlist_id, position);
+CREATE INDEX playlist_tracks_track ON playlist_tracks (track_id);
+
+-- Garde-fou : un morceau ne rejoint qu'une playlist de sa propre bibliothèque.
+CREATE TRIGGER playlist_tracks_same_library
+BEFORE INSERT ON playlist_tracks
+WHEN (SELECT al.library_id FROM tracks t JOIN albums al ON al.id = t.album_id WHERE t.id = NEW.track_id)
+     IS NOT (SELECT library_id FROM playlists WHERE id = NEW.playlist_id)
+BEGIN
+    SELECT RAISE(ABORT, 'track and playlist belong to different libraries');
+END;
 ";
 
 pub fn version(conn: &Connection) -> Result<usize> {
