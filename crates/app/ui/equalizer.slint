@@ -23,11 +23,6 @@ export global EqualizerState {
     ];
 }
 
-// Dans la v0.1, l'égaliseur multiplie encore ses tailles par le zoom (0.9 à « 100 % »).
-global Eq {
-    out property <float> k: 0.9;
-}
-
 component Switch inherits Rectangle {
     in-out property <bool> checked;
     width: 30px;
@@ -58,22 +53,22 @@ component VerticalSlider inherits Rectangle {
     in property <float> maximum: 12;
     in property <float> step: 0.5;
     callback edited(float);
-    property <length> knob: 14px * Eq.k;
+    property <length> knob: 14px * Theme.zoom;
     // Le rail s'arrête 10px avant le bas, comme `bottom: 10px` dans la v0.1.
     property <length> rail: root.height - 10px;
     property <float> ratio: (root.value - root.minimum) / (root.maximum - root.minimum);
-    width: max(self.knob, 6px * Eq.k);
+    width: max(self.knob, 6px * Theme.zoom);
 
     Rectangle {
         y: 0;
-        width: 6px * Eq.k;
+        width: 6px * Theme.zoom;
         height: root.rail;
         border-radius: 3px;
         background: Theme.eq-runway;
     }
     Rectangle {
         y: root.rail * (1 - root.ratio);
-        width: 6px * Eq.k;
+        width: 6px * Theme.zoom;
         height: root.rail * root.ratio;
         border-radius: 3px;
         background: Theme.accent;
@@ -134,32 +129,32 @@ export component Equalizer inherits Rectangle {
 
     VerticalLayout {
         padding: 8px;
-        spacing: 6px * Eq.k;
+        spacing: 6px * Theme.zoom;
 
         HorizontalLayout {
-            spacing: 6px * Eq.k;
+            spacing: 6px * Theme.zoom;
             alignment: space-between;
 
             preset-button := Rectangle {
                 width: 130px;
-                height: 24px * Eq.k;
+                height: 24px * Theme.zoom;
                 border-radius: 4px;
                 border-width: 1px;
                 border-color: preset-touch.has-hover ? Theme.eq-border-hover : Theme.eq-border;
                 background: Theme.eq-bg;
                 HorizontalLayout {
-                    padding-left: 8px * Eq.k;
-                    padding-right: 8px * Eq.k;
+                    padding-left: 8px * Theme.zoom;
+                    padding-right: 8px * Theme.zoom;
                     Text {
                         text: EqualizerState.preset;
-                        font-size: 11px * Eq.k;
+                        font-size: 11px * Theme.zoom;
                         color: Theme.eq-text;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
                     }
                     Text {
                         text: "▼";
-                        font-size: 8px * Eq.k;
+                        font-size: 8px * Theme.zoom;
                         color: Theme.text-disabled;
                         vertical-alignment: center;
                     }
@@ -170,7 +165,7 @@ export component Equalizer inherits Rectangle {
                     }
                 }
                 presets-popup := PopupWindow {
-                    y: parent.height + 2px * Eq.k;
+                    y: parent.height + 2px * Theme.zoom;
                     width: parent.width;
                     Rectangle {
                         background: Theme.eq-bg;
@@ -184,7 +179,7 @@ export component Equalizer inherits Rectangle {
                             padding-bottom: 4px;
                             for preset in EqualizerState.presets: option := Rectangle {
                                 property <bool> current: preset.name == EqualizerState.preset;
-                                height: 24px * Eq.k;
+                                height: 24px * Theme.zoom;
                                 background: self.current ? Theme.tint : item.has-hover ? Theme.eq-dropdown-hover : transparent;
                                 HorizontalLayout {
                                     padding-left: 8px;
@@ -218,24 +213,25 @@ export component Equalizer inherits Rectangle {
         }
 
         HorizontalLayout {
-            spacing: 8px * Eq.k;
+            spacing: 8px * Theme.zoom;
             for frequency[band] in EqualizerState.frequencies: VerticalLayout {
                 // Les marges latérales (4px) disparaissent en flex, faute de place à 180px.
                 horizontal-stretch: 1;
                 alignment: end;
                 Text {
                     text: root.format-gain(EqualizerState.gains[band]);
-                    font-size: 9px * Eq.k;
+                    font-size: 9px * Theme.zoom;
                     color: Theme.eq-label;
                     horizontal-alignment: center;
                 }
                 Rectangle {
-                    height: 12px * Eq.k + 8px;
+                    height: 12px * Theme.zoom + 8px;
                 }
                 HorizontalLayout {
                     alignment: center;
+                    // La v0.1 multiplie encore ses tailles par le zoom : max(80px, 100px × zoom).
                     VerticalSlider {
-                        height: 90px;
+                        height: max(80px, 100px * Theme.zoom);
                         value: EqualizerState.gains[band];
                         edited(gain) => {
                             EqualizerState.gains[band] = gain;
@@ -248,7 +244,7 @@ export component Equalizer inherits Rectangle {
                 }
                 Text {
                     text: root.format-frequency(frequency);
-                    font-size: 8px * Eq.k;
+                    font-size: 8px * Theme.zoom;
                     color: Theme.status-label;
                     horizontal-alignment: center;
                     wrap: no-wrap;
@@ -262,7 +258,7 @@ export component Equalizer inherits Rectangle {
                 spacing: 0px;
                 reset := Text {
                     text: @tr("reset");
-                    font-size: 13px * Eq.k;
+                    font-size: 13px * Theme.zoom;
                     color: reset-touch.has-hover ? Theme.accent-light-3 : Theme.accent;
                     reset-touch := TouchArea {
                         clicked => {

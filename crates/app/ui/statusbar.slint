@@ -101,9 +101,10 @@ export component StatusBar inherits Rectangle {
     in property <int> tracks;
     in property <string> message;
     in property <string> version;
-    in-out property <float> zoom: 0.9;
-    in property <float> zoom-min: 0.7;
-    in property <float> zoom-max: 0.9;
+    // Valeur suivie pendant le glissement ; Theme.zoom change au relâchement.
+    property <float> zoom: Theme.zoom;
+    property <float> zoom-min: Theme.zoom-min;
+    property <float> zoom-max: Theme.zoom-max;
     in-out property <bool> show-equalizer;
     callback zoom-edited(float);
     callback toggle-theme();
@@ -195,6 +196,7 @@ export component StatusBar inherits Rectangle {
                             minimum: root.zoom-min;
                             maximum: root.zoom-max;
                             released(value) => {
+                                Theme.zoom = value;
                                 root.zoom-edited(value);
                             }
                         }

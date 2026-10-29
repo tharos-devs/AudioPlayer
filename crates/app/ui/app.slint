@@ -41,7 +41,6 @@ export component AppWindow inherits Window {
     in property <int> library-artists;
     in property <int> library-albums;
     in property <string> version;
-    in-out property <float> zoom: 0.9;
     in-out property <bool> show-equalizer: true;
     in-out property <bool> search-visible;
     in-out property <bool> random-mode;
@@ -110,8 +109,6 @@ export component AppWindow inherits Window {
     pure callback is-track-payload(data-transfer) -> bool;
     callback select-language(string);
     in-out property <string> language: "en";
-    // Faux tant que le zoom n'est pas appliqué : évite une première image à la mauvaise taille.
-    in property <bool> ready;
 
     function toggle-theme() {
         Theme.dark = !Theme.dark;
@@ -154,212 +151,217 @@ export component AppWindow inherits Window {
         }
     }
 
-    // Cmd/Ctrl+F affiche la recherche, comme la v0.1.
-    keys := FocusScope {
-        key-pressed(event) => {
-            if (event.modifiers.meta || event.modifiers.control) && (event.text == "f" || event.text == "F") {
-                root.search-visible = true;
-                control-bar.focus-search();
-                return accept;
-            }
-            return reject;
-        }
+    // Zoom global : le contenu est dessiné à 1/zoom de la fenêtre puis réduit,
+    // comme le `zoom` CSS ; la fenêtre et son facteur d'échelle ne bougent pas.
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width / Theme.zoom;
+        height: root.height / Theme.zoom;
+        transform-scale: Theme.zoom;
+        transform-origin: { x: 0px, y: 0px };
 
-        VerticalLayout {
-            control-bar := ControlBar {
-                title: root.now-title;
-                artwork: root.now-artwork;
-                has-artwork: root.now-has-artwork;
-                has-track: root.playing-track != -1;
-                playing: root.playing;
-                position: root.position;
-                duration: root.duration;
-                position-text: root.position-text;
-                duration-text: root.duration-text;
-                remaining-text: root.remaining-text;
-                search-visible <=> root.search-visible;
-                search-text <=> root.search-text;
-                random-mode <=> root.random-mode;
-                loop-mode <=> root.loop-mode;
-                show-current => {
-                    root.show-current();
+        // Cmd/Ctrl+F affiche la recherche, comme la v0.1.
+        keys := FocusScope {
+            key-pressed(event) => {
+                if (event.modifiers.meta || event.modifiers.control) && (event.text == "f" || event.text == "F") {
+                    root.search-visible = true;
+                    control-bar.focus-search();
+                    return accept;
                 }
-                previous => {
-                    root.previous();
-                }
-                toggle-play => {
-                    root.toggle-play();
-                }
-                next => {
-                    root.next();
-                }
-                seek(ratio) => {
-                    root.seek(ratio);
-                }
-                search(text) => {
-                    root.search(text);
-                }
+                return reject;
             }
 
-            HorizontalLayout {
-                vertical-stretch: 1;
-
-                Sidebar {
-                    libraries: root.libraries;
-                    selected-library: root.selected-library;
-                    playlists: root.playlists;
-                    selected-playlist: root.selected-playlist;
-                    view: root.view;
-                    letter: root.letter;
-                    most-played-count: root.most-played-count;
-                    favorite-artists-count: root.favorite-artists-count;
-                    favorite-albums-count: root.favorite-albums-count;
-                    favorite-tracks-count: root.favorite-tracks-count;
-                    show-equalizer: root.show-equalizer;
-                    select-letter(letter) => {
-                        root.select-letter(letter);
+            VerticalLayout {
+                control-bar := ControlBar {
+                    title: root.now-title;
+                    artwork: root.now-artwork;
+                    has-artwork: root.now-has-artwork;
+                    has-track: root.playing-track != -1;
+                    playing: root.playing;
+                    position: root.position;
+                    duration: root.duration;
+                    position-text: root.position-text;
+                    duration-text: root.duration-text;
+                    remaining-text: root.remaining-text;
+                    search-visible <=> root.search-visible;
+                    search-text <=> root.search-text;
+                    random-mode <=> root.random-mode;
+                    loop-mode <=> root.loop-mode;
+                    show-current => {
+                        root.show-current();
                     }
-                    select-library(id) => {
-                        root.select-library(id);
+                    previous => {
+                        root.previous();
                     }
-                    select-view(view) => {
-                        root.select-view(view);
+                    toggle-play => {
+                        root.toggle-play();
                     }
-                    select-playlist(id) => {
-                        root.select-playlist(id);
+                    next => {
+                        root.next();
                     }
-                    accepts(data) => {
-                        return root.is-track-payload(data);
+                    seek(ratio) => {
+                        root.seek(ratio);
                     }
-                    drop-on-playlist(id, data) => {
-                        root.drop-on-playlist(id, data);
+                    search(text) => {
+                        root.search(text);
                     }
                 }
 
-                if root.view != View.playlist: Rectangle {
-                    width: root.artists-width;
-                    background: Theme.panel-bg;
+                HorizontalLayout {
+                    vertical-stretch: 1;
 
-                    VerticalLayout {
-                        PanelHeader {
-                            title: @tr("Artists");
-                            badge: @tr("{n} artist" | "{n} artists" % root.artists-count);
+                    Sidebar {
+                        libraries: root.libraries;
+                        selected-library: root.selected-library;
+                        playlists: root.playlists;
+                        selected-playlist: root.selected-playlist;
+                        view: root.view;
+                        letter: root.letter;
+                        most-played-count: root.most-played-count;
+                        favorite-artists-count: root.favorite-artists-count;
+                        favorite-albums-count: root.favorite-albums-count;
+                        favorite-tracks-count: root.favorite-tracks-count;
+                        show-equalizer: root.show-equalizer;
+                        select-letter(letter) => {
+                            root.select-letter(letter);
                         }
-                        ListView {
-                            for artist in root.artists: ArtistRow {
-                                item: artist;
-                                selected: artist.id == root.selected-artist;
-                                clicked => {
-                                    root.select-artist(artist.id);
+                        select-library(id) => {
+                            root.select-library(id);
+                        }
+                        select-view(view) => {
+                            root.select-view(view);
+                        }
+                        select-playlist(id) => {
+                            root.select-playlist(id);
+                        }
+                        accepts(data) => {
+                            return root.is-track-payload(data);
+                        }
+                        drop-on-playlist(id, data) => {
+                            root.drop-on-playlist(id, data);
+                        }
+                    }
+
+                    if root.view != View.playlist: Rectangle {
+                        width: root.artists-width;
+                        background: Theme.panel-bg;
+
+                        VerticalLayout {
+                            PanelHeader {
+                                title: @tr("Artists");
+                                badge: @tr("{n} artist" | "{n} artists" % root.artists-count);
+                            }
+                            ListView {
+                                for artist in root.artists: ArtistRow {
+                                    item: artist;
+                                    selected: artist.id == root.selected-artist;
+                                    clicked => {
+                                        root.select-artist(artist.id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.view != View.playlist: Splitter {
+                        target <=> root.artists-width;
+                    }
+
+                    if root.view != View.playlist: Rectangle {
+                        width: root.albums-width;
+                        background: Theme.panel-bg;
+
+                        VerticalLayout {
+                            PanelHeader {
+                                title: @tr("Albums");
+                                badge: @tr("{n} album" | "{n} albums" % root.albums-count);
+                            }
+                            ListView {
+                                for album in root.albums: AlbumRow {
+                                    item: album;
+                                    selected: album.id == root.selected-album;
+                                    clicked => {
+                                        root.select-album(album.id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.view != View.playlist: Splitter {
+                        target <=> root.albums-width;
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: Theme.panel-bg;
+
+                        if root.view != View.playlist: VerticalLayout {
+                            PanelHeader {
+                                title: @tr("Tracks");
+                                badge: @tr("{n} track" | "{n} tracks" % root.tracks-count);
+                            }
+                            TrackList {
+                                items: root.track-items;
+                                playing-track: root.playing-track;
+                                running: root.playing;
+                                selected-track <=> root.selected-track;
+                                play-track(id) => {
+                                    root.play-track(id);
+                                }
+                                track-action(id, name) => {
+                                    root.track-action(id, name);
+                                }
+                                track-payload(id) => {
+                                    return root.track-payload(id);
+                                }
+                            }
+                        }
+
+                        if root.view == View.playlist: VerticalLayout {
+                            PanelHeader {
+                                title: root.playlist-name;
+                                badge: @tr("{n} track" | "{n} tracks" % root.tracks-count);
+                            }
+                            PlaylistTrackList {
+                                items: root.playlist-items;
+                                playing-track: root.playing-track;
+                                running: root.playing;
+                                selected-track <=> root.selected-track;
+                                play-track(id) => {
+                                    root.play-track(id);
+                                }
+                                track-action(id, name) => {
+                                    root.track-action(id, name);
+                                }
+                                track-payload(id) => {
+                                    return root.track-payload(id);
                                 }
                             }
                         }
                     }
                 }
 
-                if root.view != View.playlist: Splitter {
-                    target <=> root.artists-width;
-                }
-
-                if root.view != View.playlist: Rectangle {
-                    width: root.albums-width;
-                    background: Theme.panel-bg;
-
-                    VerticalLayout {
-                        PanelHeader {
-                            title: @tr("Albums");
-                            badge: @tr("{n} album" | "{n} albums" % root.albums-count);
-                        }
-                        ListView {
-                            for album in root.albums: AlbumRow {
-                                item: album;
-                                selected: album.id == root.selected-album;
-                                clicked => {
-                                    root.select-album(album.id);
-                                }
-                            }
-                        }
+                StatusBar {
+                    source: root.view == View.playlist ? StatusSource.playlist
+                        : root.view == View.recent ? StatusSource.recent
+                        : root.library-name == "" ? StatusSource.none : StatusSource.library;
+                    source-name: root.view == View.playlist ? root.playlist-name : root.library-name;
+                    artists: root.library-artists;
+                    albums: root.library-albums;
+                    tracks: root.library-count;
+                    message: root.status.kind == StatusKind.summary ? "" : root.status-text;
+                    version: root.version;
+                    show-equalizer <=> root.show-equalizer;
+                    zoom-edited(value) => {
+                        root.zoom-edited(value);
                     }
-                }
-
-                if root.view != View.playlist: Splitter {
-                    target <=> root.albums-width;
-                }
-
-                Rectangle {
-                    horizontal-stretch: 1;
-                    background: Theme.panel-bg;
-
-                    if root.view != View.playlist: VerticalLayout {
-                        PanelHeader {
-                            title: @tr("Tracks");
-                            badge: @tr("{n} track" | "{n} tracks" % root.tracks-count);
-                        }
-                        TrackList {
-                            items: root.track-items;
-                            playing-track: root.playing-track;
-                            running: root.playing;
-                            selected-track <=> root.selected-track;
-                            play-track(id) => {
-                                root.play-track(id);
-                            }
-                            track-action(id, name) => {
-                                root.track-action(id, name);
-                            }
-                            track-payload(id) => {
-                                return root.track-payload(id);
-                            }
-                        }
+                    toggle-theme => {
+                        root.toggle-theme();
                     }
-
-                    if root.view == View.playlist: VerticalLayout {
-                        PanelHeader {
-                            title: root.playlist-name;
-                            badge: @tr("{n} track" | "{n} tracks" % root.tracks-count);
-                        }
-                        PlaylistTrackList {
-                            items: root.playlist-items;
-                            playing-track: root.playing-track;
-                            running: root.playing;
-                            selected-track <=> root.selected-track;
-                            play-track(id) => {
-                                root.play-track(id);
-                            }
-                            track-action(id, name) => {
-                                root.track-action(id, name);
-                            }
-                            track-payload(id) => {
-                                return root.track-payload(id);
-                            }
-                        }
-                    }
-                }
-            }
-
-            StatusBar {
-                source: root.view == View.playlist ? StatusSource.playlist
-                    : root.view == View.recent ? StatusSource.recent
-                    : root.library-name == "" ? StatusSource.none : StatusSource.library;
-                source-name: root.view == View.playlist ? root.playlist-name : root.library-name;
-                artists: root.library-artists;
-                albums: root.library-albums;
-                tracks: root.library-count;
-                message: root.status.kind == StatusKind.summary ? "" : root.status-text;
-                version: root.version;
-                zoom <=> root.zoom;
-                show-equalizer <=> root.show-equalizer;
-                zoom-edited(value) => {
-                    root.zoom-edited(value);
-                }
-                toggle-theme => {
-                    root.toggle-theme();
                 }
             }
         }
-    }
-
-    if !root.ready: Rectangle {
-        background: Theme.bg-primary;
-        TouchArea { }
     }
 }

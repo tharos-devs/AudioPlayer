@@ -3,7 +3,6 @@
 
 mod covers;
 mod library;
-mod zoom;
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -742,23 +741,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     ui.on_track_payload(track_payload);
     ui.on_is_track_payload(|data| payload_track(&data).is_some());
-
-    let zoom = zoom::Zoom::new();
-    ui.set_zoom(zoom.level());
-    let (z, w) = (zoom.clone(), ui.as_weak());
-    ui.on_zoom_edited(move |level| {
-        if let Some(ui) = w.upgrade() {
-            z.set_level(ui.window(), level);
-        }
-    });
-    // La fenêtre doit être affichée pour connaître le facteur d'échelle de l'écran.
-    let (z, w) = (zoom.clone(), ui.as_weak());
-    Timer::single_shot(Duration::ZERO, move || {
-        if let Some(ui) = w.upgrade() {
-            z.attach(&ui);
-            ui.set_ready(true);
-        }
-    });
 
     // Préchargement des autres bibliothèques, sur une connexion dédiée.
     let (sender, receiver) = std::sync::mpsc::channel();

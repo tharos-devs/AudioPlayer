@@ -7,9 +7,13 @@ export struct AccentColor {
 // Toutes les nuances dérivent de `dark` et `accent` : changer l'un des deux
 // suffit à re-thémer toute l'interface. Valeurs reprises des fichiers
 // *-theme.css de la v0.1 ; les tailles des .slint sont les px CSS d'origine,
-// le zoom global (voir zoom.rs) s'applique par-dessus.
+// le zoom global (transform-scale dans app.slint) s'applique par-dessus.
 export global Theme {
     in-out property <bool> dark: true;
+    // Équivalent du `zoom` CSS de la v0.1 : 0.7 à 0.9, affiché 70 % à 100 %.
+    in-out property <float> zoom: 0.9;
+    out property <float> zoom-min: 0.7;
+    out property <float> zoom-max: 0.9;
     in-out property <string> accent-id: "amber";
     in-out property <color> accent: #c8961e;
 
