@@ -17,7 +17,7 @@ Au premier lancement, AudioPlayer demande où créer la base (n'importe quel dos
 externe par exemple), ou en ouvre une existante, ou en crée une à partir de la base de la v0.1
 (lue en lecture seule, jamais modifiée). Les réglages de l'interface sont enregistrés dans la base,
 table `preferences`. Seul le chemin de la base est noté hors d'elle, dans
-`~/Library/Application Support/AudioPlayer/database.cfg` (macOS) ; si la base est introuvable
+`~/Library/Application Support/AudioPlayer/audioplayer.cfg` (macOS) ; si la base est introuvable
 (disque débranché), l'écran de démarrage propose de réessayer. *Fichier → Nouvelle base / Ouvrir
 une base* change de base en cours de route.
 

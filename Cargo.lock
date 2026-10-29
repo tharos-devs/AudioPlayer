@@ -454,7 +454,7 @@ dependencies = [
 
 [[package]]
 name = "audioplayer"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "audioplayer-audio",
  "audioplayer-db",
@@ -474,7 +474,7 @@ dependencies = [
 
 [[package]]
 name = "audioplayer-audio"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "rodio",
  "tempfile",
@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "audioplayer-db"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "rusqlite",
@@ -491,7 +491,7 @@ dependencies = [
 
 [[package]]
 name = "audioplayer-scanner"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "audioplayer-db",
  "image",
