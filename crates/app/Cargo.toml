@@ -7,6 +7,7 @@ edition.workspace = true
 slint.workspace = true
 audioplayer-db = { path = "../db" }
 audioplayer-audio = { path = "../audio" }
+audioplayer-scanner = { path = "../scanner" }
 image.workspace = true
 dirs.workspace = true
 serde.workspace = true

@@ -11,7 +11,7 @@ import { SetupWindow, DatabaseProblem, DatabaseProblems } from "setup.slint";
 
 export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind }
 
-export enum StatusKind { summary, added-to-playlist, already-in-playlist, play-next, enqueued, tracks-added, database-problem, playback-failed, no-output, favorite-added, favorite-removed }
+export enum StatusKind { summary, added-to-playlist, already-in-playlist, play-next, enqueued, tracks-added, scan-listing, scan-reading, scan-finished, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed }
 
 // Les messages d'état sont formatés ici (et non en Rust) pour passer par @tr.
 export struct Status {
@@ -20,6 +20,8 @@ export struct Status {
     playlist: string,
     problem: DatabaseProblem,
     count: int,
+    total: int,
+    removed: int,
 }
 
 export component AppWindow inherits Window {
@@ -88,6 +90,22 @@ export component AppWindow inherits Window {
         ? @tr("“{0}” will play next (not wired yet)", root.status.track)
         : root.status.kind == StatusKind.enqueued
         ? @tr("“{0}” added to the queue (not wired yet)", root.status.track)
+        : root.status.kind == StatusKind.scan-listing
+        ? @tr("Scanning “{0}”: {1} folders…", root.status.track, root.status.count)
+        : root.status.kind == StatusKind.scan-reading
+        ? @tr("Scanning “{0}”: {1} / {2} files — {3}", root.status.track, root.status.count, root.status.total, root.status.playlist)
+        : root.status.kind == StatusKind.scan-finished
+        ? @tr("Scan of “{0}” finished: {1} added, {2} updated, {3} removed", root.status.track, root.status.count, root.status.total, root.status.removed)
+        : root.status.kind == StatusKind.scan-root-missing
+        ? @tr("Folder of “{0}” not found: {1}. Nothing was changed.", root.status.track, root.status.playlist)
+        : root.status.kind == StatusKind.scan-root-empty
+        ? @tr("No audio file found in {1}: “{0}” was left unchanged.", root.status.track, root.status.playlist)
+        : root.status.kind == StatusKind.scan-failed
+        ? @tr("Scan of “{0}” failed: {1}", root.status.track, root.status.playlist)
+        : root.status.kind == StatusKind.library-healthy
+        ? @tr("“{0}” is healthy: every file is present.", root.status.track)
+        : root.status.kind == StatusKind.folder-in-library
+        ? @tr("{0} overlaps the folder of the library “{1}”.", root.status.track, root.status.playlist)
         : root.status.kind == StatusKind.tracks-added
         ? @tr("{n} track of “{0}” added to “{1}”" | "{n} tracks of “{0}” added to “{1}”" % root.status.count, root.status.track, root.status.playlist)
         : root.status.kind == StatusKind.favorite-added
@@ -156,6 +174,8 @@ export component AppWindow inherits Window {
     in-out property <bool> confirm-open;
     in property <ConfirmKind> confirm-kind;
     in property <string> confirm-subject;
+    in property <int> confirm-count;
+    in property <bool> scanning;
     callback confirm-accepted();
     public function open-confirm() {
         root.confirm-open = true;
@@ -396,6 +416,7 @@ export component AppWindow inherits Window {
                         favorite-tracks-count: root.favorite-tracks-count;
                         show-equalizer: root.show-equalizer;
                         playlist-selected: root.view == View.playlist && root.selected-playlist != -1;
+                        scanning: root.scanning;
                         recent-amount: root.recent-amount;
                         recent-unit: root.recent-unit;
                         library-menu(action) => {
@@ -592,6 +613,7 @@ export component AppWindow inherits Window {
         visible: root.confirm-open;
         kind: root.confirm-kind;
         subject: root.confirm-subject;
+        count: root.confirm-count;
         confirmed => {
             root.close-confirm();
             root.confirm-accepted();

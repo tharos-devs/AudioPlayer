@@ -414,6 +414,8 @@ export component Sidebar inherits Rectangle {
     in property <int> favorite-tracks-count;
     in property <bool> show-equalizer;
     in property <bool> playlist-selected;
+    // Un scan ou une vérification est en cours : pas d'autre en parallèle.
+    in property <bool> scanning;
     callback select-letter(string);
     callback library-menu(string);
     callback playlist-menu(string);
@@ -464,15 +466,15 @@ export component Sidebar inherits Rectangle {
                     height: 24px;
                 }
 
-                // Les entrées liées aux dossiers attendent le scan (étape suivante).
+                // Une bibliothèque = un dossier : pas d'« Add Folder » comme dans la v0.1.
                 SectionTitle {
                     title: @tr("Libraries");
                     menu: [
-                        { action: "new-library", label: @tr("New Library…"), enabled: false },
+                        { action: "new-library", label: @tr("New Library…"), enabled: !root.scanning },
                         { action: "rename-library", label: @tr("Rename Library…"), enabled: root.selected-library != -1 },
-                        { action: "add-folder", label: @tr("Add Folder…"), enabled: false },
-                        { action: "scan", label: @tr("Scan New Additions"), enabled: false },
-                        { action: "health", label: @tr("Check Library Health"), enabled: false },
+                        { action: "scan", label: @tr("Scan for Changes"), enabled: root.selected-library != -1 && !root.scanning, separated: true },
+                        { action: "rescan", label: @tr("Rescan All Files"), enabled: root.selected-library != -1 && !root.scanning },
+                        { action: "health", label: @tr("Check Library Health"), enabled: root.selected-library != -1 && !root.scanning },
                         { action: "delete-library", label: @tr("Delete Library…"), enabled: root.selected-library != -1, danger: true, separated: true },
                         { action: "new-database", label: @tr("New Database…"), enabled: true, separated: true },
                         { action: "open-database", label: @tr("Open Database…"), enabled: true },

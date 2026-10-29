@@ -3,9 +3,9 @@
 Lecteur audio de bureau (macOS, Windows, Linux) écrit entièrement en Rust, interface en [Slint](https://slint.dev).
 Refonte complète de la v0.1 (Tauri + Vue), conservée dans `../AudioPlayerOld` comme référence.
 
-> État actuel : bibliothèque SQLite (importée de la v0.1) et lecture audio réelle (FLAC, MP3,
-> AAC/ALAC, WAV, Ogg… via symphonia), enchaînement sans blanc, égaliseur 7 bandes.
-> Pas encore de scan des dossiers ; les playlists ne sont pas enregistrées.
+> État actuel : bibliothèques scannées depuis leurs dossiers (ou importées de la v0.1),
+> lecture audio (FLAC, MP3, AAC/ALAC, WAV, Ogg, AIFF via symphonia), enchaînement sans blanc,
+> égaliseur 7 bandes, playlists par bibliothèque, favoris.
 
 ## Lancer
 
@@ -41,6 +41,12 @@ crates/db/
 crates/audio/
   src/lib.rs         moteur de lecture (fil dédié, rodio), file d'enchaînement
   src/equalizer.rs   égaliseur biquad 7 bandes
+crates/scanner/
+  src/files.rs       recherche des fichiers audio (fichiers cachés ignorés)
+  src/tags.rs        lecture des tags (règles de la v0.1 et ses correctifs)
+  src/artwork.rs     vignette de pochette 150px par album
+  src/lib.rs         scan incrémental, en parallèle, par lots
+  src/bin/scan.rs    `scan <base.db> <bibliothèque> [--full]`
 crates/app/
   src/main.rs        état de l'application, démarrage, branchement des callbacks
   src/location.rs    emplacement de la base choisi par l'utilisateur

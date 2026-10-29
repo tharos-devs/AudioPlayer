@@ -60,6 +60,7 @@ struct NowPlaying {
 enum NameRequest {
     // Avec un morceau à y ajouter aussitôt (menu « Ajouter à la playlist → Nouvelle playlist… »).
     NewPlaylist { tracks: Vec<usize> },
+    NewLibrary(PathBuf),
     RenamePlaylist(i64),
     RenameLibrary(usize),
 }
@@ -67,10 +68,27 @@ enum NameRequest {
 enum ConfirmRequest {
     DeletePlaylist(i64),
     DeleteLibrary(usize),
+    RemoveMissing { library: i64, tracks: Vec<i64> },
+}
+
+/// Messages du fil de scan ou de vérification vers l'interface.
+enum ScanMessage {
+    Progress(audioplayer_scanner::Progress),
+    Scanned(Result<audioplayer_scanner::Report, audioplayer_scanner::Error>),
+    // Vérification : `None` si le dossier est introuvable, sinon les morceaux absents.
+    Checked(Option<Vec<i64>>),
+}
+
+struct ScanJob {
+    library: i64,
+    name: String,
+    messages: std::sync::mpsc::Receiver<ScanMessage>,
 }
 
 struct App {
     db: Database,
+    db_path: PathBuf,
+    scan: Option<ScanJob>,
     libraries: Vec<audioplayer_db::Library>,
     selected_library: Option<usize>,
     library: Library,
@@ -125,12 +143,14 @@ struct App {
 
 impl App {
     /// `library` : nom de la bibliothèque à ouvrir, la première sinon.
-    fn new(db: Database, library: Option<&str>) -> audioplayer_db::Result<Self> {
+    fn new(db: Database, db_path: PathBuf, library: Option<&str>) -> audioplayer_db::Result<Self> {
         let libraries = db.libraries()?;
         let recent_cutoff = db.datetime_from_now(RECENT_MODIFIER)?;
 
         let mut app = App {
             db,
+            db_path,
+            scan: None,
             libraries,
             selected_library: None,
             library: Library::default(),
@@ -1036,6 +1056,7 @@ impl App {
     }
 
     fn tick(&mut self, ui: &AppWindow) {
+        self.poll_scan(ui);
         self.handle_media_commands(ui);
         self.sync_controls(ui);
         for event in self.engine.events() {
@@ -1084,9 +1105,13 @@ impl App {
 
     // Message temporaire dans la barre d'état, effacé après quelques secondes.
     fn show_status(&self, ui: &AppWindow, status: Status) {
+        self.show_status_for(ui, status, STATUS_MESSAGE_DURATION);
+    }
+
+    fn show_status_for(&self, ui: &AppWindow, status: Status, duration: Duration) {
         ui.set_status(status);
         let weak = ui.as_weak();
-        self.status_timer.start(TimerMode::SingleShot, STATUS_MESSAGE_DURATION, move || {
+        self.status_timer.start(TimerMode::SingleShot, duration, move || {
             if let Some(ui) = weak.upgrade() {
                 ui.set_status(Status { kind: StatusKind::Summary, ..Default::default() });
             }
@@ -1242,6 +1267,24 @@ impl App {
                 }
             }
             NameRequest::RenamePlaylist(playlist) => self.db.rename_playlist(playlist, name),
+            NameRequest::NewLibrary(ref folder) => {
+                let root = folder.to_string_lossy().into_owned();
+                match self.db.create_library(name, &root) {
+                    Ok(Some(id)) => {
+                        self.name_request = None;
+                        ui.invoke_close_dialog();
+                        let old: Vec<i64> = self.libraries.iter().map(|l| l.id).collect();
+                        self.libraries = self.db.libraries().unwrap_or_default();
+                        // Les index ont pu bouger (tri par nom) : catalogues et lecture recalés.
+                        self.reindex_libraries(ui, &old, id);
+                        if let Some(index) = self.libraries.iter().position(|l| l.id == id) {
+                            self.start_scan(ui, index, audioplayer_scanner::Mode::Changes);
+                        }
+                        return;
+                    }
+                    other => other.map(|created| created.is_some()),
+                }
+            }
             NameRequest::RenameLibrary(index) => {
                 let result = self.db.rename_library(self.libraries[index].id, name);
                 if let Ok(true) = result {
@@ -1285,6 +1328,12 @@ impl App {
                 self.refresh_navigation(ui);
             }
             Some(ConfirmRequest::DeleteLibrary(index)) => self.delete_library(ui, index),
+            Some(ConfirmRequest::RemoveMissing { library, tracks }) => {
+                if let Err(error) = self.db.remove_tracks(library, &tracks) {
+                    return eprintln!("library {library}: {error}");
+                }
+                self.reload_library(ui, library);
+            }
             None => {}
         }
     }
@@ -1339,12 +1388,212 @@ impl App {
     }
 
     fn library_menu(&mut self, ui: &AppWindow, action: &str) {
+        if action == "new-library" {
+            return self.new_library(ui);
+        }
         let Some(index) = self.selected_library else { return };
         let name = self.libraries[index].name.clone();
         match action {
             "rename-library" => self.ask_name(ui, NameDialogKind::RenameLibrary, &name, NameRequest::RenameLibrary(index)),
+            "scan" => self.start_scan(ui, index, audioplayer_scanner::Mode::Changes),
+            "rescan" => self.start_scan(ui, index, audioplayer_scanner::Mode::Full),
+            "health" => self.check_library(ui, index),
             "delete-library" => self.ask_confirmation(ui, ConfirmKind::DeleteLibrary, &name, ConfirmRequest::DeleteLibrary(index)),
             _ => {}
+        }
+    }
+
+    // Un dossier ne peut appartenir qu'à une bibliothèque : ni égal, ni contenu, ni contenant.
+    fn new_library(&mut self, ui: &AppWindow) {
+        let Some(folder) = rfd::FileDialog::new().pick_folder() else { return };
+        let overlapping = self.libraries.iter().find(|l| {
+            let root = Path::new(&l.root_path);
+            folder.starts_with(root) || root.starts_with(&folder)
+        });
+        if let Some(library) = overlapping {
+            let status = Status {
+                kind: StatusKind::FolderInLibrary,
+                track: folder.display().to_string().into(),
+                playlist: library.name.as_str().into(),
+                ..Default::default()
+            };
+            return self.show_status(ui, status);
+        }
+        let name = folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        self.ask_name(ui, NameDialogKind::NewLibrary, &name, NameRequest::NewLibrary(folder));
+    }
+
+    // Après un changement de la liste des bibliothèques : catalogues gardés et lecture
+    // recalés par id (`old` = ids d'avant, dans l'ordre des anciens index), `select` ouverte.
+    fn reindex_libraries(&mut self, ui: &AppWindow, old: &[i64], select: i64) {
+        let remap = |i: usize| old.get(i).and_then(|id| self.libraries.iter().position(|l| l.id == *id));
+        if let Some(previous) = self.selected_library {
+            self.catalogs.insert(previous, std::mem::take(&mut self.library));
+        }
+        let catalogs = std::mem::take(&mut self.catalogs);
+        self.catalogs = catalogs.into_iter().filter_map(|(i, library)| Some((remap(i)?, library))).collect();
+        let playing = self.now.as_ref().and_then(|now| remap(now.library));
+        match (self.now.as_mut(), playing) {
+            (Some(now), Some(library)) => now.library = library,
+            (Some(_), None) => {
+                self.engine.stop();
+                self.now = None;
+                self.is_playing = false;
+            }
+            _ => {}
+        }
+        self.selected_library = None;
+        if let Some(index) = self.libraries.iter().position(|l| l.id == select) {
+            if let Err(error) = self.load_library(index) {
+                eprintln!("library: {error}");
+            }
+        }
+        ui.set_selected_track(-1);
+        self.refresh_all(ui);
+    }
+
+    fn start_scan(&mut self, ui: &AppWindow, index: usize, mode: audioplayer_scanner::Mode) {
+        if self.scan.is_some() {
+            return;
+        }
+        let library = self.libraries[index].clone();
+        let (sender, messages) = std::sync::mpsc::channel();
+        let db_path = self.db_path.clone();
+        std::thread::spawn(move || {
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let progress = sender.clone();
+            let result = audioplayer_scanner::scan(&db_path, library.id, Path::new(&library.root_path), mode, &cancel, &move |p| {
+                let _ = progress.send(ScanMessage::Progress(p));
+            });
+            let _ = sender.send(ScanMessage::Scanned(result));
+        });
+        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages });
+        ui.set_scanning(true);
+        ui.set_status(Status { kind: StatusKind::ScanListing, track: library.name.into(), ..Default::default() });
+    }
+
+    // Vérification : chaque fichier de la bibliothèque existe-t-il encore ?
+    fn check_library(&mut self, ui: &AppWindow, index: usize) {
+        if self.scan.is_some() {
+            return;
+        }
+        let library = self.libraries[index].clone();
+        let tracks: Vec<(i64, String)> = self.library.tracks.iter().map(|t| (t.id, t.path.clone())).collect();
+        let (sender, messages) = std::sync::mpsc::channel();
+        let root = PathBuf::from(&library.root_path);
+        std::thread::spawn(move || {
+            let result = root.is_dir().then(|| {
+                tracks.into_iter().filter(|(_, path)| !Path::new(path).exists()).map(|(id, _)| id).collect()
+            });
+            let _ = sender.send(ScanMessage::Checked(result));
+        });
+        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages });
+        ui.set_scanning(true);
+        ui.set_status(Status { kind: StatusKind::ScanListing, track: library.name.into(), ..Default::default() });
+    }
+
+    fn poll_scan(&mut self, ui: &AppWindow) {
+        let Some(job) = self.scan.as_ref() else { return };
+        let (library, name) = (job.library, job.name.clone());
+        let mut finished = None;
+        while let Ok(message) = job.messages.try_recv() {
+            match message {
+                ScanMessage::Progress(audioplayer_scanner::Progress::Listing { folders }) => {
+                    ui.set_status(Status { kind: StatusKind::ScanListing, track: name.as_str().into(), count: folders as i32, ..Default::default() });
+                }
+                ScanMessage::Progress(audioplayer_scanner::Progress::Reading { done, total, folder }) => {
+                    let folder = Path::new(&folder).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    ui.set_status(Status {
+                        kind: StatusKind::ScanReading,
+                        track: name.as_str().into(),
+                        count: done as i32,
+                        total: total as i32,
+                        playlist: folder.into(),
+                        ..Default::default()
+                    });
+                }
+                other => finished = Some(other),
+            }
+        }
+        let Some(message) = finished else { return };
+        self.scan = None;
+        ui.set_scanning(false);
+        let root = self.libraries.iter().find(|l| l.id == library).map(|l| l.root_path.clone()).unwrap_or_default();
+        let status = |kind| Status { kind, track: name.as_str().into(), playlist: root.as_str().into(), ..Default::default() };
+        match message {
+            ScanMessage::Scanned(Ok(report)) => {
+                self.reload_library(ui, library);
+                self.show_status_for(ui, Status {
+                    kind: StatusKind::ScanFinished,
+                    track: name.as_str().into(),
+                    count: report.added as i32,
+                    total: report.updated as i32,
+                    removed: report.removed as i32,
+                    ..Default::default()
+                }, Duration::from_secs(10));
+            }
+            ScanMessage::Scanned(Err(audioplayer_scanner::Error::RootMissing(_))) => self.show_status_for(ui, status(StatusKind::ScanRootMissing), Duration::from_secs(10)),
+            ScanMessage::Scanned(Err(audioplayer_scanner::Error::RootEmpty(_))) => self.show_status_for(ui, status(StatusKind::ScanRootEmpty), Duration::from_secs(10)),
+            ScanMessage::Scanned(Err(error)) => {
+                let status = Status { kind: StatusKind::ScanFailed, track: name.as_str().into(), playlist: error.to_string().into(), ..Default::default() };
+                self.show_status_for(ui, status, Duration::from_secs(10));
+            }
+            ScanMessage::Checked(None) => self.show_status_for(ui, status(StatusKind::ScanRootMissing), Duration::from_secs(10)),
+            ScanMessage::Checked(Some(missing)) if missing.is_empty() => {
+                ui.set_status(Status::default());
+                self.show_status(ui, status(StatusKind::LibraryHealthy));
+            }
+            ScanMessage::Checked(Some(missing)) => {
+                ui.set_status(Status::default());
+                ui.set_confirm_count(missing.len() as i32);
+                self.ask_confirmation(ui, ConfirmKind::RemoveMissing, &name, ConfirmRequest::RemoveMissing { library, tracks: missing });
+            }
+            ScanMessage::Progress(_) => {}
+        }
+    }
+
+    // Catalogue relu depuis la base ; le morceau en cours et sa file sont retrouvés par id.
+    fn reload_library(&mut self, ui: &AppWindow, library_id: i64) {
+        let Some(index) = self.libraries.iter().position(|l| l.id == library_id) else { return };
+        let playing = self.now.as_ref().filter(|now| now.library == index).and_then(|now| {
+            let lib = self.library_at(index)?;
+            let ids = |tracks: &[usize]| tracks.iter().map(|&t| lib.tracks[t].id).collect::<Vec<_>>();
+            Some((lib.tracks[now.track].id, ids(&now.queue)))
+        });
+        self.catalogs.remove(&index);
+        if self.selected_library == Some(index) {
+            self.selected_library = None;
+            self.library = Library::default();
+            if let Err(error) = self.load_library(index) {
+                return eprintln!("library {library_id}: {error}");
+            }
+            ui.set_selected_track(-1);
+            self.refresh_all(ui);
+        } else if let Ok((library, pixels)) = Library::load_with_covers(&self.db, library_id, COVER_SIZE) {
+            self.add_covers(pixels);
+            self.catalogs.insert(index, library);
+        }
+        if let Some((track_id, queue_ids)) = playing {
+            let lib = self.library_at(index);
+            let track = lib.and_then(|l| l.track_by_id(track_id));
+            match (lib, track) {
+                (Some(lib), Some(track)) => {
+                    let queue: Vec<usize> = queue_ids.iter().filter_map(|&id| lib.track_by_id(id)).collect();
+                    let now = self.now.as_mut().unwrap();
+                    now.index = queue.iter().position(|&t| t == track);
+                    now.track = track;
+                    now.queue = queue;
+                    self.queue_next();
+                }
+                // Le morceau a disparu : la lecture s'arrête.
+                _ => {
+                    self.engine.stop();
+                    self.now = None;
+                    self.is_playing = false;
+                }
+            }
+            self.published_track = None;
+            self.refresh_player(ui);
         }
     }
 
@@ -1591,7 +1840,7 @@ fn launch(path: &Path) -> Result<(), Problem> {
     check_database(path)?;
     let db = Database::open(path).map_err(|e| Problem::failed(path, e))?;
     let initial = Settings::load(&db);
-    let app = App::new(db, initial.session.library.as_deref()).map_err(|e| Problem::failed(path, e))?;
+    let app = App::new(db, path.to_owned(), initial.session.library.as_deref()).map_err(|e| Problem::failed(path, e))?;
     let first = app.selected_library;
 
     let ui = AppWindow::new().map_err(|e| Problem::failed(path, e))?;
