@@ -40,6 +40,9 @@ pub struct WindowSettings {
     pub width: f32,
     pub height: f32,
     pub maximized: bool,
+    /// Dernière position du mini-lecteur (pixels de l'écran).
+    pub mini_x: Option<i32>,
+    pub mini_y: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -107,7 +110,7 @@ impl Default for Appearance {
 
 impl Default for WindowSettings {
     fn default() -> Self {
-        WindowSettings { width: 1360.0, height: 820.0, maximized: false }
+        WindowSettings { width: 1360.0, height: 820.0, maximized: false, mini_x: None, mini_y: None }
     }
 }
 

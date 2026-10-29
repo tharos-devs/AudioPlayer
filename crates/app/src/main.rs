@@ -169,6 +169,8 @@ struct App {
     // Champs visibles (réglage « tags ») et section technique.
     tag_fields: Vec<String>,
     tag_technical: bool,
+    // Position du mini-lecteur, gardée dans les réglages.
+    mini_position: Option<(i32, i32)>,
     // Lecture suspendue pendant l'écriture : position et état à reprendre.
     tag_resume: Option<(Duration, bool)>,
 }
@@ -229,6 +231,7 @@ impl App {
             tag_edits: HashMap::new(),
             tag_fields: settings::TagsSettings::default().fields,
             tag_technical: true,
+            mini_position: None,
             tag_resume: None,
         };
         if !app.libraries.is_empty() {
@@ -2282,6 +2285,22 @@ fn field_value(d: &TrackDetails, field: Field) -> String {
     }
 }
 
+// Le mini-lecteur affiche ce que montre la barre de contrôle, dans le même thème.
+fn sync_mini(ui: &AppWindow, mini: &MiniPlayerWindow) {
+    let (theme, mini_theme) = (ui.global::<Theme>(), mini.global::<Theme>());
+    mini_theme.set_dark(theme.get_dark());
+    mini_theme.set_accent(theme.get_accent());
+    mini.set_track_title(ui.get_now_title());
+    mini.set_has_track(ui.get_playing_track() != -1);
+    mini.set_playing(ui.get_playing());
+    mini.set_position(ui.get_position());
+    mini.set_duration(ui.get_duration());
+    mini.set_position_text(ui.get_position_text());
+    mini.set_duration_text(ui.get_duration_text());
+    mini.set_volume(ui.get_volume());
+    mini.set_muted(ui.get_muted());
+}
+
 fn select_language(ui: &AppWindow, language: &str) {
     match slint::select_bundled_translation(language) {
         Ok(()) => ui.set_language(language.into()),
@@ -2409,6 +2428,8 @@ fn capture_settings(ui: &AppWindow, app: &App, previous: &Settings) -> Settings 
             width: if maximized { previous.window.width } else { size.width },
             height: if maximized { previous.window.height } else { size.height },
             maximized,
+            mini_x: app.mini_position.map(|p| p.0),
+            mini_y: app.mini_position.map(|p| p.1),
         },
         panels: settings::PanelSettings {
             artists_width: ui.get_artists_width(),
@@ -2436,6 +2457,8 @@ fn capture_settings(ui: &AppWindow, app: &App, previous: &Settings) -> Settings 
 /// Fenêtre principale ouverte sur une base ; la lâcher ferme tout.
 struct Session {
     ui: AppWindow,
+    // Gardé en vie avec la session ; piloté par ses callbacks.
+    _mini: MiniPlayerWindow,
     ctx: Context,
     // Derniers réglages écrits en base, pour n'écrire que les changements.
     saved: Rc<RefCell<Settings>>,
@@ -2474,6 +2497,7 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let mut app = app;
     app.tag_fields = initial.tags.fields.clone();
     app.tag_technical = initial.tags.technical;
+    app.mini_position = initial.window.mini_x.zip(initial.window.mini_y);
 
     let ui = AppWindow::new().map_err(|e| Problem::failed(path, e))?;
     ui.set_version(env!("CARGO_PKG_VERSION").into());
@@ -2670,6 +2694,60 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let ticker = Timer::default();
     ticker.start(TimerMode::Repeated, PLAYBACK_POLL, move || c.update(|app, ui| app.tick(ui)));
 
+    // Mini-lecteur : il remplace la fenêtre principale, qui reste chargée mais masquée,
+    // et pilote la lecture à travers elle.
+    let mini = MiniPlayerWindow::new().map_err(|e| Problem::failed(path, e))?;
+    let main = ui.as_weak();
+    mini.on_previous(move || main.upgrade().into_iter().for_each(|ui| ui.invoke_previous()));
+    let main = ui.as_weak();
+    mini.on_next(move || main.upgrade().into_iter().for_each(|ui| ui.invoke_next()));
+    let main = ui.as_weak();
+    mini.on_toggle_play(move || main.upgrade().into_iter().for_each(|ui| ui.invoke_toggle_play()));
+    let main = ui.as_weak();
+    mini.on_seek(move |ratio| main.upgrade().into_iter().for_each(|ui| ui.invoke_seek(ratio)));
+    let (main, m) = (ui.as_weak(), mini.as_weak());
+    mini.on_volume_edited(move || {
+        if let (Some(ui), Some(mini)) = (main.upgrade(), m.upgrade()) {
+            ui.set_volume(mini.get_volume());
+            ui.set_muted(mini.get_muted());
+        }
+    });
+    let (c, m) = (ctx.clone(), mini.as_weak());
+    mini.on_restore(move || {
+        if let (Some(ui), Some(mini)) = (c.ui.upgrade(), m.upgrade()) {
+            c.app.borrow_mut().mini_position = Some(mini.window().position()).map(|p| (p.x, p.y));
+            let _ = ui.show();
+            let _ = mini.hide();
+        }
+    });
+    let (c, s, m) = (ctx.clone(), saved.clone(), mini.as_weak());
+    mini.on_quit(move || {
+        if let Some(mini) = m.upgrade() {
+            c.app.borrow_mut().mini_position = Some(mini.window().position()).map(|p| (p.x, p.y));
+        }
+        save_settings(&c, &s);
+        let _ = slint::quit_event_loop();
+    });
+    let (c, m) = (ctx.clone(), mini.as_weak());
+    ui.on_mini_player(move || {
+        let (Some(ui), Some(mini)) = (c.ui.upgrade(), m.upgrade()) else { return };
+        sync_mini(&ui, &mini);
+        if let Some((x, y)) = c.app.borrow().mini_position {
+            mini.window().set_position(slint::PhysicalPosition::new(x, y));
+        }
+        let _ = mini.show();
+        let _ = ui.hide();
+    });
+    let (main, m) = (ui.as_weak(), mini.as_weak());
+    let mini_sync = Timer::default();
+    mini_sync.start(TimerMode::Repeated, PLAYBACK_POLL, move || {
+        if let (Some(ui), Some(mini)) = (main.upgrade(), m.upgrade()) {
+            if mini.window().is_visible() {
+                sync_mini(&ui, &mini);
+            }
+        }
+    });
+
     ui.show().map_err(|e| Problem::failed(path, e))?;
     // L'agrandissement ne s'applique qu'à une fenêtre affichée.
     let w = ui.as_weak();
@@ -2680,7 +2758,7 @@ fn launch(path: &Path) -> Result<(), Problem> {
         }
     });
 
-    SESSION.with(|session| *session.borrow_mut() = Some(Session { ui, ctx, saved, _timers: vec![preload, autosave, ticker] }));
+    SESSION.with(|session| *session.borrow_mut() = Some(Session { ui, _mini: mini, ctx, saved, _timers: vec![preload, autosave, ticker, mini_sync] }));
     Ok(())
 }
 

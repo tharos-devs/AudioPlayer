@@ -108,6 +108,7 @@ export component StatusBar inherits Rectangle {
     in-out property <bool> show-equalizer;
     in-out property <bool> show-tags;
     callback tags-toggled();
+    callback mini-player();
     callback zoom-edited(float);
     callback toggle-theme();
     // Chemin de la base, affiché à la place de la barre par l'icône de gauche.
@@ -295,11 +296,13 @@ export component StatusBar inherits Rectangle {
                         }
                     }
                 }
-                // Mini-lecteur : pas encore branché.
                 VerticalLayout {
                     alignment: center;
                     SquareButton {
                         icon: @image-url("icons/ep-files.svg");
+                        clicked => {
+                            root.mini-player();
+                        }
                     }
                 }
                 VerticalLayout {

@@ -9,8 +9,9 @@ import { StatusBar, StatusSource } from "statusbar.slint";
 import { EqualizerState } from "equalizer.slint";
 import { SetupWindow, DatabaseProblem, DatabaseProblems } from "setup.slint";
 import { TagsDrawer, TagRow, TagChoice } from "tags.slint";
+import { MiniPlayerWindow } from "miniplayer.slint";
 
-export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind, TagRow, TagChoice }
+export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind, TagRow, TagChoice, MiniPlayerWindow }
 
 export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed, tags-writing, tags-saved, tags-failed, tags-invalid, artwork-saved }
 
@@ -193,6 +194,7 @@ export component AppWindow inherits Window {
     callback cycle-panel(int);
     callback library-menu(string);
     callback stop-scan();
+    callback mini-player();
     callback playlist-menu(string);
     in property <int> recent-amount: 2;
     in property <string> recent-unit: "weeks";
@@ -686,6 +688,9 @@ export component AppWindow inherits Window {
                     scanning: root.scanning;
                     stop-scan => {
                         root.stop-scan();
+                    }
+                    mini-player => {
+                        root.mini-player();
                     }
                 }
             }

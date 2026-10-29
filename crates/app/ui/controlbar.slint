@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 
 // Bouton rond Element Plus `circle size="small"` : 24px.
-component RoundButton inherits Rectangle {
+export component RoundButton inherits Rectangle {
     in property <image> icon;
     in property <bool> primary;
     in property <bool> enabled: true;
@@ -32,7 +32,7 @@ component RoundButton inherits Rectangle {
 }
 
 // Curseur horizontal Element Plus : rail 4px, pastille 12px cerclée d'accent.
-component Slider inherits Rectangle {
+export component Slider inherits Rectangle {
     in-out property <float> value;
     in property <float> minimum: 0;
     in property <float> maximum: 100;
