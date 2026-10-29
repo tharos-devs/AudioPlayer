@@ -1,6 +1,41 @@
 import { Theme } from "theme.slint";
 
 // Bouton rond Element Plus `circle size="small"` : 24px.
+// Titre qui défile en boucle pendant la lecture quand il ne tient pas, centré sinon
+// (barre de contrôle et mini-lecteur).
+export component ScrollingTitle inherits Rectangle {
+    in property <string> text;
+    in property <bool> running;
+    in property <color> text-color;
+    property <length> gap: 40px;
+    property <length> text-width: label.preferred-width;
+    property <bool> scrolling: root.running && root.text-width > root.width;
+    // 30px par seconde.
+    property <length> offset: root.scrolling
+        ? Math.mod(animation-tick() / 1ms * 0.03, (root.text-width + root.gap) / 1px) * 1px : 0px;
+    clip: true;
+    label := Text {
+        x: root.scrolling ? -root.offset : max(0px, (root.width - self.width) / 2);
+        width: root.scrolling ? root.text-width : min(root.text-width, root.width);
+        height: 100%;
+        text: root.text;
+        font-size: 13px;
+        font-weight: 500;
+        color: root.text-color;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    if root.scrolling: Text {
+        x: label.x + root.text-width + root.gap;
+        height: 100%;
+        text: root.text;
+        font-size: 13px;
+        font-weight: 500;
+        color: root.text-color;
+        vertical-alignment: center;
+    }
+}
+
 export component RoundButton inherits Rectangle {
     in property <image> icon;
     in property <bool> primary;
@@ -208,15 +243,10 @@ component PlayerControls inherits Rectangle {
                         width: 250px;
                         height: 18px;
                         background: Theme.player-info-bg;
-                        clip: true;
-                        Text {
+                        ScrollingTitle {
                             text: root.has-track ? root.title : "";
-                            font-size: 13px;
-                            font-weight: 500;
-                            color: Theme.player-info-text;
-                            overflow: elide;
-                            horizontal-alignment: center;
-                            width: 100%;
+                            running: root.playing;
+                            text-color: Theme.player-info-text;
                         }
                     }
                 }

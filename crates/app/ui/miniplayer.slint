@@ -1,5 +1,5 @@
 import { Theme } from "theme.slint";
-import { RoundButton, Slider } from "controlbar.slint";
+import { RoundButton, Slider, ScrollingTitle } from "controlbar.slint";
 
 // Bouton de la colonne de droite : retour à la fenêtre principale, fermeture.
 component WindowButton inherits Rectangle {
@@ -118,31 +118,12 @@ export component MiniPlayerWindow inherits Window {
                     alignment: center;
                     padding-top: 5px;
                     spacing: 4px;
-                    title-box := Rectangle {
+                    Rectangle {
                         height: 18px;
-                        clip: true;
-                        property <length> gap: 40px;
-                        property <length> text-width: label.preferred-width;
-                        property <bool> scrolling: root.playing && self.text-width > self.width;
-                        property <length> offset: self.scrolling
-                            ? Math.mod(animation-tick() / 1ms * 0.03, (self.text-width + self.gap) / 1px) * 1px : 0px;
-                        label := Text {
-                            x: title-box.scrolling ? -title-box.offset : max(0px, (title-box.width - self.width) / 2);
-                            width: title-box.scrolling ? title-box.text-width : min(title-box.text-width, title-box.width);
+                        ScrollingTitle {
                             text: root.has-track ? root.track-title : @tr("No track selected");
-                            font-size: 13px;
-                            font-weight: 500;
-                            color: Theme.player-info-text;
-                            overflow: elide;
-                            vertical-alignment: center;
-                        }
-                        if title-box.scrolling: Text {
-                            x: label.x + title-box.text-width + title-box.gap;
-                            text: label.text;
-                            font-size: 13px;
-                            font-weight: 500;
-                            color: Theme.player-info-text;
-                            vertical-alignment: center;
+                            running: root.playing;
+                            text-color: Theme.player-info-text;
                         }
                         TouchArea {
                             pointer-event(event) => {
