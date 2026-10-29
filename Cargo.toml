@@ -28,6 +28,7 @@ rodio = { version = "0.23", default-features = false, features = ["playback", "s
 [profile.dev.package."*"]
 opt-level = 3
 
-# Correctif local de Slint (inertie du défilement sur macOS) ; voir vendor/README.md.
+# Correctifs locaux (inertie du défilement de Slint, `block` pour une future version de Rust) ; voir vendor/README.md.
 [patch.crates-io]
 i-slint-core = { path = "vendor/i-slint-core" }
+block = { path = "vendor/block" }
