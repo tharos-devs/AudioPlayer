@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/app", "crates/db", "crates/audio", "crates/scanner"]
+# `cargo run` lance l'app ; `--workspace` pour construire ou tester tout le reste.
+default-members = ["crates/app"]
 
 [workspace.package]
 version = "0.2.0"

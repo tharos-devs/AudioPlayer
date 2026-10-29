@@ -133,7 +133,7 @@ struct Worker {
 
 impl Worker {
     fn run(mut self, commands: Receiver<Command>) {
-        let sink = match DeviceSinkBuilder::open_default_sink() {
+        let mut sink = match DeviceSinkBuilder::open_default_sink() {
             Ok(sink) => sink,
             Err(error) => {
                 let _ = self.events.send(Event::NoOutput { message: error.to_string() });
@@ -142,6 +142,8 @@ impl Worker {
                 return;
             }
         };
+        // Fermée volontairement avec le moteur (fin de l'app, changement de base) : pas de message.
+        sink.log_on_drop(false);
         loop {
             match commands.recv_timeout(POLL) {
                 Ok(command) => self.handle(command, &sink),

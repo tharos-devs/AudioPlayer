@@ -37,6 +37,7 @@ En ligne de commande, l'import de la v0.1 existe aussi :
 
 ```bash
 cargo run --release -p audioplayer-db --bin import-v01 -- ancienne.db nouvelle.db
+cargo run --release -p audioplayer-scanner --bin scan -- base.db OST   # scan en ligne de commande
 ```
 
 ## Structure
