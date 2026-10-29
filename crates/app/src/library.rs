@@ -32,6 +32,7 @@ pub struct Track {
     pub title: String,
     pub sort_key: String,
     pub duration: i32,
+    pub path: String,
     pub play_count: u32,
     pub is_favorite: bool,
     // Texte UTC « AAAA-MM-JJ HH:MM:SS » : se compare comme une chaîne.
@@ -90,6 +91,7 @@ impl Library {
                 sort_key: sort_key(&track.title),
                 title: track.title,
                 duration: ((track.duration_ms + 500) / 1000) as i32,
+                path: track.file_path,
                 play_count: track.play_count,
                 is_favorite: track.is_favorite,
                 added_at: track.added_at,

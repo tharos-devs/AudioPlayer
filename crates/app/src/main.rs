@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
+use audioplayer_audio::{Engine, Event};
 use audioplayer_db::{legacy, Database, FileKind};
 use library::{format_duration, sort_key, Library};
 use settings::Settings;
@@ -26,6 +27,22 @@ const COVER_SIZE: u32 = 160;
 // « Added last 2 weeks », la valeur par défaut de la v0.1.
 const RECENT_MODIFIER: &str = "-14 days";
 const STATUS_MESSAGE_DURATION: Duration = Duration::from_secs(3);
+
+// Au-delà, des fichiers illisibles d'affilée arrêtent la lecture (disque débranché…).
+const MAX_FAILURES: u32 = 5;
+const PLAYBACK_POLL: Duration = Duration::from_millis(200);
+
+/// Morceau en cours, repéré dans sa bibliothèque : la lecture continue pendant
+/// qu'on en parcourt une autre.
+struct NowPlaying {
+    library: usize,
+    track: usize,
+    // File figée au lancement : la liste affichée à ce moment-là.
+    queue: Vec<usize>,
+    index: Option<usize>,
+    // Déjà ouvert par le moteur pour l'enchaînement sans blanc.
+    next: Option<usize>,
+}
 
 // Pas encore enregistrées en base : elles retiennent des ids de morceaux.
 struct Playlist {
@@ -57,9 +74,19 @@ struct App {
     playlists: Vec<Playlist>,
     // Morceaux affichés, dans l'ordre : sert aussi à précédent/suivant.
     visible: Vec<usize>,
-    playing: Option<usize>,
-    position: i32,
+    engine: Engine,
+    now: Option<NowPlaying>,
     is_playing: bool,
+    // Fin de file atteinte : « lecture » rejoue le morceau affiché.
+    stopped: bool,
+    position: i32,
+    random: bool,
+    repeat: bool,
+    // Dernières valeurs transmises au moteur.
+    sent_volume: Option<f32>,
+    sent_equalizer: Option<(bool, [f32; 7])>,
+    failures: u32,
+    rng: u64,
     status_timer: Timer,
 }
 
@@ -89,9 +116,17 @@ impl App {
             // Les playlists de la base arriveront avec leur enregistrement.
             playlists: Vec::new(),
             visible: Vec::new(),
-            playing: None,
-            position: 0,
+            engine: Engine::start(),
+            now: None,
             is_playing: false,
+            stopped: false,
+            position: 0,
+            random: false,
+            repeat: false,
+            sent_volume: None,
+            sent_equalizer: None,
+            failures: 0,
+            rng: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0x5eed, |d| d.as_nanos() as u64) | 1,
             status_timer: Timer::default(),
         };
         if !app.libraries.is_empty() {
@@ -121,9 +156,6 @@ impl App {
         self.library = library;
         self.artist_order = artist_order;
         self.visible.clear();
-        self.playing = None;
-        self.position = 0;
-        self.is_playing = false;
         self.reset_navigation();
         Ok(())
     }
@@ -394,24 +426,45 @@ impl App {
         }
     }
 
+    fn library_at(&self, index: usize) -> Option<&Library> {
+        if self.selected_library == Some(index) { Some(&self.library) } else { self.catalogs.get(&index) }
+    }
+
+    fn library_at_mut(&mut self, index: usize) -> Option<&mut Library> {
+        if self.selected_library == Some(index) { Some(&mut self.library) } else { self.catalogs.get_mut(&index) }
+    }
+
+    fn now_track(&self) -> Option<(&Library, &library::Track)> {
+        let now = self.now.as_ref()?;
+        let library = self.library_at(now.library)?;
+        Some((library, library.tracks.get(now.track)?))
+    }
+
     fn refresh_player(&self, ui: &AppWindow) {
-        let track = self.playing.map(|t| &self.library.tracks[t]);
-        ui.set_playing_track(to_ui_id(self.playing));
+        let now = self.now_track();
+        // Le morceau n'est surligné que dans sa propre bibliothèque.
+        let here = self.now.as_ref().filter(|now| Some(now.library) == self.selected_library).map(|now| now.track);
+        ui.set_playing_track(to_ui_id(here));
         ui.set_playing(self.is_playing);
         // « Titre - Album », comme le bandeau du lecteur de la v0.1.
         ui.set_now_title(
-            track.map(|t| format!("{} - {}", t.title, self.library.albums[t.album].title)).unwrap_or_default().into(),
+            now.map(|(lib, t)| format!("{} - {}", t.title, lib.albums[t.album].title)).unwrap_or_default().into(),
         );
-        ui.set_now_artist(track.map_or("", |t| self.library.artists[t.artist].name.as_str()).into());
-        let (artwork, has_artwork) = track.map_or((Image::default(), false), |t| self.cover(t.album));
-        ui.set_now_artwork(artwork);
-        ui.set_now_has_artwork(has_artwork);
-        let duration = track.map_or(0, |t| t.duration);
-        ui.set_position(self.position);
+        ui.set_now_artist(now.map_or("", |(lib, t)| lib.artists[t.artist].name.as_str()).into());
+        let artwork = now.and_then(|(lib, t)| self.covers.get(&lib.albums[t.album].id));
+        ui.set_now_artwork(artwork.cloned().unwrap_or_default());
+        ui.set_now_has_artwork(artwork.is_some());
+        self.refresh_position(ui);
+    }
+
+    fn refresh_position(&self, ui: &AppWindow) {
+        let duration = self.now_track().map_or(0, |(_, t)| t.duration);
+        let position = self.position.min(duration);
+        ui.set_position(position);
         ui.set_duration(duration);
-        ui.set_position_text(format_duration(self.position).into());
+        ui.set_position_text(format_duration(position).into());
         ui.set_duration_text(format_duration(duration).into());
-        ui.set_remaining_text(format!("-{}", format_duration((duration - self.position).max(0))).into());
+        ui.set_remaining_text(format!("-{}", format_duration((duration - position).max(0))).into());
     }
 
     fn matches(&self, track: usize, query: &str) -> bool {
@@ -530,59 +583,245 @@ impl App {
         self.refresh_navigation(ui);
     }
 
+    /// Lance un morceau de la bibliothèque affichée ; la file est la liste visible.
     fn play(&mut self, ui: &AppWindow, track: usize) {
-        self.playing = Some(track);
-        self.position = 0;
-        self.is_playing = true;
+        let Some(library) = self.selected_library else { return };
+        let queue = if self.visible.contains(&track) { self.visible.clone() } else { vec![track] };
+        let index = queue.iter().position(|&t| t == track);
+        self.now = Some(NowPlaying { library, track, queue, index, next: None });
+        self.failures = 0;
         ui.set_selected_track(track as i32);
+        self.start(ui);
+    }
+
+    // Joue `now.track` depuis le début et met le suivant en file.
+    fn start(&mut self, ui: &AppWindow) {
+        let next = self.pick_next();
+        let Some(now) = self.now.as_mut() else { return };
+        now.next = next;
+        let (library, track) = (now.library, now.track);
+        let Some(lib) = self.library_at(library) else { return };
+        let path = PathBuf::from(&lib.tracks[track].path);
+        let next_path = next.map(|n| PathBuf::from(&lib.tracks[n].path));
+        self.engine.play(&path, next_path.as_deref());
+        self.is_playing = true;
+        self.stopped = false;
+        self.position = 0;
+        self.record_play(ui, library, track);
         self.refresh_player(ui);
     }
 
+    // Comptée au lancement de chaque morceau, comme dans la v0.1.
+    fn record_play(&mut self, ui: &AppWindow, library: usize, track: usize) {
+        let Some(lib) = self.library_at_mut(library) else { return };
+        let entry = &mut lib.tracks[track];
+        entry.play_count += 1;
+        let id = entry.id;
+        if let Err(error) = self.db.record_play(id) {
+            eprintln!("play count {id}: {error}");
+        }
+        if Some(library) == self.selected_library {
+            ui.set_most_played_count(self.library.tracks.iter().filter(|t| t.play_count > 0).count() as i32);
+        }
+    }
+
+    fn random_track(&mut self, library: usize, avoid: usize) -> Option<usize> {
+        let count = self.library_at(library)?.tracks.len();
+        if count == 0 {
+            return None;
+        }
+        // xorshift64 : largement suffisant pour tirer un morceau.
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 7;
+        self.rng ^= self.rng << 17;
+        let pick = (self.rng % count as u64) as usize;
+        Some(if pick == avoid && count > 1 { (pick + 1) % count } else { pick })
+    }
+
+    // « rand » : un morceau au hasard de la bibliothèque ; « loop » : la file reboucle.
+    fn pick_next(&mut self) -> Option<usize> {
+        let now = self.now.as_ref()?;
+        if self.random {
+            let (library, track) = (now.library, now.track);
+            return self.random_track(library, track);
+        }
+        let index = now.index?;
+        match now.queue.get(index + 1) {
+            Some(&next) => Some(next),
+            None if self.repeat => now.queue.first().copied(),
+            None => None,
+        }
+    }
+
+    // Le moteur est passé au morceau mis en file.
+    fn advance(&mut self, ui: &AppWindow) {
+        let Some(now) = self.now.as_mut() else { return };
+        let Some(next) = now.next.take() else { return };
+        now.track = next;
+        now.index = now.queue.iter().position(|&t| t == next);
+        let library = now.library;
+        self.position = 0;
+        self.failures = 0;
+        self.record_play(ui, library, next);
+        self.queue_next();
+        self.refresh_player(ui);
+    }
+
+    // Recalcule le morceau à enchaîner (après un changement de « rand » ou « loop »).
+    fn queue_next(&mut self) {
+        let next = self.pick_next();
+        let Some(now) = self.now.as_mut() else { return };
+        now.next = next;
+        let library = now.library;
+        let path = next.and_then(|n| self.library_at(library).map(|lib| PathBuf::from(&lib.tracks[n].path)));
+        self.engine.set_next(path.as_deref());
+    }
+
     fn show_current(&mut self, ui: &AppWindow) {
-        if let Some(track) = self.playing {
+        let Some((library, track)) = self.now.as_ref().map(|now| (now.library, now.track)) else { return };
+        if self.selected_library != Some(library) {
+            self.select_library(ui, library as i32);
+        }
+        if self.selected_library == Some(library) {
             self.reveal_album(ui, self.library.tracks[track].album);
             ui.set_selected_track(track as i32);
         }
     }
 
     fn toggle_play(&mut self, ui: &AppWindow) {
-        match self.playing {
-            Some(_) => self.is_playing = !self.is_playing,
-            None => {
-                if let Some(&first) = self.visible.first() {
-                    return self.play(ui, first);
-                }
+        if self.now.is_none() {
+            if let Some(&first) = self.visible.first() {
+                self.play(ui, first);
             }
+            return;
+        }
+        if self.is_playing {
+            self.engine.pause();
+            self.is_playing = false;
+        } else if self.stopped {
+            self.start(ui);
+            return;
+        } else {
+            self.engine.resume();
+            self.is_playing = true;
         }
         self.refresh_player(ui);
     }
 
     fn step(&mut self, ui: &AppWindow, delta: isize) {
-        let current = self.playing.and_then(|t| self.visible.iter().position(|&v| v == t));
-        let next = match current {
-            Some(index) => index.checked_add_signed(delta).filter(|&i| i < self.visible.len()),
-            None => (!self.visible.is_empty()).then_some(0),
+        let Some(now) = self.now.as_ref() else {
+            if let Some(&first) = self.visible.first() {
+                self.play(ui, first);
+            }
+            return;
         };
-        if let Some(index) = next {
-            self.play(ui, self.visible[index]);
+        let (library, track, index, len) = (now.library, now.track, now.index, now.queue.len());
+        let target = if self.random {
+            self.random_track(library, track).map(|t| (t, None))
+        } else {
+            index.and_then(|i| {
+                let wrapped = (i as isize + delta).rem_euclid(len as isize) as usize;
+                let inside = i.checked_add_signed(delta).filter(|&j| j < len);
+                inside.or((self.repeat).then_some(wrapped))
+            })
+            .map(|j| (self.now.as_ref().unwrap().queue[j], Some(j)))
+        };
+        if let Some((track, index)) = target {
+            let now = self.now.as_mut().unwrap();
+            now.track = track;
+            now.index = index;
+            self.start(ui);
         }
     }
 
     fn seek(&mut self, ui: &AppWindow, ratio: f32) {
-        if let Some(track) = self.playing {
-            let duration = self.library.tracks[track].duration;
-            self.position = (ratio.clamp(0.0, 1.0) * duration as f32) as i32;
-            self.refresh_player(ui);
+        let Some(duration) = self.now_track().map(|(_, t)| t.duration) else { return };
+        let target = ratio.clamp(0.0, 1.0) * duration as f32;
+        self.engine.seek(Duration::from_secs_f32(target));
+        self.position = target as i32;
+        self.refresh_position(ui);
+    }
+
+    // Réglages de l'interface vers le moteur : volume (courbe au carré, comme la v0.1),
+    // égaliseur, et « rand » / « loop » qui changent le morceau à enchaîner.
+    fn sync_controls(&mut self, ui: &AppWindow) {
+        let volume = if ui.get_muted() { 0.0 } else { (ui.get_volume() / 100.0).powi(2) };
+        if self.sent_volume != Some(volume) {
+            self.engine.set_volume(volume);
+            self.sent_volume = Some(volume);
+        }
+
+        let state = ui.global::<EqualizerState>();
+        let mut gains = [0.0f32; 7];
+        for (gain, value) in gains.iter_mut().zip(state.get_gains().iter()) {
+            *gain = value;
+        }
+        let equalizer = (state.get_enabled(), gains);
+        if self.sent_equalizer != Some(equalizer) {
+            self.engine.set_equalizer(equalizer.0, equalizer.1);
+            self.sent_equalizer = Some(equalizer);
+        }
+
+        let (random, repeat) = (ui.get_random_mode(), ui.get_loop_mode());
+        if (random, repeat) != (self.random, self.repeat) {
+            let random_turned_on = random && !self.random;
+            (self.random, self.repeat) = (random, repeat);
+            // Comme la v0.1 : activer « rand » lance aussitôt un morceau au hasard.
+            if random_turned_on {
+                let library = self.now.as_ref().map(|n| n.library).or(self.selected_library);
+                let avoid = self.now.as_ref().map_or(usize::MAX, |n| n.track);
+                if let Some(track) = library.and_then(|l| self.random_track(l, avoid)) {
+                    self.now = Some(NowPlaying { library: library.unwrap(), track, queue: vec![track], index: Some(0), next: None });
+                    self.start(ui);
+                }
+            } else if self.now.is_some() && !self.stopped {
+                self.queue_next();
+            }
         }
     }
 
     fn tick(&mut self, ui: &AppWindow) {
-        let Some(track) = self.playing.filter(|_| self.is_playing) else { return };
-        self.position += 1;
-        if self.position >= self.library.tracks[track].duration {
-            self.step(ui, 1);
-        } else {
-            self.refresh_player(ui);
+        self.sync_controls(ui);
+        for event in self.engine.events() {
+            match event {
+                Event::Started { path, .. } => {
+                    let queued = self.now.as_ref().and_then(|now| {
+                        let next = now.next?;
+                        Some(self.library_at(now.library)?.tracks[next].path == path.to_string_lossy())
+                    });
+                    if queued == Some(true) {
+                        self.advance(ui);
+                    } else {
+                        self.failures = 0;
+                    }
+                }
+                Event::Ended => {
+                    self.is_playing = false;
+                    self.stopped = true;
+                    self.position = 0;
+                    self.refresh_player(ui);
+                }
+                Event::Failed { path, message } => {
+                    let title = self.now_track().map(|(_, t)| t.title.clone()).unwrap_or_else(|| path.display().to_string());
+                    self.show_status(ui, Status { kind: StatusKind::PlaybackFailed, track: title.into(), playlist: message.into(), ..Default::default() });
+                    self.failures += 1;
+                    self.is_playing = false;
+                    self.stopped = true;
+                    if self.failures < MAX_FAILURES {
+                        self.step(ui, 1);
+                    } else {
+                        self.refresh_player(ui);
+                    }
+                }
+                Event::NoOutput { message } => {
+                    self.show_status(ui, Status { kind: StatusKind::NoOutput, playlist: message.into(), ..Default::default() });
+                    self.is_playing = false;
+                }
+            }
+        }
+        if self.is_playing {
+            self.position = self.engine.position().as_secs() as i32;
+            self.refresh_position(ui);
         }
     }
 
@@ -977,7 +1216,7 @@ fn launch(path: &Path) -> Result<(), Problem> {
 
     let c = ctx.clone();
     let ticker = Timer::default();
-    ticker.start(TimerMode::Repeated, Duration::from_secs(1), move || c.update(|app, ui| app.tick(ui)));
+    ticker.start(TimerMode::Repeated, PLAYBACK_POLL, move || c.update(|app, ui| app.tick(ui)));
 
     ui.show().map_err(|e| Problem::failed(path, e))?;
     // L'agrandissement ne s'applique qu'à une fenêtre affichée.

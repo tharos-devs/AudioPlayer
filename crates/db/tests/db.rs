@@ -240,3 +240,15 @@ fn inspect_tells_files_apart_without_touching_them() {
     std::fs::write(&empty, "").unwrap();
     assert_eq!(inspect(&empty).unwrap(), Some(FileKind::Current { version: 0 }));
 }
+
+#[test]
+fn record_play_counts_and_dates() {
+    let db = Database::open_in_memory().unwrap();
+    sample(&db);
+    db.record_play(100).unwrap();
+    db.record_play(100).unwrap();
+    let track = db.tracks(1).unwrap().into_iter().find(|t| t.id == 100).unwrap();
+    assert_eq!(track.play_count, 2);
+    let played: Option<String> = db.connection().query_row("SELECT last_played_at FROM tracks WHERE id = 100", [], |r| r.get(0)).unwrap();
+    assert!(played.is_some());
+}

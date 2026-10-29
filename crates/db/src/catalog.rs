@@ -129,6 +129,15 @@ impl Database {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Une lecture de plus, comptée au lancement du morceau comme dans la v0.1.
+    pub fn record_play(&self, track_id: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE tracks SET play_count = play_count + 1, last_played_at = datetime('now') WHERE id = ?1",
+            [track_id],
+        )?;
+        Ok(())
+    }
+
     /// Date UTC décalée depuis maintenant, au format des colonnes `*_at` ;
     /// `modifier` suit la syntaxe SQLite, par exemple `"-14 days"`.
     pub fn datetime_from_now(&self, modifier: &str) -> Result<String> {

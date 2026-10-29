@@ -233,3 +233,9 @@ msgstr "« {0} » n'est pas une base AudioPlayer."
 
 msgid "Could not use “{0}”: {1}"
 msgstr "Impossible d'utiliser « {0} » : {1}"
+
+msgid "Cannot play “{0}”: {1}"
+msgstr "Impossible de lire « {0} » : {1}"
+
+msgid "No audio output: {0}"
+msgstr "Aucune sortie audio : {0}"

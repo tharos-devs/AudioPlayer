@@ -1,0 +1,10 @@
+[package]
+name = "audioplayer-audio"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rodio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
