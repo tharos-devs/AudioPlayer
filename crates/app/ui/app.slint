@@ -115,6 +115,7 @@ export component AppWindow inherits Window {
     callback previous();
     callback next();
     callback seek(float);
+    callback seek-by(int);
     callback track-action(int, string);
     callback drop-on-playlist(int, data-transfer);
     pure callback track-payload(int) -> data-transfer;
@@ -199,15 +200,64 @@ export component AppWindow inherits Window {
         // Cmd/Ctrl+F affiche la recherche, comme la v0.1. Minuscule exprès : à chaque
         // redimensionnement, Slint fait défiler les listes pour montrer l'élément focalisé,
         // et un FocusScope couvrant tout le contenu zoomé décalait la liste des morceaux.
+        //
+        // Flèches gauche/droite, comme la v0.1 : appui bref = morceau précédent/suivant ;
+        // maintenues plus de 300ms = recul/avance d'une seconde toutes les 100ms.
         keys := FocusScope {
             x: 0;
             y: 0;
             width: 1px;
             height: 1px;
+            property <int> held: 0;
+            property <bool> seeking;
+
+            hold := Timer {
+                interval: 300ms;
+                running: false;
+                triggered => {
+                    self.running = false;
+                    keys.seeking = true;
+                    root.seek-by(keys.held);
+                    repeat.running = true;
+                }
+            }
+            repeat := Timer {
+                interval: 100ms;
+                running: false;
+                triggered => {
+                    root.seek-by(keys.held);
+                }
+            }
+
             key-pressed(event) => {
                 if (event.modifiers.meta || event.modifiers.control) && (event.text == "f" || event.text == "F") {
                     root.search-visible = true;
                     control-bar.focus-search();
+                    return accept;
+                }
+                if event.text == Key.LeftArrow || event.text == Key.RightArrow {
+                    // Les répétitions automatiques du clavier ne relancent rien.
+                    if self.held == 0 {
+                        self.held = event.text == Key.LeftArrow ? -1 : 1;
+                        self.seeking = false;
+                        hold.running = true;
+                    }
+                    return accept;
+                }
+                return reject;
+            }
+            key-released(event) => {
+                if (event.text == Key.LeftArrow || event.text == Key.RightArrow) && self.held != 0 {
+                    hold.running = false;
+                    repeat.running = false;
+                    if !self.seeking {
+                        if self.held < 0 {
+                            root.previous();
+                        } else {
+                            root.next();
+                        }
+                    }
+                    self.held = 0;
                     return accept;
                 }
                 return reject;

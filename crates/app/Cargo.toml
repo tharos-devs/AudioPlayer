@@ -12,6 +12,7 @@ dirs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rfd.workspace = true
+souvlaki.workspace = true
 
 [build-dependencies]
 slint-build.workspace = true

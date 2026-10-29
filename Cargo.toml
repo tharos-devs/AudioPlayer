@@ -18,6 +18,7 @@ dirs = "7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rfd = "0.17"
+souvlaki = "0.9"
 rodio = { version = "0.23", default-features = false, features = ["playback", "symphonia-all"] }
 
 # Les dépendances (décodage d'images, SQLite, rendu) restent optimisées même en debug.

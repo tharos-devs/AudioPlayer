@@ -4,6 +4,7 @@
 mod covers;
 mod library;
 mod location;
+mod media;
 mod settings;
 
 use std::cell::RefCell;
@@ -87,6 +88,10 @@ struct App {
     sent_equalizer: Option<(bool, [f32; 7])>,
     failures: u32,
     rng: u64,
+    media: media::SystemMedia,
+    // Ce que le système affiche déjà : morceau, et état publié avec son heure.
+    published_track: Option<(usize, usize)>,
+    published_state: Option<(bool, i32, std::time::Instant)>,
     status_timer: Timer,
 }
 
@@ -126,6 +131,9 @@ impl App {
             sent_volume: None,
             sent_equalizer: None,
             failures: 0,
+            media: media::SystemMedia::new(),
+            published_track: None,
+            published_state: None,
             rng: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0x5eed, |d| d.as_nanos() as u64) | 1,
             status_timer: Timer::default(),
         };
@@ -734,6 +742,15 @@ impl App {
         }
     }
 
+    // Flèches maintenues et touches d'avance rapide : déplacement relatif, en secondes.
+    fn seek_by(&mut self, ui: &AppWindow, seconds: i32) {
+        let Some(duration) = self.now_track().map(|(_, t)| t.duration) else { return };
+        if duration > 0 {
+            let target = (self.position + seconds).clamp(0, duration);
+            self.seek(ui, target as f32 / duration as f32);
+        }
+    }
+
     fn seek(&mut self, ui: &AppWindow, ratio: f32) {
         let Some(duration) = self.now_track().map(|(_, t)| t.duration) else { return };
         let target = ratio.clamp(0.0, 1.0) * duration as f32;
@@ -780,7 +797,68 @@ impl App {
         }
     }
 
+    fn handle_media_commands(&mut self, ui: &AppWindow) {
+        use souvlaki::MediaControlEvent as Command;
+        for command in self.media.commands() {
+            match command {
+                Command::Toggle => self.toggle_play(ui),
+                Command::Play if !self.is_playing => self.toggle_play(ui),
+                Command::Pause | Command::Stop if self.is_playing => self.toggle_play(ui),
+                Command::Next => self.step(ui, 1),
+                Command::Previous => self.step(ui, -1),
+                Command::Seek(direction) => self.seek_by(ui, if direction == media::SeekDirection::Forward { 5 } else { -5 }),
+                Command::SeekBy(direction, amount) => {
+                    let seconds = amount.as_secs() as i32;
+                    self.seek_by(ui, if direction == media::SeekDirection::Forward { seconds } else { -seconds });
+                }
+                Command::SetPosition(souvlaki::MediaPosition(position)) => {
+                    let duration = self.now_track().map_or(0, |(_, t)| t.duration);
+                    if duration > 0 {
+                        self.seek(ui, position.as_secs_f32() / duration as f32);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Tient le système au courant : morceau (titre, pochette) et lecture/pause avec la position.
+    // La position n'est republiée qu'après un saut : le système l'extrapole entre-temps.
+    fn publish(&mut self) {
+        let key = self.now.as_ref().map(|now| (now.library, now.track));
+        if key != self.published_track {
+            let artwork = self.now_track().and_then(|(lib, t)| self.db.artwork(lib.albums[t.album].id, 600).ok().flatten());
+            let details = self.now_track().map(|(lib, t)| {
+                let album = &lib.albums[t.album];
+                (t.title.clone(), lib.artists[t.artist].name.clone(), album.title.clone(), t.duration)
+            });
+            let info = details.as_ref().map(|(title, artist, album, duration)| media::NowPlayingInfo {
+                title,
+                artist,
+                album,
+                duration: Duration::from_secs((*duration).max(0) as u64),
+                artwork: artwork.as_ref().map(|a| a.data.as_slice()),
+            });
+            self.media.set_track(info);
+            self.published_track = key;
+            self.published_state = None;
+        }
+        if key.is_none() {
+            return;
+        }
+        let expected = self.published_state.map(|(playing, position, at)| {
+            let elapsed = if playing { at.elapsed().as_secs() as i32 } else { 0 };
+            (playing, position + elapsed)
+        });
+        let drifted = expected.is_none_or(|(playing, position)| playing != self.is_playing || (position - self.position).abs() > 2);
+        if drifted {
+            self.media.set_state(self.is_playing, Duration::from_secs(self.position.max(0) as u64));
+            self.published_state = Some((self.is_playing, self.position, std::time::Instant::now()));
+        }
+    }
+
     fn tick(&mut self, ui: &AppWindow) {
+        self.handle_media_commands(ui);
         self.sync_controls(ui);
         for event in self.engine.events() {
             match event {
@@ -823,6 +901,7 @@ impl App {
             self.position = self.engine.position().as_secs() as i32;
             self.refresh_position(ui);
         }
+        self.publish();
     }
 
     // Message temporaire dans la barre d'état, effacé après quelques secondes.
@@ -1144,6 +1223,8 @@ fn launch(path: &Path) -> Result<(), Problem> {
     ui.on_next(move || c.update(|app, ui| app.step(ui, 1)));
     let c = ctx.clone();
     ui.on_seek(move |ratio| c.update(|app, ui| app.seek(ui, ratio)));
+    let c = ctx.clone();
+    ui.on_seek_by(move |seconds| c.update(|app, ui| app.seek_by(ui, seconds)));
     let c = ctx.clone();
     ui.on_track_action(move |id, action| c.update(|app, ui| app.track_action(ui, id, &action)));
     let c = ctx.clone();
