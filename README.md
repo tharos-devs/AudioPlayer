@@ -23,6 +23,16 @@ une base* change de base en cours de route.
 
 `AUDIOPLAYER_DB=/chemin/base.db` impose une base pour un essai, sans rien enregistrer.
 
+### Application macOS
+
+```bash
+./packaging/macos/bundle.sh          # construit target/release/bundle/AudioPlayer.app
+cp -R target/release/bundle/AudioPlayer.app /Applications/
+```
+
+L'app est signée localement (ad hoc) : suffisant sur ce Mac ; une distribution à d'autres
+demandera un certificat de développeur Apple et la notarisation.
+
 En ligne de commande, l'import de la v0.1 existe aussi :
 
 ```bash

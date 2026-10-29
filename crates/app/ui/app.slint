@@ -26,6 +26,8 @@ export struct Status {
 
 export component AppWindow inherits Window {
     title: "AudioPlayer";
+    // Barre des tâches sous Windows et Linux ; sur macOS, l'icône vient du paquet .app.
+    icon: @image-url("icons/app.png");
     preferred-width: 1360px;
     preferred-height: 820px;
     min-width: 900px;
