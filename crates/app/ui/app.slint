@@ -110,6 +110,8 @@ export component AppWindow inherits Window {
     pure callback is-track-payload(data-transfer) -> bool;
     callback select-language(string);
     in-out property <string> language: "en";
+    // Faux tant que le zoom n'est pas appliqué : évite une première image à la mauvaise taille.
+    in property <bool> ready;
 
     function toggle-theme() {
         Theme.dark = !Theme.dark;
@@ -354,5 +356,10 @@ export component AppWindow inherits Window {
                 }
             }
         }
+    }
+
+    if !root.ready: Rectangle {
+        background: Theme.bg-primary;
+        TouchArea { }
     }
 }

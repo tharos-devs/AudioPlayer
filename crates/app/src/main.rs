@@ -756,6 +756,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Timer::single_shot(Duration::ZERO, move || {
         if let Some(ui) = w.upgrade() {
             z.attach(&ui);
+            ui.set_ready(true);
         }
     });
 
