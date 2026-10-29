@@ -8,6 +8,7 @@ use audioplayer_db::Database;
 pub struct Artist {
     pub name: String,
     pub sort_key: String,
+    pub is_favorite: bool,
 }
 
 pub struct Album {
@@ -18,6 +19,7 @@ pub struct Album {
     pub year: i32,
     pub total_discs: i32,
     pub has_artwork: bool,
+    pub is_favorite: bool,
 }
 
 pub struct Track {
@@ -29,6 +31,10 @@ pub struct Track {
     pub title: String,
     pub sort_key: String,
     pub duration: i32,
+    pub play_count: u32,
+    pub is_favorite: bool,
+    // Texte UTC « AAAA-MM-JJ HH:MM:SS » : se compare comme une chaîne.
+    pub added_at: String,
 }
 
 #[derive(Default)]
@@ -46,7 +52,11 @@ impl Library {
         let mut artist_index = HashMap::new();
         for artist in db.artists(library_id)? {
             artist_index.insert(artist.id, library.artists.len());
-            library.artists.push(Artist { sort_key: sort_key(&artist.name), name: artist.name });
+            library.artists.push(Artist {
+                sort_key: sort_key(&artist.name),
+                name: artist.name,
+                is_favorite: artist.is_favorite,
+            });
         }
 
         let mut album_index = HashMap::new();
@@ -61,6 +71,7 @@ impl Library {
                 year: album.year.unwrap_or(0),
                 total_discs: album.disc_count as i32,
                 has_artwork: album.has_artwork,
+                is_favorite: album.is_favorite,
             });
         }
 
@@ -79,6 +90,9 @@ impl Library {
                 sort_key: sort_key(&track.title),
                 title: track.title,
                 duration: ((track.duration_ms + 500) / 1000) as i32,
+                play_count: track.play_count,
+                is_favorite: track.is_favorite,
+                added_at: track.added_at,
             });
         }
         Ok(library)

@@ -1,0 +1,409 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { ListItem } from "widgets.slint";
+import { Equalizer } from "equalizer.slint";
+
+// Ce que montrent les panneaux Artistes / Albums / Morceaux.
+export enum View { library, recent, most-played, favorite-artists, favorite-albums, favorite-tracks, playlist }
+
+// Bouton Element Plus `size="small"` : 24px de haut, rayon 3px.
+export component SmallButton inherits Rectangle {
+    in property <image> icon;
+    in property <bool> active;
+    callback clicked();
+    height: 24px;
+    width: 36px;
+    border-radius: 3px;
+    border-width: 1px;
+    border-color: touch.has-hover && !root.active ? Theme.accent : Theme.button-border;
+    background: root.active ? Theme.tint : touch.has-hover ? Theme.hover-tint : Theme.button-bg;
+
+    Image {
+        source: root.icon;
+        width: 12px;
+        height: 12px;
+        colorize: root.active ? Theme.accent-dark-2 : touch.has-hover ? Theme.accent : Theme.button-text;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component SectionTitle inherits HorizontalLayout {
+    in property <string> title;
+    in property <bool> addable;
+    callback add();
+    height: 24px;
+
+    Text {
+        text: root.title.to-uppercase();
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        color: Theme.library-text;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+    }
+    if root.addable: SmallButton {
+        icon: @image-url("icons/ep-plus.svg");
+        clicked => {
+            root.add();
+        }
+    }
+}
+
+// Ligne bibliothèque ou playlist : bouton dossier + nom (+ compteur).
+component FolderRow inherits Rectangle {
+    in property <string> label;
+    in property <string> count;
+    in property <bool> selected;
+    in property <length> label-size: 11px;
+    callback clicked();
+    height: 24px;
+    border-radius: 3px;
+    background: touch.has-hover ? Theme.tree-hover : transparent;
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 2px;
+        SmallButton {
+            width: 24px;
+            icon: root.selected ? @image-url("icons/ep-folder-opened.svg") : @image-url("icons/ep-folder.svg");
+            active: root.selected;
+            clicked => {
+                root.clicked();
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            border-radius: 3px;
+            background: root.selected ? Theme.tint : transparent;
+            HorizontalLayout {
+                padding-left: 4px;
+                padding-right: 4px;
+                spacing: 4px;
+                Text {
+                    text: root.label;
+                    font-size: root.label-size;
+                    color: root.selected ? Theme.accent-dark-2 : Theme.tree-text;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                if root.count != "": Text {
+                    text: "(" + root.count + ")";
+                    font-size: 11px;
+                    color: root.selected ? Theme.accent-dark-2 : Theme.tree-text;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+// Entrée « intelligente » (récents, plus écoutés, favoris).
+component SmartRow inherits Rectangle {
+    in property <string> label;
+    in property <string> count;
+    in property <bool> selected;
+    in property <bool> configurable;
+    callback clicked();
+    callback configure();
+    height: 22px;
+    border-radius: 4px;
+    background: root.selected ? (touch.has-hover ? Theme.tint-strong : Theme.tint) : touch.has-hover ? Theme.tree-hover : transparent;
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    HorizontalLayout {
+        Text {
+            text: root.label;
+            font-size: 12px;
+            font-weight: root.configurable ? 500 : 400;
+            color: root.selected ? Theme.accent-dark-2 : root.configurable ? Theme.library-text : Theme.tree-text;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if root.count != "": Text {
+            text: "(" + root.count + ")";
+            font-size: 11px;
+            color: Theme.tree-info;
+            vertical-alignment: center;
+        }
+        if root.configurable: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                border-radius: 3px;
+                background: gear.has-hover ? Theme.hover-tint : transparent;
+                Image {
+                    source: @image-url("icons/ep-setting.svg");
+                    width: 12px;
+                    height: 12px;
+                    colorize: Theme.library-text;
+                }
+                gear := TouchArea {
+                    clicked => {
+                        root.configure();
+                    }
+                }
+            }
+        }
+        Rectangle {
+            width: 2px;
+        }
+    }
+}
+
+component LetterGrid inherits VerticalLayout {
+    in property <string> selected;
+    callback select(string);
+    property <[string]> letters: ["*", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+        "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "#"];
+    spacing: 2px;
+
+    for row in 4: HorizontalLayout {
+        spacing: 2px;
+        for column in 7: Rectangle {
+            property <string> letter: root.letters[row * 7 + column];
+            property <bool> active: self.letter == root.selected;
+            horizontal-stretch: 1;
+            height: 19px;
+            border-radius: 2px;
+            background: self.active ? Theme.accent : cell.has-hover ? Theme.library-button-bg : transparent;
+            Text {
+                text: parent.letter;
+                font-size: 11px;
+                font-weight: 500;
+                color: parent.active ? Theme.on-accent : Theme.library-text;
+            }
+            cell := TouchArea {
+                clicked => {
+                    root.select(parent.letter);
+                }
+            }
+        }
+    }
+}
+
+// Pastilles de couleur d'accent, épinglées en bas de la barre latérale.
+component AccentPicker inherits Rectangle {
+    callback picked(string);
+    height: 24px;
+    vertical-stretch: 0;
+    background: Theme.sidebar-bg;
+
+    Rectangle {
+        y: 0;
+        height: 1px;
+        background: Theme.border;
+    }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 7px;
+        alignment: center;
+
+        for accent in Theme.accents: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                property <bool> current: Theme.accent-id == accent.id;
+                width: 11px;
+                height: 11px;
+                border-radius: 5.5px;
+                background: accent.value;
+                border-width: self.current ? 1.5px : 0px;
+                border-color: Theme.text-primary;
+                drop-shadow-blur: swatch.has-hover && !self.current ? 1.5px : 0px;
+                drop-shadow-color: Theme.border-base;
+                // Agrandi au survol (×1.25) ou quand il est actif (×1.2).
+                transform-scale: swatch.has-hover ? 1.25 : self.current ? 1.2 : 1;
+                animate transform-scale { duration: 150ms; }
+
+                swatch := TouchArea {
+                    clicked => {
+                        Theme.accent-id = accent.id;
+                        Theme.accent = accent.value;
+                        root.picked(accent.id);
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component Sidebar inherits Rectangle {
+    in property <[ListItem]> libraries;
+    in property <int> selected-library;
+    in property <[ListItem]> playlists;
+    in property <int> selected-playlist;
+    in property <View> view;
+    in property <string> letter;
+    in property <int> recent-amount: 2;
+    in property <string> recent-unit: "weeks";
+    in property <int> most-played-count;
+    in property <int> favorite-artists-count;
+    in property <int> favorite-albums-count;
+    in property <int> favorite-tracks-count;
+    in property <bool> show-equalizer;
+    callback select-letter(string);
+    callback select-library(int);
+    callback select-view(View);
+    callback select-playlist(int);
+    pure callback accepts(data-transfer) -> bool;
+    callback drop-on-playlist(int, data-transfer);
+
+    width: 180px;
+    background: Theme.sidebar-bg;
+
+    // « Added last 2 weeks », au singulier pour une seule unité.
+    property <string> recent-label: root.recent-amount == 1
+        ? (root.recent-unit == "days" ? @tr("Added last day")
+            : root.recent-unit == "months" ? @tr("Added last month")
+            : root.recent-unit == "years" ? @tr("Added last year") : @tr("Added last week"))
+        : (root.recent-unit == "days" ? @tr("Added last {0} days", root.recent-amount)
+            : root.recent-unit == "months" ? @tr("Added last {0} months", root.recent-amount)
+            : root.recent-unit == "years" ? @tr("Added last {0} years", root.recent-amount)
+            : @tr("Added last {0} weeks", root.recent-amount));
+
+    VerticalLayout {
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 0px;
+
+                Text {
+                    text: @tr("Artists by letter").to-uppercase();
+                    font-size: 11px;
+                    font-weight: 600;
+                    letter-spacing: 0.5px;
+                    color: Theme.library-text;
+                }
+                Rectangle {
+                    height: 6px;
+                }
+                LetterGrid {
+                    selected: root.letter;
+                    select(letter) => {
+                        root.select-letter(letter);
+                    }
+                }
+                Rectangle {
+                    height: 24px;
+                }
+
+                SectionTitle {
+                    title: @tr("Libraries");
+                    addable: true;
+                }
+                Rectangle {
+                    height: 6px;
+                }
+                for library in root.libraries: VerticalLayout {
+                    padding-bottom: 1px;
+                    FolderRow {
+                        label: library.label;
+                        selected: library.id == root.selected-library && root.view == View.library;
+                        clicked => {
+                            root.select-library(library.id);
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 10px;
+                }
+
+                SmartRow {
+                    label: root.recent-label;
+                    configurable: true;
+                    selected: root.view == View.recent;
+                    clicked => {
+                        root.select-view(View.recent);
+                    }
+                }
+                for entry in [
+                    { view: View.most-played, label: @tr("Most Played"), count: root.most-played-count },
+                    { view: View.favorite-artists, label: @tr("Artists favorites"), count: root.favorite-artists-count },
+                    { view: View.favorite-albums, label: @tr("Albums favorites"), count: root.favorite-albums-count },
+                    { view: View.favorite-tracks, label: @tr("Tracks favorites"), count: root.favorite-tracks-count },
+                ]: VerticalLayout {
+                    padding-top: 2px;
+                    padding-bottom: 2px;
+                    SmartRow {
+                        label: entry.label;
+                        count: entry.count;
+                        selected: root.view == entry.view;
+                        clicked => {
+                            root.select-view(entry.view);
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 10px;
+                }
+
+                SectionTitle {
+                    title: @tr("Playlists");
+                    addable: true;
+                }
+                Rectangle {
+                    height: 6px;
+                }
+                for playlist in root.playlists: VerticalLayout {
+                    padding-bottom: 1px;
+                    drop := DropArea {
+                        can-drop(event) => {
+                            return root.accepts(event.data) ? DragAction.copy : DragAction.none;
+                        }
+                        dropped(event) => {
+                            root.drop-on-playlist(playlist.id, event.data);
+                            return event.proposed-action;
+                        }
+                        Rectangle {
+                            border-radius: 3px;
+                            border-width: drop.has-drag ? 1px : 0px;
+                            border-color: Theme.accent;
+                            FolderRow {
+                                label: playlist.label;
+                                count: playlist.count;
+                                label-size: 13px;
+                                selected: playlist.id == root.selected-playlist && root.view == View.playlist;
+                                clicked => {
+                                    root.select-playlist(playlist.id);
+                                }
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+            }
+        }
+
+        if root.show-equalizer: Equalizer { }
+        AccentPicker { }
+    }
+
+    Rectangle {
+        x: parent.width - 1px;
+        width: 1px;
+        background: Theme.sidebar-border;
+    }
+}

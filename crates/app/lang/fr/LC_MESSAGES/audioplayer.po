@@ -122,3 +122,63 @@ msgid "{n} artist"
 msgid_plural "{n} artists"
 msgstr[0] "{n} artiste"
 msgstr[1] "{n} artistes"
+
+msgid "Artists by letter"
+msgstr "Artistes par lettre"
+
+msgid "Added last day"
+msgstr "Ajoutés depuis un jour"
+
+msgid "Added last week"
+msgstr "Ajoutés depuis une semaine"
+
+msgid "Added last month"
+msgstr "Ajoutés depuis un mois"
+
+msgid "Added last year"
+msgstr "Ajoutés depuis un an"
+
+msgid "Added last {0} days"
+msgstr "Ajoutés depuis {0} jours"
+
+msgid "Added last {0} weeks"
+msgstr "Ajoutés depuis {0} semaines"
+
+msgid "Added last {0} months"
+msgstr "Ajoutés depuis {0} mois"
+
+msgid "Added last {0} years"
+msgstr "Ajoutés depuis {0} ans"
+
+msgid "Most Played"
+msgstr "Les plus écoutés"
+
+msgid "Artists favorites"
+msgstr "Artistes favoris"
+
+msgid "Albums favorites"
+msgstr "Albums favoris"
+
+msgid "Tracks favorites"
+msgstr "Morceaux favoris"
+
+msgid "reset"
+msgstr "réinitialiser"
+
+msgid "Search..."
+msgstr "Rechercher…"
+
+msgid "Library: {0}"
+msgstr "Bibliothèque : {0}"
+
+msgid "Playlist: Last added"
+msgstr "Playlist : derniers ajouts"
+
+msgid "Playlist: {0}"
+msgstr "Playlist : {0}"
+
+msgid "No library selected"
+msgstr "Aucune bibliothèque sélectionnée"
+
+msgid "Zoom"
+msgstr "Zoom"

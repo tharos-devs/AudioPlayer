@@ -43,6 +43,7 @@ pub struct Track {
     pub file_path: String,
     pub play_count: u32,
     pub is_favorite: bool,
+    pub added_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -103,7 +104,7 @@ impl Database {
     pub fn tracks(&self, library_id: i64) -> Result<Vec<Track>> {
         let mut stmt = self.conn.prepare(
             "SELECT t.id, t.album_id, t.artist_id, t.title, t.disc_number, t.track_number,
-                    t.duration_ms, t.file_path, t.play_count, t.favorited_at IS NOT NULL
+                    t.duration_ms, t.file_path, t.play_count, t.favorited_at IS NOT NULL, t.added_at
              FROM tracks t
              JOIN albums al ON al.id = t.album_id
              WHERE al.library_id = ?1
@@ -122,9 +123,16 @@ impl Database {
                 file_path: row.get(7)?,
                 play_count: row.get(8)?,
                 is_favorite: row.get(9)?,
+                added_at: row.get(10)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Date UTC décalée depuis maintenant, au format des colonnes `*_at` ;
+    /// `modifier` suit la syntaxe SQLite, par exemple `"-14 days"`.
+    pub fn datetime_from_now(&self, modifier: &str) -> Result<String> {
+        Ok(self.conn.query_row("SELECT datetime('now', ?1)", [modifier], |row| row.get(0))?)
     }
 
     /// La plus petite pochette d'au moins `min_size` pixels, sinon la plus grande disponible.

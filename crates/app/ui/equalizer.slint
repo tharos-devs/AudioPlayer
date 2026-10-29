@@ -1,0 +1,281 @@
+import { Theme } from "theme.slint";
+
+export struct EqualizerPreset {
+    name: string,
+    gains: [float],
+}
+
+// Réglages de l'égaliseur ; Rust les lira pour la chaîne audio.
+export global EqualizerState {
+    in-out property <bool> enabled: false;
+    in-out property <string> preset: "Custom";
+    in-out property <[float]> gains: [0, 0, 0, 0, 0, 0, 0];
+    out property <[int]> frequencies: [60, 170, 310, 600, 1000, 3000, 6000];
+    out property <[EqualizerPreset]> presets: [
+        { name: "Flat", gains: [0, 0, 0, 0, 0, 0, 0] },
+        { name: "Rock", gains: [3, 1, -1, 1, 2, 4, 3] },
+        { name: "Pop", gains: [2, 1, -1, 0, 2, 3, 2] },
+        { name: "Jazz", gains: [2, 1, 1, -1, 0, 1, 2] },
+        { name: "Classical", gains: [3, -1, -2, 0, 2, 3, 2] },
+        { name: "Electronic", gains: [4, 1, -2, 2, 1, 2, 3] },
+        { name: "Hip Hop", gains: [4, 2, -1, 1, 2, 3, 2] },
+        { name: "Acoustic", gains: [3, 1, 0, 1, 2, 2, 1] },
+    ];
+}
+
+// Dans la v0.1, l'égaliseur multiplie encore ses tailles par le zoom (0.9 à « 100 % »).
+global Eq {
+    out property <float> k: 0.9;
+}
+
+component Switch inherits Rectangle {
+    in-out property <bool> checked;
+    width: 30px;
+    height: 16px;
+    border-radius: 8px;
+    background: root.checked ? Theme.accent : Theme.eq-border;
+    animate background { duration: 150ms; }
+
+    Rectangle {
+        x: root.checked ? parent.width - self.width - 2px : 2px;
+        y: 2px;
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        background: #ffffff;
+        animate x { duration: 150ms; }
+    }
+    TouchArea {
+        clicked => {
+            root.checked = !root.checked;
+        }
+    }
+}
+
+component VerticalSlider inherits Rectangle {
+    in-out property <float> value;
+    in property <float> minimum: -12;
+    in property <float> maximum: 12;
+    in property <float> step: 0.5;
+    callback edited(float);
+    property <length> knob: 14px * Eq.k;
+    // Le rail s'arrête 10px avant le bas, comme `bottom: 10px` dans la v0.1.
+    property <length> rail: root.height - 10px;
+    property <float> ratio: (root.value - root.minimum) / (root.maximum - root.minimum);
+    width: max(self.knob, 6px * Eq.k);
+
+    Rectangle {
+        y: 0;
+        width: 6px * Eq.k;
+        height: root.rail;
+        border-radius: 3px;
+        background: Theme.eq-runway;
+    }
+    Rectangle {
+        y: root.rail * (1 - root.ratio);
+        width: 6px * Eq.k;
+        height: root.rail * root.ratio;
+        border-radius: 3px;
+        background: Theme.accent;
+    }
+    Rectangle {
+        y: root.rail * (1 - root.ratio) - root.knob / 2;
+        width: root.knob;
+        height: root.knob;
+        border-radius: root.knob / 2;
+        background: Theme.accent;
+        border-width: 2px;
+        border-color: Theme.eq-knob-border;
+        drop-shadow-offset-y: 1px;
+        drop-shadow-blur: 3px;
+        drop-shadow-color: Theme.dark ? #00000066 : #00000033;
+    }
+
+    function set-from(y: length) {
+        let raw = root.maximum - clamp(y / root.rail, 0, 1) * (root.maximum - root.minimum);
+        let stepped = round(raw / root.step) * root.step;
+        if stepped != root.value {
+            root.value = stepped;
+            root.edited(stepped);
+        }
+    }
+
+    TouchArea {
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                root.set-from(self.mouse-y);
+            }
+        }
+        moved => {
+            if self.pressed {
+                root.set-from(self.mouse-y);
+            }
+        }
+    }
+}
+
+export component Equalizer inherits Rectangle {
+    background: Theme.footer-bg;
+    // Hauteur naturelle : la liste défilante au-dessus prend le reste.
+    vertical-stretch: 0;
+
+    function format-gain(gain: float) -> string {
+        return (gain >= 0 ? "+" : "") + gain;
+    }
+    function format-frequency(hz: int) -> string {
+        return hz >= 1000 ? (hz / 1000) + "k" : hz;
+    }
+
+    Rectangle {
+        y: 0;
+        height: 1px;
+        background: Theme.footer-divider;
+    }
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 6px * Eq.k;
+
+        HorizontalLayout {
+            spacing: 6px * Eq.k;
+            alignment: space-between;
+
+            preset-button := Rectangle {
+                width: 130px;
+                height: 24px * Eq.k;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: preset-touch.has-hover ? Theme.eq-border-hover : Theme.eq-border;
+                background: Theme.eq-bg;
+                HorizontalLayout {
+                    padding-left: 8px * Eq.k;
+                    padding-right: 8px * Eq.k;
+                    Text {
+                        text: EqualizerState.preset;
+                        font-size: 11px * Eq.k;
+                        color: Theme.eq-text;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: "▼";
+                        font-size: 8px * Eq.k;
+                        color: Theme.text-disabled;
+                        vertical-alignment: center;
+                    }
+                }
+                preset-touch := TouchArea {
+                    clicked => {
+                        presets-popup.show();
+                    }
+                }
+                presets-popup := PopupWindow {
+                    y: parent.height + 2px * Eq.k;
+                    width: parent.width;
+                    Rectangle {
+                        background: Theme.eq-bg;
+                        border-radius: 4px;
+                        border-width: 1px;
+                        border-color: Theme.eq-dropdown-border;
+                        drop-shadow-blur: 8px;
+                        drop-shadow-color: #0000004d;
+                        VerticalLayout {
+                            padding-top: 4px;
+                            padding-bottom: 4px;
+                            for preset in EqualizerState.presets: option := Rectangle {
+                                property <bool> current: preset.name == EqualizerState.preset;
+                                height: 24px * Eq.k;
+                                background: self.current ? Theme.tint : item.has-hover ? Theme.eq-dropdown-hover : transparent;
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    Text {
+                                        text: preset.name;
+                                        font-size: 11px;
+                                        font-weight: option.current ? 500 : 400;
+                                        color: option.current || item.has-hover ? Theme.accent : Theme.eq-text;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                item := TouchArea {
+                                    clicked => {
+                                        EqualizerState.preset = preset.name;
+                                        // Copie : modifier une bande ne doit pas toucher le préréglage.
+                                        EqualizerState.gains = [preset.gains[0], preset.gains[1], preset.gains[2],
+                                            preset.gains[3], preset.gains[4], preset.gains[5], preset.gains[6]];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Switch {
+                    checked <=> EqualizerState.enabled;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px * Eq.k;
+            for frequency[band] in EqualizerState.frequencies: VerticalLayout {
+                // Les marges latérales (4px) disparaissent en flex, faute de place à 180px.
+                horizontal-stretch: 1;
+                alignment: end;
+                Text {
+                    text: root.format-gain(EqualizerState.gains[band]);
+                    font-size: 9px * Eq.k;
+                    color: Theme.eq-label;
+                    horizontal-alignment: center;
+                }
+                Rectangle {
+                    height: 12px * Eq.k + 8px;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    VerticalSlider {
+                        height: 90px;
+                        value: EqualizerState.gains[band];
+                        edited(gain) => {
+                            EqualizerState.gains[band] = gain;
+                            EqualizerState.preset = "Custom";
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 8px;
+                }
+                Text {
+                    text: root.format-frequency(frequency);
+                    font-size: 8px * Eq.k;
+                    color: Theme.status-label;
+                    horizontal-alignment: center;
+                    wrap: no-wrap;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            VerticalLayout {
+                spacing: 0px;
+                reset := Text {
+                    text: @tr("reset");
+                    font-size: 13px * Eq.k;
+                    color: reset-touch.has-hover ? Theme.accent-light-3 : Theme.accent;
+                    reset-touch := TouchArea {
+                        clicked => {
+                            EqualizerState.preset = "Flat";
+                            EqualizerState.gains = [0, 0, 0, 0, 0, 0, 0];
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 1px;
+                    background: reset.color;
+                }
+            }
+        }
+    }
+}

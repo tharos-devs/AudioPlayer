@@ -5,11 +5,13 @@ export struct AccentColor {
 }
 
 // Toutes les nuances dérivent de `dark` et `accent` : changer l'un des deux
-// suffit à re-thémer toute l'interface. Valeurs reprises de la v0.1.
+// suffit à re-thémer toute l'interface. Valeurs reprises des fichiers
+// *-theme.css de la v0.1 ; les tailles des .slint sont les px CSS d'origine,
+// le zoom global (voir zoom.rs) s'applique par-dessus.
 export global Theme {
     in-out property <bool> dark: true;
-    in-out property <string> accent-id: "blue";
-    in-out property <color> accent: #409eff;
+    in-out property <string> accent-id: "amber";
+    in-out property <color> accent: #c8961e;
 
     out property <[AccentColor]> accents: [
         { id: "rose", label: @tr("Rose"), value: #e85d75 },
@@ -21,6 +23,13 @@ export global Theme {
         { id: "purple", label: @tr("Purple"), value: #9952c0 },
     ];
 
+    // Dérivés de l'accent, calculés comme useAccentColor.js.
+    out property <color> accent-dark-2: accent.mix(#000000, 0.8);
+    out property <color> accent-light-3: accent.mix(#ffffff, 0.7);
+    out property <color> tint: accent.with-alpha(0.15);
+    out property <color> tint-strong: accent.with-alpha(0.25);
+    out property <color> hover-tint: accent.with-alpha(0.1);
+
     out property <color> bg-primary: dark ? #141414 : #ffffff;
     out property <color> bg-secondary: dark ? #1d1d1d : #f5f7fa;
     out property <color> bg-tertiary: dark ? #262626 : #e4e7ed;
@@ -29,6 +38,10 @@ export global Theme {
     out property <color> text-primary: dark ? #e5eaf3 : #303133;
     out property <color> text-secondary: dark ? #cfd3dc : #606266;
     out property <color> text-tertiary: dark ? #a3a6ad : #909399;
+    out property <color> text-disabled: dark ? #6c6e72 : #c0c4cc;
+    out property <color> text-inverse: dark ? #141414 : #ffffff;
+    // --app-white : texte posé sur l'accent.
+    out property <color> on-accent: dark ? #e5eaf3 : #ffffff;
 
     out property <color> border: dark ? #333333 : #ebeef5;
     out property <color> border-base: dark ? #404040 : #dcdfe6;
@@ -37,6 +50,61 @@ export global Theme {
     out property <color> group-bg: dark ? #303133 : #f4f4f5;
     out property <color> placeholder-bg: dark ? #262626 : #f0f0f0;
     out property <color> artwork-shadow: dark ? #0000004d : #0000001a;
+
+    // Barre latérale (--app-panel-1-*, --library-*)
+    out property <color> sidebar-bg: dark ? #1d1d1d : #f0f0f0;
+    out property <color> sidebar-border: dark ? #333333 : #e0e0e0;
+    out property <color> library-text: dark ? #cfd3dc : #666666;
+    out property <color> library-button-bg: dark ? #333333 : #e0e0e0;
+    out property <color> tree-text: dark ? #e5eaf3 : #333333;
+    out property <color> tree-hover: dark ? #262626 : #e8e8e8;
+    out property <color> tree-info: dark ? #a3a6ad : #888888;
+    out property <color> footer-divider: dark ? #333333 : #e4e7ed;
+    out property <color> footer-bg: dark ? #1d1d1d : #f8f9fa;
+    // Bouton Element Plus « small » : gris foncé en sombre, blanc bordé en clair.
+    out property <color> button-bg: dark ? #333333 : #ffffff;
+    out property <color> button-border: dark ? #404040 : #dcdfe6;
+    out property <color> button-text: dark ? #e5eaf3 : #606266;
+
+    // Égaliseur (--eq-*)
+    out property <color> eq-border: dark ? #404040 : #dcdfe6;
+    out property <color> eq-border-hover: dark ? #4d4d4d : #c0c4cc;
+    out property <color> eq-bg: dark ? #1d1d1d : #ffffff;
+    out property <color> eq-text: dark ? #cfd3dc : #606266;
+    out property <color> eq-label: dark ? #cfd3dc : #666666;
+    out property <color> eq-runway: dark ? #404040 : #e4e7ed;
+    out property <color> eq-knob-border: dark ? #141414 : #ffffff;
+    out property <color> eq-dropdown-hover: dark ? #262626 : #f5f7fa;
+    out property <color> eq-dropdown-border: dark ? #333333 : #e4e7ed;
+
+    // Barre de contrôle et lecteur (--app-control-bar-*, --player-*)
+    out property <color> control-bar-bg: dark ? #1d1d1d : #f8f9fa;
+    out property <color> control-bar-border: dark ? #333333 : #e0e0e0;
+    out property <color> player-border-top: dark ? #333333 : #dddddd;
+    out property <color> player-box-border: dark ? #404040 : #cccccc;
+    out property <color> player-artwork-bg: dark ? #333333 : #dddddd;
+    out property <color> player-time: dark ? #a3a6ad : #888888;
+    out property <color> player-title: dark ? #e5eaf3 : #000000;
+    out property <color> player-info-bg: dark ? #1d1d1d : #efefef;
+    out property <color> player-info-text: dark ? #e5eaf3 : #333333;
+    out property <color> progress-bg: dark ? #333333 : #e0e0e0;
+    out property <color> progress-hover: dark ? #404040 : #d0d0d0;
+    out property <color> slider-knob: dark ? #141414 : #ffffff;
+    out property <color> control-button-bg: dark ? #333333 : #ffffff;
+    out property <color> control-button-border: dark ? #4d4d4d : #d9d9d9;
+    out property <color> control-button-text: dark ? #e5eaf3 : #000000;
+    out property <color> control-button-hover-bg: dark ? #404040 : #f5f5f5;
+    out property <color> control-button-hover-border: dark ? #5a5a5a : #d9d9d9;
+    out property <color> link-inactive: #909399;
+    out property <color> search-bg: dark ? #333333 : #ffffff;
+    out property <color> search-text: dark ? #e5eaf3 : #606266;
+    out property <color> search-placeholder: dark ? #a3a6ad : #a8abb2;
+
+    // Barre d'état (--statusbar-*, --app-footer-*)
+    out property <color> status-bg: dark ? #1d1d1d : #f0f0f0;
+    out property <color> status-border: dark ? #333333 : #e0e0e0;
+    out property <color> status-text: dark ? #cfd3dc : #666666;
+    out property <color> status-label: dark ? #a3a6ad : #888888;
 
     out property <color> hover-bg: accent.with-alpha(0.06);
     out property <color> selected-bg: accent.with-alpha(0.12);

@@ -1,0 +1,256 @@
+import { Theme } from "theme.slint";
+
+// Bouton carré 24px de la barre d'état ; plein d'accent quand il est actif.
+component SquareButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> glyph;
+    in property <bool> active;
+    in property <angle> icon-rotation: 0deg;
+    callback clicked();
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.active || touch.has-hover ? Theme.accent : Theme.border-base;
+    background: root.active ? Theme.accent : touch.has-hover ? Theme.hover-tint : Theme.library-button-bg;
+    property <color> foreground: root.active ? Theme.text-inverse : touch.has-hover ? Theme.accent : Theme.status-text;
+
+    if root.glyph == "": Image {
+        source: root.icon;
+        width: 14px;
+        height: 14px;
+        colorize: root.foreground;
+        transform-rotation: root.icon-rotation;
+    }
+    if root.glyph != "": Text {
+        text: root.glyph;
+        font-family: "Georgia";
+        font-italic: true;
+        font-weight: 700;
+        font-size: 13px;
+        color: root.foreground;
+    }
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component ZoomSlider inherits Rectangle {
+    in-out property <float> value;
+    in property <float> minimum;
+    in property <float> maximum;
+    callback edited(float);
+    property <float> ratio: (root.value - root.minimum) / (root.maximum - root.minimum);
+    width: 60px;
+    height: 16px;
+
+    Rectangle {
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.eq-runway;
+    }
+    Rectangle {
+        x: 0;
+        width: parent.width * root.ratio;
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.accent;
+    }
+    Rectangle {
+        x: parent.width * root.ratio - self.width / 2;
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        background: Theme.accent;
+        border-width: 2px;
+        border-color: Theme.eq-knob-border;
+    }
+
+    function set-from(x: length) {
+        // Pas de 0.01, comme le curseur 70–90 de la v0.1.
+        let value = root.minimum + clamp(x / root.width, 0, 1) * (root.maximum - root.minimum);
+        let stepped = round(value * 100) / 100;
+        if stepped != root.value {
+            root.value = stepped;
+            root.edited(stepped);
+        }
+    }
+
+    TouchArea {
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                root.set-from(self.mouse-x);
+            }
+        }
+        moved => {
+            if self.pressed {
+                root.set-from(self.mouse-x);
+            }
+        }
+    }
+}
+
+export enum StatusSource { library, playlist, recent, none }
+
+export component StatusBar inherits Rectangle {
+    in property <StatusSource> source;
+    in property <string> source-name;
+    in property <int> artists;
+    in property <int> albums;
+    in property <int> tracks;
+    in property <string> message;
+    in property <string> version;
+    in-out property <float> zoom: 0.9;
+    in property <float> zoom-min: 0.7;
+    in property <float> zoom-max: 0.9;
+    in-out property <bool> show-equalizer;
+    callback zoom-edited(float);
+    callback toggle-theme();
+    callback show-database();
+
+    height: 44px;
+    background: Theme.status-bg;
+
+    Rectangle {
+        y: 0;
+        height: 1px;
+        background: Theme.status-border;
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 1px;
+
+        // Message temporaire (scan, etc.) : remplace les trois colonnes.
+        if root.message != "": Text {
+            text: root.message;
+            font-size: 12px;
+            color: Theme.status-text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        if root.message == "": HorizontalLayout {
+            HorizontalLayout {
+                horizontal-stretch: 1;
+                spacing: 8px;
+                alignment: start;
+                VerticalLayout {
+                    alignment: center;
+                    Image {
+                        source: @image-url("icons/ep-coin.svg");
+                        width: 14px;
+                        height: 14px;
+                        colorize: db-touch.has-hover ? Theme.accent : Theme.status-text;
+                        db-touch := TouchArea {
+                            clicked => {
+                                root.show-database();
+                            }
+                        }
+                    }
+                }
+                Text {
+                    text: root.source == StatusSource.library ? @tr("Library: {0}", root.source-name)
+                        : root.source == StatusSource.recent ? @tr("Playlist: Last added")
+                        : root.source == StatusSource.playlist ? @tr("Playlist: {0}", root.source-name)
+                        : @tr("No library selected");
+                    font-size: 12px;
+                    color: Theme.status-text;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: @tr("{n} artist" | "{n} artists" % root.artists) + " • "
+                    + @tr("{n} album" | "{n} albums" % root.albums) + " • "
+                    + @tr("{n} track" | "{n} tracks" % root.tracks);
+                font-size: 12px;
+                color: Theme.status-text;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            HorizontalLayout {
+                horizontal-stretch: 1;
+                alignment: end;
+                spacing: 12px;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: @tr("Zoom");
+                        min-width: 32px;
+                        font-size: 11px;
+                        color: Theme.status-label;
+                        vertical-alignment: center;
+                        horizontal-alignment: right;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        ZoomSlider {
+                            value <=> root.zoom;
+                            minimum: root.zoom-min;
+                            maximum: root.zoom-max;
+                            edited(value) => {
+                                root.zoom-edited(value);
+                            }
+                        }
+                    }
+                    // 0.7 → 70 %, 0.9 → 100 %, comme la v0.1.
+                    Text {
+                        text: round(70 + (root.zoom - root.zoom-min) / (root.zoom-max - root.zoom-min) * 30) + "%";
+                        min-width: 32px;
+                        font-size: 11px;
+                        color: Theme.status-label;
+                        vertical-alignment: center;
+                        horizontal-alignment: right;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    SquareButton {
+                        icon: Theme.dark ? @image-url("icons/ep-moon.svg") : @image-url("icons/ep-sunny.svg");
+                        clicked => {
+                            root.toggle-theme();
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    SquareButton {
+                        icon: @image-url("icons/ep-operation.svg");
+                        icon-rotation: 90deg;
+                        active: root.show-equalizer;
+                        clicked => {
+                            root.show-equalizer = !root.show-equalizer;
+                        }
+                    }
+                }
+                // Mini-lecteur et fiche du morceau : pas encore branchés.
+                VerticalLayout {
+                    alignment: center;
+                    SquareButton {
+                        icon: @image-url("icons/ep-files.svg");
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    SquareButton {
+                        glyph: "i";
+                    }
+                }
+                Text {
+                    text: "v" + root.version;
+                    font-size: 11px;
+                    color: Theme.status-label;
+                    opacity: 0.7;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

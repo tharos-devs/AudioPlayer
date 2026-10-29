@@ -78,6 +78,9 @@ fn catalogue_reads_are_scoped_and_ordered() {
 
     let tracks: Vec<_> = db.tracks(1).unwrap().into_iter().map(|t| t.id).collect();
     assert_eq!(tracks, [100, 102, 101, 103]);
+
+    let cutoff = db.datetime_from_now("-14 days").unwrap();
+    assert!(db.tracks(1).unwrap().iter().all(|t| t.added_at > cutoff));
 }
 
 #[test]

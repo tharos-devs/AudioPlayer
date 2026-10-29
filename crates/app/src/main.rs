@@ -3,6 +3,7 @@
 
 mod covers;
 mod library;
+mod zoom;
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -20,6 +21,9 @@ slint::include_modules!();
 const TRACK_PAYLOAD_PREFIX: &str = "audioplayer/track:";
 // Vignettes de 80px affichées jusqu'à 80px : 160px suffisent en Retina.
 const COVER_SIZE: u32 = 160;
+// « Added last 2 weeks », la valeur par défaut de la v0.1.
+const RECENT_MODIFIER: &str = "-14 days";
+const STATUS_MESSAGE_DURATION: Duration = Duration::from_secs(3);
 
 // Pas encore enregistrées en base : elles retiennent des ids de morceaux.
 struct Playlist {
@@ -35,8 +39,12 @@ struct App {
     // Décodées à la première demande.
     covers: RefCell<HashMap<usize, Option<Image>>>,
     artist_order: Vec<usize>,
-    artist_album_counts: Vec<usize>,
-    album_track_counts: Vec<usize>,
+    view: View,
+    // Lettre de l'index des artistes : « * » = tout, « # » = hors A–Z.
+    letter: Option<String>,
+    recent_cutoff: String,
+    // Morceaux de chaque album retenus par la vue et la lettre ; 0 = album masqué.
+    album_counts: Vec<usize>,
     selected_artist: Option<usize>,
     selected_album: Option<usize>,
     selected_playlist: Option<usize>,
@@ -47,15 +55,13 @@ struct App {
     playing: Option<usize>,
     position: i32,
     is_playing: bool,
+    status_timer: Timer,
 }
 
 impl App {
     fn new(db: Database) -> audioplayer_db::Result<Self> {
         let libraries = db.libraries()?;
-        let playlists = ["Favorites", "Road Trip", "Focus", "Late Night"]
-            .into_iter()
-            .map(|name| Playlist { name: name.to_owned(), tracks: Vec::new() })
-            .collect();
+        let recent_cutoff = db.datetime_from_now(RECENT_MODIFIER)?;
 
         let mut app = App {
             db,
@@ -64,17 +70,21 @@ impl App {
             library: Library::default(),
             covers: RefCell::default(),
             artist_order: Vec::new(),
-            artist_album_counts: Vec::new(),
-            album_track_counts: Vec::new(),
+            view: View::Library,
+            letter: None,
+            recent_cutoff,
+            album_counts: Vec::new(),
             selected_artist: None,
             selected_album: None,
             selected_playlist: None,
             query: String::new(),
-            playlists,
+            // Les playlists de la base arriveront avec leur enregistrement.
+            playlists: Vec::new(),
             visible: Vec::new(),
             playing: None,
             position: 0,
             is_playing: false,
+            status_timer: Timer::default(),
         };
         if !app.libraries.is_empty() {
             app.load_library(0)?;
@@ -85,46 +95,94 @@ impl App {
     // Remet à zéro la navigation : les index de l'ancienne bibliothèque ne valent plus rien.
     fn load_library(&mut self, index: usize) -> audioplayer_db::Result<()> {
         let library = Library::load(&self.db, self.libraries[index].id)?;
-
         let mut artist_order: Vec<usize> = (0..library.artists.len()).collect();
         artist_order.sort_by(|&a, &b| library.artists[a].sort_key.cmp(&library.artists[b].sort_key));
-        let mut artist_album_counts = vec![0; library.artists.len()];
-        let mut album_track_counts = vec![0; library.albums.len()];
-        for album in &library.albums {
-            artist_album_counts[album.artist] += 1;
-        }
-        for track in &library.tracks {
-            album_track_counts[track.album] += 1;
-        }
 
         self.selected_library = Some(index);
         self.library = library;
         self.covers.borrow_mut().clear();
         self.artist_order = artist_order;
-        self.artist_album_counts = artist_album_counts;
-        self.album_track_counts = album_track_counts;
-        self.selected_artist = None;
-        self.selected_album = None;
         self.visible.clear();
         self.playing = None;
         self.position = 0;
         self.is_playing = false;
+        self.reset_navigation();
         Ok(())
     }
 
-    fn select_library(&mut self, ui: &AppWindow, id: i32) {
-        let Some(index) = from_ui_id(id).filter(|&i| i < self.libraries.len()) else { return };
-        if self.selected_library == Some(index) {
-            return;
-        }
-        if let Err(error) = self.load_library(index) {
-            eprintln!("library {}: {error}", self.libraries[index].name);
-            return;
-        }
+    // Retour à la racine de la bibliothèque (navigateToRoot de la v0.1).
+    fn reset_navigation(&mut self) {
+        self.view = View::Library;
+        self.letter = None;
+        self.selected_artist = None;
+        self.selected_album = None;
         self.selected_playlist = None;
-        self.clear_search(ui);
-        ui.set_selected_track(-1);
-        self.refresh_all(ui);
+        self.query.clear();
+        self.update_scope();
+    }
+
+    fn update_scope(&mut self) {
+        let mut counts = vec![0; self.library.albums.len()];
+        for track in 0..self.library.tracks.len() {
+            if self.in_scope(track) {
+                counts[self.library.tracks[track].album] += 1;
+            }
+        }
+        self.album_counts = counts;
+    }
+
+    // Morceau retenu par la vue courante (et la lettre, en vue bibliothèque).
+    fn in_scope(&self, track: usize) -> bool {
+        let t = &self.library.tracks[track];
+        let album = &self.library.albums[t.album];
+        match self.view {
+            View::Library => self.letter_matches(album.artist),
+            View::Recent => t.added_at >= self.recent_cutoff,
+            View::MostPlayed => t.play_count > 0,
+            View::FavoriteArtists => self.library.artists[album.artist].is_favorite,
+            View::FavoriteAlbums => album.is_favorite,
+            View::FavoriteTracks => t.is_favorite,
+            _ => false,
+        }
+    }
+
+    fn letter_matches(&self, artist: usize) -> bool {
+        let Some(letter) = self.letter.as_deref().filter(|&l| l != "*") else { return true };
+        let first = self.library.artists[artist].name.chars().next().map(|c| c.to_ascii_uppercase());
+        match letter {
+            "#" => !first.is_some_and(|c| c.is_ascii_uppercase()),
+            _ => first.is_some_and(|c| letter.starts_with(c)),
+        }
+    }
+
+    fn query_key(&self) -> String {
+        sort_key(self.query.trim())
+    }
+
+    fn refresh_all(&mut self, ui: &AppWindow) {
+        let library = self.selected_library.map(|i| &self.libraries[i]);
+        ui.set_library_name(library.map_or("", |l| l.name.as_str()).into());
+        ui.set_library_count(self.library.tracks.len() as i32);
+        ui.set_library_artists(self.library.artists.len() as i32);
+        ui.set_library_albums(self.library.albums.len() as i32);
+        let tracks = &self.library.tracks;
+        ui.set_most_played_count(tracks.iter().filter(|t| t.play_count > 0).count() as i32);
+        ui.set_favorite_tracks_count(tracks.iter().filter(|t| t.is_favorite).count() as i32);
+        ui.set_favorite_albums_count(self.library.albums.iter().filter(|a| a.is_favorite).count() as i32);
+        ui.set_favorite_artists_count(self.library.artists.iter().filter(|a| a.is_favorite).count() as i32);
+        self.refresh_libraries(ui);
+        self.refresh_navigation(ui);
+        self.refresh_player(ui);
+    }
+
+    fn refresh_navigation(&mut self, ui: &AppWindow) {
+        ui.set_view(self.view);
+        ui.set_letter(self.letter.as_deref().unwrap_or("").into());
+        ui.set_search_text(self.query.as_str().into());
+        self.refresh_artists(ui);
+        self.refresh_albums(ui);
+        self.refresh_playlists(ui);
+        self.refresh_tracks(ui);
     }
 
     fn refresh_libraries(&self, ui: &AppWindow) {
@@ -135,16 +193,6 @@ impl App {
         });
         ui.set_libraries(model(rows.collect()));
         ui.set_selected_library(to_ui_id(self.selected_library));
-    }
-
-    fn refresh_all(&mut self, ui: &AppWindow) {
-        ui.set_library_count(self.library.tracks.len() as i32);
-        self.refresh_libraries(ui);
-        self.refresh_artists(ui);
-        self.refresh_albums(ui);
-        self.refresh_playlists(ui);
-        self.refresh_tracks(ui);
-        self.refresh_player(ui);
     }
 
     fn cover(&self, album: usize) -> (Image, bool) {
@@ -163,23 +211,45 @@ impl App {
     }
 
     fn refresh_artists(&self, ui: &AppWindow) {
-        let rows = self.artist_order.iter().map(|&artist| ListItem {
-            id: artist as i32,
-            label: self.library.artists[artist].name.as_str().into(),
-            count: self.artist_album_counts[artist] as i32,
-            ..Default::default()
-        });
-        ui.set_artists(model(rows.collect()));
-        ui.set_artists_count(self.library.artists.len() as i32);
+        let mut album_counts = vec![0; self.library.artists.len()];
+        for (album, &count) in self.album_counts.iter().enumerate() {
+            if count > 0 {
+                album_counts[self.library.albums[album].artist] += 1;
+            }
+        }
+        // Les vues albums, morceaux et plus écoutés n'ont pas de liste d'artistes.
+        let listed = matches!(self.view, View::Library | View::Recent | View::FavoriteArtists);
+        let query = self.query_key();
+        let rows: Vec<ListItem> = self
+            .artist_order
+            .iter()
+            .filter(|&&a| listed && album_counts[a] > 0)
+            .filter(|&&a| query.is_empty() || self.library.artists[a].sort_key.contains(&query))
+            .map(|&artist| ListItem {
+                id: artist as i32,
+                label: self.library.artists[artist].name.as_str().into(),
+                count: album_counts[artist] as i32,
+                ..Default::default()
+            })
+            .collect();
+        ui.set_artists_count(rows.len() as i32);
+        ui.set_artists(model(rows));
         ui.set_selected_artist(to_ui_id(self.selected_artist));
     }
 
     fn refresh_albums(&self, ui: &AppWindow) {
         let albums = &self.library.albums;
-        let mut ids: Vec<usize> = match self.selected_artist {
-            Some(artist) => (0..albums.len()).filter(|&a| albums[a].artist == artist).collect(),
-            None => (0..albums.len()).collect(),
+        let listed = match self.view {
+            View::MostPlayed | View::FavoriteTracks | View::Playlist => false,
+            View::FavoriteArtists => self.selected_artist.is_some(),
+            _ => true,
         };
+        let query = self.query_key();
+        let mut ids: Vec<usize> = (0..albums.len())
+            .filter(|&a| listed && self.album_counts[a] > 0)
+            .filter(|&a| self.selected_artist.is_none_or(|artist| albums[a].artist == artist))
+            .filter(|&a| query.is_empty() || albums[a].sort_key.contains(&query))
+            .collect();
         // Comme la v0.1 : albums par titre, même pour un seul artiste.
         ids.sort_by(|&a, &b| albums[a].sort_key.cmp(&albums[b].sort_key).then(a.cmp(&b)));
 
@@ -189,7 +259,7 @@ impl App {
             ListItem {
                 id: album as i32,
                 label: albums[album].title.as_str().into(),
-                count: self.album_track_counts[album] as i32,
+                count: self.album_counts[album] as i32,
                 artwork,
                 has_artwork,
             }
@@ -212,33 +282,40 @@ impl App {
 
     fn refresh_tracks(&mut self, ui: &AppWindow) {
         let tracks = &self.library.tracks;
-        let query = sort_key(self.query.trim());
+        let query = self.query_key();
+        // Favoris artistes ou albums : les morceaux attendent une sélection.
+        let listed = match self.view {
+            View::FavoriteArtists => self.selected_artist.is_some(),
+            View::FavoriteAlbums => self.selected_album.is_some(),
+            _ => true,
+        };
 
-        let mut ids: Vec<usize> = match self.selected_playlist {
+        let mut ids: Vec<usize> = match self.selected_playlist.filter(|_| self.view == View::Playlist) {
             Some(playlist) => self.playlists[playlist].tracks.iter().filter_map(|&id| self.library.track_by_id(id)).collect(),
-            None if !query.is_empty() => (0..tracks.len()).collect(),
             None => (0..tracks.len())
+                .filter(|&t| listed && self.in_scope(t))
                 .filter(|&t| self.selected_artist.is_none_or(|artist| self.library.albums[tracks[t].album].artist == artist))
                 .filter(|&t| self.selected_album.is_none_or(|album| tracks[t].album == album))
+                .filter(|&t| query.is_empty() || self.matches(t, &query))
                 .collect(),
         };
-        if !query.is_empty() {
-            ids.retain(|&t| self.matches(t, &query));
-        }
 
         // Une playlist garde l'ordre d'ajout ; la bibliothèque est groupée par album.
-        if self.selected_playlist.is_some() {
+        if self.view == View::Playlist {
             let items = ids.iter().enumerate().map(|(position, &t)| self.track_item(t, position as i32 + 1, false));
             ui.set_playlist_items(model(items.collect()));
         } else {
-            ids.sort_by(|&a, &b| self.compare(a, b));
+            if self.view == View::MostPlayed {
+                ids.sort_by(|&a, &b| tracks[b].play_count.cmp(&tracks[a].play_count).then(self.compare(a, b)));
+            } else {
+                ids.sort_by(|&a, &b| self.compare(a, b));
+            }
             ui.set_track_items(model(self.grouped_items(&ids)));
         }
 
         let total: i32 = ids.iter().map(|&t| tracks[t].duration).sum();
         ui.set_tracks_count(ids.len() as i32);
         ui.set_tracks_duration(total);
-        ui.set_status(Status { kind: StatusKind::Summary, ..Default::default() });
         self.visible = ids;
     }
 
@@ -266,7 +343,7 @@ impl App {
             artist: self.library.artists[a.artist].name.as_str().into(),
             album: a.title.as_str().into(),
             year: a.year,
-            track_count: self.album_track_counts[album] as i32,
+            track_count: self.album_counts[album] as i32,
             artwork,
             has_artwork,
             ..Default::default()
@@ -299,15 +376,11 @@ impl App {
         let track = self.playing.map(|t| &self.library.tracks[t]);
         ui.set_playing_track(to_ui_id(self.playing));
         ui.set_playing(self.is_playing);
-        ui.set_now_title(track.map_or("", |t| &t.title).into());
-        ui.set_now_artist(
-            track
-                .map(|t| {
-                    format!("{} — {}", self.library.artists[t.artist].name, self.library.albums[t.album].title)
-                })
-                .unwrap_or_default()
-                .into(),
+        // « Titre - Album », comme le bandeau du lecteur de la v0.1.
+        ui.set_now_title(
+            track.map(|t| format!("{} - {}", t.title, self.library.albums[t.album].title)).unwrap_or_default().into(),
         );
+        ui.set_now_artist(track.map_or("", |t| self.library.artists[t.artist].name.as_str()).into());
         let (artwork, has_artwork) = track.map_or((Image::default(), false), |t| self.cover(t.album));
         ui.set_now_artwork(artwork);
         ui.set_now_has_artwork(has_artwork);
@@ -316,6 +389,7 @@ impl App {
         ui.set_duration(duration);
         ui.set_position_text(format_duration(self.position).into());
         ui.set_duration_text(format_duration(duration).into());
+        ui.set_remaining_text(format!("-{}", format_duration((duration - self.position).max(0))).into());
     }
 
     fn matches(&self, track: usize, query: &str) -> bool {
@@ -338,9 +412,41 @@ impl App {
             .then(ta.number.cmp(&tb.number))
     }
 
-    fn clear_search(&mut self, ui: &AppWindow) {
-        self.query.clear();
-        ui.set_search_text(SharedString::new());
+    fn select_library(&mut self, ui: &AppWindow, id: i32) {
+        let Some(index) = from_ui_id(id).filter(|&i| i < self.libraries.len()) else { return };
+        // Un clic sur la bibliothèque courante ramène à sa racine.
+        if self.selected_library == Some(index) {
+            self.reset_navigation();
+            ui.set_selected_track(-1);
+            self.refresh_navigation(ui);
+            return;
+        }
+        if let Err(error) = self.load_library(index) {
+            eprintln!("library {}: {error}", self.libraries[index].name);
+            return;
+        }
+        ui.set_selected_track(-1);
+        self.refresh_all(ui);
+    }
+
+    // Un second clic sur la lettre active la retire.
+    fn select_letter(&mut self, ui: &AppWindow, letter: &str) {
+        let letter = (self.letter.as_deref() != Some(letter)).then(|| letter.to_owned());
+        self.reset_navigation();
+        self.letter = letter;
+        self.update_scope();
+        self.refresh_navigation(ui);
+    }
+
+    // Les entrées intelligentes se comportent en bascule, comme dans la v0.1.
+    fn select_view(&mut self, ui: &AppWindow, view: View) {
+        let toggled_off = self.view == view;
+        self.reset_navigation();
+        if !toggled_off {
+            self.view = view;
+            self.update_scope();
+        }
+        self.refresh_navigation(ui);
     }
 
     // Un second clic sur l'artiste sélectionné le désélectionne.
@@ -348,7 +454,8 @@ impl App {
         let artist = from_ui_id(id);
         self.selected_artist = if self.selected_artist == artist { None } else { artist };
         self.selected_album = None;
-        self.clear_search(ui);
+        self.query.clear();
+        ui.set_search_text(SharedString::new());
         self.refresh_artists(ui);
         self.refresh_albums(ui);
         self.refresh_tracks(ui);
@@ -363,36 +470,42 @@ impl App {
             self.reveal_album(ui, album);
             return;
         }
-        self.clear_search(ui);
         ui.set_selected_album(-1);
         self.refresh_tracks(ui);
     }
 
     fn reveal_album(&mut self, ui: &AppWindow, album: usize) {
+        // Hors de la vue courante (ou depuis une playlist) : retour à la bibliothèque.
+        if self.view == View::Playlist || self.album_counts[album] == 0 {
+            self.reset_navigation();
+        }
         let artist = self.library.albums[album].artist;
-        let artist_changed = self.selected_artist.replace(artist) != Some(artist);
+        // En vue « albums favoris », l'artiste n'a pas de liste où être sélectionné.
+        if self.view != View::FavoriteAlbums {
+            self.selected_artist = Some(artist);
+        }
         self.selected_album = Some(album);
-        self.clear_search(ui);
-        if self.selected_playlist.take().is_some() {
-            self.refresh_playlists(ui);
-        }
-        if artist_changed {
-            self.refresh_albums(ui);
-        }
-        ui.set_selected_artist(artist as i32);
-        ui.set_selected_album(album as i32);
-        self.refresh_tracks(ui);
+        self.query.clear();
+        self.refresh_navigation(ui);
     }
 
     fn select_playlist(&mut self, ui: &AppWindow, id: i32) {
-        self.selected_playlist = from_ui_id(id);
-        self.refresh_playlists(ui);
-        self.refresh_tracks(ui);
+        let playlist = from_ui_id(id);
+        if playlist.is_none() || (self.view == View::Playlist && self.selected_playlist == playlist) {
+            self.reset_navigation();
+        } else {
+            self.reset_navigation();
+            self.view = View::Playlist;
+            self.selected_playlist = playlist;
+        }
+        self.refresh_navigation(ui);
     }
 
+    // Validée par Entrée ; efface la sélection et la lettre, comme la v0.1.
     fn search(&mut self, ui: &AppWindow, query: &str) {
+        self.reset_navigation();
         self.query = query.to_owned();
-        self.refresh_tracks(ui);
+        self.refresh_navigation(ui);
     }
 
     fn play(&mut self, ui: &AppWindow, track: usize) {
@@ -451,6 +564,17 @@ impl App {
         }
     }
 
+    // Message temporaire dans la barre d'état, effacé après quelques secondes.
+    fn show_status(&self, ui: &AppWindow, status: Status) {
+        ui.set_status(status);
+        let weak = ui.as_weak();
+        self.status_timer.start(TimerMode::SingleShot, STATUS_MESSAGE_DURATION, move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status(Status { kind: StatusKind::Summary, ..Default::default() });
+            }
+        });
+    }
+
     fn track_action(&mut self, ui: &AppWindow, id: i32, action: &str) {
         let Some(track) = from_ui_id(id) else { return };
         let status = |kind| Status { kind, track: self.library.tracks[track].title.as_str().into(), ..Default::default() };
@@ -461,8 +585,8 @@ impl App {
                 ui.set_selected_track(id);
             }
             "favorite" => self.add_to_playlist(ui, 0, track),
-            "play-next" => ui.set_status(status(StatusKind::PlayNext)),
-            "enqueue" => ui.set_status(status(StatusKind::Enqueued)),
+            "play-next" => self.show_status(ui, status(StatusKind::PlayNext)),
+            "enqueue" => self.show_status(ui, status(StatusKind::Enqueued)),
             _ => {}
         }
     }
@@ -482,10 +606,10 @@ impl App {
             playlist: target.name.as_str().into(),
         };
         self.refresh_playlists(ui);
-        if self.selected_playlist == Some(playlist) {
+        if self.view == View::Playlist && self.selected_playlist == Some(playlist) {
             self.refresh_tracks(ui);
         }
-        ui.set_status(status);
+        self.show_status(ui, status);
     }
 }
 
@@ -545,6 +669,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = AppWindow::new()?;
     // Slint suit la langue du système par défaut : l'interface démarre en anglais.
     select_language(&ui, "en");
+    ui.set_version(env!("CARGO_PKG_VERSION").into());
 
     let path = database_path();
     let app = App::new(Database::open(&path).map_err(|e| format!("{}: {e}", path.display()))?)?;
@@ -553,6 +678,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let c = ctx.clone();
     ui.on_select_library(move |id| c.update(|app, ui| app.select_library(ui, id)));
+    let c = ctx.clone();
+    ui.on_select_letter(move |letter| c.update(|app, ui| app.select_letter(ui, &letter)));
+    let c = ctx.clone();
+    ui.on_select_view(move |view| c.update(|app, ui| app.select_view(ui, view)));
     let c = ctx.clone();
     ui.on_select_artist(move |id| c.update(|app, ui| app.select_artist(ui, id)));
     let c = ctx.clone();
@@ -597,6 +726,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     ui.on_track_payload(track_payload);
     ui.on_is_track_payload(|data| payload_track(&data).is_some());
+
+    let zoom = zoom::Zoom::new();
+    ui.set_zoom(zoom.level());
+    let (z, w) = (zoom.clone(), ui.as_weak());
+    ui.on_zoom_edited(move |level| {
+        if let Some(ui) = w.upgrade() {
+            z.set_level(ui.window(), level);
+        }
+    });
+    // La fenêtre doit être affichée pour connaître le facteur d'échelle de l'écran.
+    let (z, w) = (zoom.clone(), ui.as_weak());
+    Timer::single_shot(Duration::ZERO, move || {
+        if let Some(ui) = w.upgrade() {
+            z.attach(&ui);
+        }
+    });
 
     let c = ctx.clone();
     let ticker = Timer::default();

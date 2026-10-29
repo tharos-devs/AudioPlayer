@@ -179,49 +179,6 @@ export component AlbumRow inherits Rectangle {
     }
 }
 
-// Ligne simple de la barre latérale (bibliothèque, playlists).
-export component SelectableRow inherits Rectangle {
-    in property <string> label;
-    in property <string> detail;
-    in property <bool> selected;
-    callback clicked();
-    height: Theme.row-height;
-    background: root.selected ? Theme.selected-bg : (touch.has-hover ? Theme.item-hover : transparent);
-
-    Rectangle {
-        x: 0;
-        width: 3px;
-        height: 100%;
-        background: root.selected ? Theme.accent : transparent;
-    }
-
-    touch := TouchArea {
-        clicked => {
-            root.clicked();
-        }
-    }
-
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 10px;
-        spacing: 6px;
-        Text {
-            text: root.label;
-            font-size: Theme.font-size;
-            color: root.selected ? Theme.accent : Theme.text-primary;
-            overflow: elide;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-        }
-        Text {
-            text: root.detail;
-            font-size: Theme.small-font-size;
-            color: Theme.text-tertiary;
-            vertical-alignment: center;
-        }
-    }
-}
-
 // Trois barres animées, affichées à la place du numéro du morceau en cours.
 export component PlayingIndicator inherits HorizontalLayout {
     in property <bool> animated: true;
@@ -255,56 +212,6 @@ export component Splitter inherits Rectangle {
         mouse-cursor: col-resize;
         moved => {
             root.target = clamp(root.target + self.mouse-x - self.pressed-x, root.minimum, root.maximum);
-        }
-    }
-}
-
-export component IconButton inherits Rectangle {
-    in property <image> icon;
-    in property <length> icon-size: 16px;
-    in property <bool> active;
-    callback clicked();
-    width: 32px;
-    height: 32px;
-    border-radius: 6px;
-    background: touch.has-hover ? Theme.hover-bg : transparent;
-
-    Image {
-        source: root.icon;
-        width: root.icon-size;
-        height: root.icon-size;
-        colorize: touch.has-hover || root.active ? Theme.accent : Theme.text-secondary;
-    }
-
-    touch := TouchArea {
-        clicked => {
-            root.clicked();
-        }
-    }
-}
-
-// Pastilles de couleur d'accent, comme en bas du panneau Bibliothèque de la v0.1.
-export component AccentPicker inherits HorizontalLayout {
-    padding: 10px;
-    spacing: 8px;
-    alignment: center;
-
-    for accent in Theme.accents: Rectangle {
-        width: 16px;
-        height: 16px;
-        border-radius: 8px;
-        background: accent.value;
-        border-width: Theme.accent-id == accent.id ? 2px : 0px;
-        border-color: Theme.text-primary;
-        drop-shadow-blur: swatch.has-hover ? 4px : 0px;
-        drop-shadow-color: accent.value;
-
-        swatch := TouchArea {
-            mouse-cursor: pointer;
-            clicked => {
-                Theme.accent-id = accent.id;
-                Theme.accent = accent.value;
-            }
         }
     }
 }

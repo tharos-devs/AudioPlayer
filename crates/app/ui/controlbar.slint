@@ -1,0 +1,559 @@
+import { Theme } from "theme.slint";
+
+// Bouton rond Element Plus `circle size="small"` : 24px.
+component RoundButton inherits Rectangle {
+    in property <image> icon;
+    in property <bool> primary;
+    in property <bool> enabled: true;
+    callback clicked();
+    width: 24px;
+    height: 24px;
+    border-radius: 12px;
+    border-width: 1px;
+    opacity: root.enabled ? 1 : 0.5;
+    border-color: root.primary ? self.background
+        : touch.has-hover && root.enabled ? Theme.control-button-hover-border : Theme.control-button-border;
+    background: root.primary ? (touch.has-hover ? Theme.accent-light-3 : Theme.accent)
+        : touch.has-hover && root.enabled ? Theme.control-button-hover-bg : Theme.control-button-bg;
+
+    Image {
+        source: root.icon;
+        // Icônes du lecteur à 1.2em d'un bouton en 12px.
+        width: 14.4px;
+        height: 14.4px;
+        colorize: root.primary ? Theme.on-accent : Theme.control-button-text;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Curseur horizontal Element Plus : rail 4px, pastille 12px cerclée d'accent.
+component Slider inherits Rectangle {
+    in-out property <float> value;
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    callback edited(float);
+    callback double-clicked();
+    property <float> ratio: (root.value - root.minimum) / (root.maximum - root.minimum);
+    property <length> knob: touch.pressed || touch.has-hover ? 14.4px : 12px;
+    height: 16px;
+
+    Rectangle {
+        height: 4px;
+        border-radius: 3px;
+        background: Theme.progress-bg;
+    }
+    Rectangle {
+        x: 0;
+        width: parent.width * root.ratio;
+        height: 4px;
+        border-radius: 3px;
+        background: Theme.accent;
+    }
+    Rectangle {
+        x: parent.width * root.ratio - self.width / 2;
+        width: root.knob;
+        height: root.knob;
+        border-radius: self.width / 2;
+        background: Theme.slider-knob;
+        border-width: 2px;
+        border-color: Theme.accent;
+        animate width, height { duration: 100ms; }
+    }
+
+    function set-from(x: length) {
+        let value = root.minimum + clamp(x / root.width, 0, 1) * (root.maximum - root.minimum);
+        root.value = round(value);
+        root.edited(root.value);
+    }
+
+    touch := TouchArea {
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                root.set-from(self.mouse-x);
+            }
+        }
+        moved => {
+            if self.pressed {
+                root.set-from(self.mouse-x);
+            }
+        }
+        double-clicked => {
+            root.double-clicked();
+        }
+    }
+}
+
+component TextToggle inherits VerticalLayout {
+    in property <string> text;
+    in property <bool> active;
+    callback toggled();
+    spacing: 0px;
+    label := Text {
+        text: root.text;
+        font-size: 10px;
+        font-weight: 500;
+        color: root.active ? Theme.accent : Theme.link-inactive;
+        horizontal-alignment: center;
+        TouchArea {
+            clicked => {
+                root.toggled();
+            }
+        }
+    }
+    Rectangle {
+        height: 1px;
+        background: label.color;
+    }
+}
+
+component PlayerControls inherits Rectangle {
+    in property <string> title;
+    in property <image> artwork;
+    in property <bool> has-artwork;
+    in property <bool> has-track;
+    in property <bool> playing;
+    in property <int> position;
+    in property <int> duration;
+    in property <string> position-text;
+    in property <string> duration-text;
+    in property <string> remaining-text;
+    in-out property <float> volume: 70;
+    in-out property <bool> muted;
+    in-out property <bool> random-mode;
+    in-out property <bool> loop-mode;
+    callback show-current();
+    callback previous();
+    callback toggle-play();
+    callback next();
+    callback seek(float);
+
+    property <bool> show-remaining;
+    property <float> volume-before-mute: 70;
+
+    preferred-width: 600px;
+    max-width: 600px;
+    height: 50px;
+
+    Rectangle {
+        border-width: 1px;
+        border-color: Theme.player-box-border;
+
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            spacing: 12px;
+
+            // Jaquette : un clic ramène au morceau en cours.
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 45px;
+                    height: 45px;
+                    border-radius: 6px;
+                    clip: true;
+                    background: Theme.player-artwork-bg;
+                    transform-scale: art-touch.has-hover ? 1.05 : 1;
+                    drop-shadow-blur: art-touch.has-hover ? 8px : 0px;
+                    drop-shadow-offset-y: 2px;
+                    drop-shadow-color: Theme.artwork-shadow;
+                    animate transform-scale { duration: 100ms; }
+
+                    if root.has-artwork: Image {
+                        width: 100%;
+                        height: 100%;
+                        source: root.artwork;
+                        image-fit: cover;
+                    }
+                    if !root.has-artwork: Image {
+                        width: 20px;
+                        height: 20px;
+                        source: @image-url("icons/ep-picture-filled.svg");
+                        colorize: Theme.player-time;
+                    }
+                    art-touch := TouchArea {
+                        mouse-cursor: root.has-track ? pointer : default;
+                        clicked => {
+                            root.show-current();
+                        }
+                    }
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                RoundButton {
+                    icon: @image-url("icons/ep-arrow-left.svg");
+                    enabled: root.has-track;
+                    clicked => {
+                        root.previous();
+                    }
+                }
+            }
+
+            // Titre au-dessus de la barre de progression (marge haute 6px, écart 6 − 2px).
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                padding-top: 6px;
+                spacing: 4px;
+
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 250px;
+                        height: 18px;
+                        background: Theme.player-info-bg;
+                        clip: true;
+                        Text {
+                            text: root.has-track ? root.title : "";
+                            font-size: 13px;
+                            font-weight: 500;
+                            color: Theme.player-info-text;
+                            overflow: elide;
+                            horizontal-alignment: center;
+                            width: 100%;
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    HorizontalLayout {
+                        width: 250px;
+                        spacing: 6px;
+                        Text {
+                            text: root.position-text;
+                            min-width: 32px;
+                            font-size: 10px;
+                            font-weight: 500;
+                            color: Theme.player-title;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            height: 14px;
+                            Rectangle {
+                                height: 6px;
+                                border-radius: 3px;
+                                border-width: 1px;
+                                border-color: Theme.player-box-border;
+                                background: progress.has-hover ? Theme.progress-hover : Theme.progress-bg;
+                            }
+                            Rectangle {
+                                x: 0;
+                                height: 6px;
+                                border-radius: 3px;
+                                width: root.duration > 0 ? parent.width * root.position / root.duration : 0px;
+                                background: Theme.accent;
+                            }
+                            progress := TouchArea {
+                                clicked => {
+                                    root.seek(self.mouse-x / self.width);
+                                }
+                            }
+                        }
+                        Text {
+                            text: root.show-remaining && root.has-track ? root.remaining-text : root.duration-text;
+                            min-width: 32px;
+                            font-size: 10px;
+                            font-weight: 500;
+                            color: total.has-hover ? Theme.accent : Theme.player-title;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            total := TouchArea {
+                                clicked => {
+                                    root.show-remaining = !root.show-remaining;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                RoundButton {
+                    icon: @image-url("icons/ep-arrow-right.svg");
+                    enabled: root.has-track;
+                    clicked => {
+                        root.next();
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                RoundButton {
+                    primary: true;
+                    icon: root.playing ? @image-url("icons/ep-video-pause.svg") : @image-url("icons/ep-caret-right.svg");
+                    clicked => {
+                        root.toggle-play();
+                    }
+                }
+            }
+
+            // Volume : un clic sur l'icône coupe ou rétablit le son.
+            HorizontalLayout {
+                alignment: center;
+                spacing: 0px;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 16px;
+                        height: 16px;
+                        opacity: speaker-touch.has-hover ? 1 : 0.7;
+                        Image {
+                            source: root.muted ? @image-url("icons/speaker.svg") : @image-url("icons/volume.svg");
+                            width: 16px;
+                            height: 16px;
+                            colorize: Theme.dark ? #ffffff : #444444;
+                        }
+                        if root.muted: Image {
+                            source: @image-url("icons/mute-cross.svg");
+                            width: 16px;
+                            height: 16px;
+                        }
+                        speaker-touch := TouchArea {
+                            clicked => {
+                                if root.muted {
+                                    root.muted = false;
+                                    root.volume = root.volume-before-mute > 0 ? root.volume-before-mute : 70;
+                                } else {
+                                    root.volume-before-mute = root.volume;
+                                    root.muted = true;
+                                    root.volume = 0;
+                                }
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    width: 14px;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Slider {
+                        width: 80px;
+                        value <=> root.volume;
+                        edited(value) => {
+                            root.muted = value == 0;
+                        }
+                        double-clicked => {
+                            root.volume = 70;
+                            root.muted = false;
+                        }
+                    }
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 3px;
+                TextToggle {
+                    text: "rand";
+                    active: root.random-mode;
+                    toggled => {
+                        root.random-mode = !root.random-mode;
+                    }
+                }
+                TextToggle {
+                    text: "loop";
+                    active: root.loop-mode;
+                    toggled => {
+                        root.loop-mode = !root.loop-mode;
+                    }
+                }
+            }
+        }
+    }
+}
+
+component SearchField inherits Rectangle {
+    in-out property <string> text;
+    callback accepted(string);
+    callback cancelled();
+    forward-focus: input;
+    width: 150px;
+    height: 24px;
+    border-radius: 4px;
+    background: Theme.search-bg;
+    border-width: Theme.dark ? 0px : 1px;
+    border-color: input.has-focus ? Theme.accent : touch.has-hover ? #c0c4cc : Theme.border-base;
+    drop-shadow-blur: Theme.dark && input.has-focus ? 2px : 0px;
+    drop-shadow-color: Theme.accent.with-alpha(0.2);
+
+    public function focus-input() {
+        input.focus();
+    }
+
+    touch := TouchArea { }
+
+    HorizontalLayout {
+        padding-left: 7px;
+        padding-right: 7px;
+        spacing: 8px;
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("icons/ep-search.svg");
+                width: 12px;
+                height: 12px;
+                colorize: Theme.search-placeholder;
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            if input.text == "": Text {
+                x: 0;
+                text: @tr("Search...");
+                font-size: 12px;
+                color: Theme.search-placeholder;
+                vertical-alignment: center;
+                height: 100%;
+            }
+            input := TextInput {
+                text <=> root.text;
+                font-size: 12px;
+                color: Theme.search-text;
+                vertical-alignment: center;
+                single-line: true;
+                accepted => {
+                    root.accepted(self.text);
+                }
+                key-pressed(event) => {
+                    if event.text == Key.Escape {
+                        root.cancelled();
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
+        }
+        if root.text != "": VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("icons/ep-circle-close.svg");
+                width: 12px;
+                height: 12px;
+                colorize: clear.has-hover ? Theme.search-text : Theme.search-placeholder;
+                clear := TouchArea {
+                    clicked => {
+                        root.text = "";
+                        root.accepted("");
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component ControlBar inherits Rectangle {
+    in property <string> title;
+    in property <image> artwork;
+    in property <bool> has-artwork;
+    in property <bool> has-track;
+    in property <bool> playing;
+    in property <int> position;
+    in property <int> duration;
+    in property <string> position-text;
+    in property <string> duration-text;
+    in property <string> remaining-text;
+    in-out property <bool> search-visible;
+    in-out property <string> search-text;
+    in-out property <bool> random-mode;
+    in-out property <bool> loop-mode;
+    callback show-current();
+    callback previous();
+    callback toggle-play();
+    callback next();
+    callback seek(float);
+    callback search(string);
+
+    height: 60px;
+    background: Theme.control-bar-bg;
+
+    public function focus-search() {
+        search.focus-input();
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+
+        // Espace gauche symétrique de la recherche, compressible.
+        Rectangle {
+            max-width: 180px;
+            horizontal-stretch: 0.001;
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            // Filet supérieur de .player-controls, sur toute la largeur de la zone.
+            Rectangle {
+                y: 4px;
+                height: 1px;
+                background: Theme.player-border-top;
+            }
+            HorizontalLayout {
+                alignment: center;
+                padding-top: 5px;
+                padding-bottom: 5px;
+                PlayerControls {
+                    title: root.title;
+                    artwork: root.artwork;
+                    has-artwork: root.has-artwork;
+                    has-track: root.has-track;
+                    playing: root.playing;
+                    position: root.position;
+                    duration: root.duration;
+                    position-text: root.position-text;
+                    duration-text: root.duration-text;
+                    remaining-text: root.remaining-text;
+                    random-mode <=> root.random-mode;
+                    loop-mode <=> root.loop-mode;
+                    show-current => {
+                        root.show-current();
+                    }
+                    previous => {
+                        root.previous();
+                    }
+                    toggle-play => {
+                        root.toggle-play();
+                    }
+                    next => {
+                        root.next();
+                    }
+                    seek(ratio) => {
+                        root.seek(ratio);
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            width: 180px;
+            alignment: end;
+            VerticalLayout {
+                alignment: center;
+                search := SearchField {
+                    visible: root.search-visible;
+                    text <=> root.search-text;
+                    accepted(text) => {
+                        root.search(text);
+                    }
+                    cancelled => {
+                        root.search-visible = false;
+                    }
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.control-bar-border;
+    }
+}

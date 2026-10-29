@@ -1,9 +1,13 @@
-import { LineEdit, ListView, Palette } from "std-widgets.slint";
+import { ListView, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { ListItem, PanelHeader, SelectableRow, ArtistRow, AlbumRow, Artwork, Splitter, IconButton, AccentPicker } from "widgets.slint";
+import { ListItem, PanelHeader, ArtistRow, AlbumRow, Splitter } from "widgets.slint";
 import { TrackItem, TrackItemKind, TrackList, PlaylistTrackList } from "tracks.slint";
+import { Sidebar, View } from "sidebar.slint";
+import { ControlBar } from "controlbar.slint";
+import { StatusBar, StatusSource } from "statusbar.slint";
+import { EqualizerState } from "equalizer.slint";
 
-export { Theme, ListItem, TrackItem, TrackItemKind }
+export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState }
 
 export enum StatusKind { summary, added-to-playlist, already-in-playlist, play-next, enqueued }
 
@@ -12,200 +16,6 @@ export struct Status {
     kind: StatusKind,
     track: string,
     playlist: string,
-}
-
-component PlaylistRow inherits Rectangle {
-    in property <ListItem> item;
-    in property <bool> selected;
-    callback clicked();
-    pure callback accepts(data-transfer) -> bool;
-    callback drop-tracks(data-transfer);
-    height: Theme.row-height;
-    border-width: drop.has-drag ? 1px : 0px;
-    border-color: Theme.accent;
-    background: drop.has-drag ? Theme.drop-bg : transparent;
-
-    drop := DropArea {
-        can-drop(event) => {
-            return root.accepts(event.data) ? DragAction.copy : DragAction.none;
-        }
-        dropped(event) => {
-            root.drop-tracks(event.data);
-            return event.proposed-action;
-        }
-
-        SelectableRow {
-            label: "♫  " + root.item.label;
-            detail: root.item.count;
-            selected: root.selected;
-            clicked => {
-                root.clicked();
-            }
-        }
-    }
-}
-
-component PlayerBar inherits Rectangle {
-    in property <string> title;
-    in property <string> artist;
-    in property <image> artwork;
-    in property <bool> has-artwork;
-    in property <bool> has-track;
-    in property <bool> playing;
-    in property <int> position;
-    in property <int> duration;
-    in property <string> position-text;
-    in property <string> duration-text;
-    in-out property <string> search-text;
-    callback show-current();
-    callback previous();
-    callback toggle-play();
-    callback next();
-    callback seek(float);
-    callback search(string);
-
-    height: 64px;
-    background: Theme.bg-secondary;
-
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        spacing: 16px;
-
-        // Jaquette du morceau en cours : un clic ramène à son album.
-        VerticalLayout {
-            alignment: center;
-            art := Rectangle {
-                width: 45px;
-                height: 45px;
-                border-radius: 6px;
-                drop-shadow-blur: art-touch.has-hover ? 8px : 0px;
-                drop-shadow-offset-y: 2px;
-                drop-shadow-color: Theme.artwork-shadow;
-                Artwork {
-                    size: 45px;
-                    radius: 6px;
-                    icon-size: 20px;
-                    source: root.artwork;
-                    has-image: root.has-artwork;
-                }
-                art-touch := TouchArea {
-                    mouse-cursor: root.has-track ? pointer : default;
-                    clicked => {
-                        root.show-current();
-                    }
-                }
-            }
-        }
-
-        HorizontalLayout {
-            alignment: center;
-            spacing: 4px;
-            IconButton {
-                icon: @image-url("icons/previous.svg");
-                clicked => {
-                    root.previous();
-                }
-            }
-            IconButton {
-                icon: root.playing ? @image-url("icons/pause.svg") : @image-url("icons/play.svg");
-                icon-size: 22px;
-                width: 40px;
-                height: 40px;
-                active: true;
-                clicked => {
-                    root.toggle-play();
-                }
-            }
-            IconButton {
-                icon: @image-url("icons/next.svg");
-                clicked => {
-                    root.next();
-                }
-            }
-        }
-
-        VerticalLayout {
-            horizontal-stretch: 1;
-            alignment: center;
-            spacing: 4px;
-
-            Text {
-                text: root.has-track ? root.title : @tr("Nothing playing");
-                font-size: 13px;
-                font-weight: 600;
-                color: Theme.text-primary;
-                overflow: elide;
-                horizontal-alignment: center;
-            }
-            Text {
-                text: root.artist;
-                font-size: Theme.small-font-size;
-                color: Theme.accent;
-                overflow: elide;
-                horizontal-alignment: center;
-            }
-            HorizontalLayout {
-                spacing: 8px;
-                Text {
-                    text: root.position-text;
-                    font-size: 10px;
-                    color: Theme.text-tertiary;
-                    vertical-alignment: center;
-                    width: 36px;
-                    horizontal-alignment: right;
-                }
-                Rectangle {
-                    height: 12px;
-                    horizontal-stretch: 1;
-
-                    Rectangle {
-                        height: 4px;
-                        border-radius: 2px;
-                        background: Theme.border-base;
-                    }
-                    Rectangle {
-                        x: 0;
-                        height: 4px;
-                        border-radius: 2px;
-                        width: root.duration > 0 ? parent.width * root.position / root.duration : 0px;
-                        background: Theme.accent;
-                    }
-                    TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => {
-                            root.seek(self.mouse-x / self.width);
-                        }
-                    }
-                }
-                Text {
-                    text: root.duration-text;
-                    font-size: 10px;
-                    color: Theme.text-tertiary;
-                    vertical-alignment: center;
-                    width: 36px;
-                }
-            }
-        }
-
-        VerticalLayout {
-            alignment: center;
-            LineEdit {
-                width: 240px;
-                text <=> root.search-text;
-                placeholder-text: @tr("Search title, artist, album…");
-                edited(text) => {
-                    root.search(text);
-                }
-            }
-        }
-    }
-
-    Rectangle {
-        y: parent.height - 1px;
-        height: 1px;
-        background: Theme.border;
-    }
 }
 
 export component AppWindow inherits Window {
@@ -219,6 +29,21 @@ export component AppWindow inherits Window {
 
     in property <[ListItem]> libraries;
     in-out property <int> selected-library: -1;
+    in property <View> view;
+    in property <string> letter;
+    in property <int> most-played-count;
+    in property <int> favorite-artists-count;
+    in property <int> favorite-albums-count;
+    in property <int> favorite-tracks-count;
+    in property <string> library-name;
+    in property <int> library-artists;
+    in property <int> library-albums;
+    in property <string> version;
+    in-out property <float> zoom: 0.9;
+    in-out property <bool> show-equalizer: true;
+    in-out property <bool> search-visible;
+    in-out property <bool> random-mode;
+    in-out property <bool> loop-mode;
     in property <[ListItem]> artists;
     in property <[ListItem]> albums;
     in property <[ListItem]> playlists;
@@ -245,6 +70,7 @@ export component AppWindow inherits Window {
     in property <int> duration;
     in property <string> position-text: "0:00";
     in property <string> duration-text: "0:00";
+    in property <string> remaining-text: "-0:00";
 
     in property <Status> status;
     property <string> status-text: root.status.kind == StatusKind.added-to-playlist
@@ -259,11 +85,13 @@ export component AppWindow inherits Window {
             + @tr("{0} h {1} min", floor(root.tracks-duration / 3600), Math.mod(floor(root.tracks-duration / 60), 60));
     in-out property <string> search-text;
 
-    in-out property <length> sidebar-width: 210px;
-    in-out property <length> artists-width: 220px;
-    in-out property <length> albums-width: 280px;
+    in-out property <length> artists-width: 255px;
+    in-out property <length> albums-width: 300px;
 
     callback select-library(int);
+    callback select-letter(string);
+    callback select-view(View);
+    callback zoom-edited(float);
     callback select-artist(int);
     callback select-album(int);
     callback select-playlist(int);
@@ -287,6 +115,7 @@ export component AppWindow inherits Window {
     }
 
     init => {
+        keys.focus();
         Palette.color-scheme = Theme.dark ? ColorScheme.dark : ColorScheme.light;
     }
 
@@ -321,233 +150,205 @@ export component AppWindow inherits Window {
         }
     }
 
-    VerticalLayout {
-        PlayerBar {
-            title: root.now-title;
-            artist: root.now-artist;
-            artwork: root.now-artwork;
-            has-artwork: root.now-has-artwork;
-            has-track: root.playing-track != -1;
-            playing: root.playing;
-            position: root.position;
-            duration: root.duration;
-            position-text: root.position-text;
-            duration-text: root.duration-text;
-            search-text <=> root.search-text;
-            show-current => {
-                root.show-current();
+    // Cmd/Ctrl+F affiche la recherche, comme la v0.1.
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.modifiers.meta || event.modifiers.control) && (event.text == "f" || event.text == "F") {
+                root.search-visible = true;
+                control-bar.focus-search();
+                return accept;
             }
-            previous => {
-                root.previous();
-            }
-            toggle-play => {
-                root.toggle-play();
-            }
-            next => {
-                root.next();
-            }
-            seek(ratio) => {
-                root.seek(ratio);
-            }
-            search(text) => {
-                root.search(text);
-            }
+            return reject;
         }
 
-        HorizontalLayout {
-            vertical-stretch: 1;
-
-            // Bibliothèque + playlists + sélecteur d'accent
-            Rectangle {
-                width: root.sidebar-width;
-                background: Theme.bg-secondary;
-
-                VerticalLayout {
-                    PanelHeader {
-                        title: @tr("Libraries");
-                    }
-                    for library in root.libraries: SelectableRow {
-                        label: library.label;
-                        selected: library.id == root.selected-library;
-                        clicked => {
-                            root.select-library(library.id);
-                        }
-                    }
-                    PanelHeader {
-                        title: @tr("Library");
-                    }
-                    SelectableRow {
-                        label: "♪  " + @tr("All Tracks");
-                        detail: root.library-count;
-                        selected: root.selected-playlist == -1;
-                        clicked => {
-                            root.select-playlist(-1);
-                        }
-                    }
-                    PanelHeader {
-                        title: @tr("Playlists");
-                    }
-                    for playlist in root.playlists: PlaylistRow {
-                        item: playlist;
-                        selected: playlist.id == root.selected-playlist;
-                        clicked => {
-                            root.select-playlist(playlist.id);
-                        }
-                        accepts(data) => {
-                            return root.is-track-payload(data);
-                        }
-                        drop-tracks(data) => {
-                            root.drop-on-playlist(playlist.id, data);
-                        }
-                    }
-                    Rectangle {
-                        vertical-stretch: 1;
-                    }
-                    Rectangle {
-                        height: 1px;
-                        background: Theme.border;
-                    }
-                    AccentPicker { }
+        VerticalLayout {
+            control-bar := ControlBar {
+                title: root.now-title;
+                artwork: root.now-artwork;
+                has-artwork: root.now-has-artwork;
+                has-track: root.playing-track != -1;
+                playing: root.playing;
+                position: root.position;
+                duration: root.duration;
+                position-text: root.position-text;
+                duration-text: root.duration-text;
+                remaining-text: root.remaining-text;
+                search-visible <=> root.search-visible;
+                search-text <=> root.search-text;
+                random-mode <=> root.random-mode;
+                loop-mode <=> root.loop-mode;
+                show-current => {
+                    root.show-current();
                 }
-            }
-
-            Splitter {
-                target <=> root.sidebar-width;
-                minimum: 160px;
-                maximum: 360px;
-            }
-
-            if root.selected-playlist == -1: Rectangle {
-                width: root.artists-width;
-                background: Theme.panel-bg;
-
-                VerticalLayout {
-                    PanelHeader {
-                        title: @tr("Artists");
-                        badge: @tr("{n} artist" | "{n} artists" % root.artists-count);
-                    }
-                    ListView {
-                        for artist in root.artists: ArtistRow {
-                            item: artist;
-                            selected: artist.id == root.selected-artist;
-                            clicked => {
-                                root.select-artist(artist.id);
-                            }
-                        }
-                    }
+                previous => {
+                    root.previous();
                 }
-            }
-
-            if root.selected-playlist == -1: Splitter {
-                target <=> root.artists-width;
-            }
-
-            if root.selected-playlist == -1: Rectangle {
-                width: root.albums-width;
-                background: Theme.panel-bg;
-
-                VerticalLayout {
-                    PanelHeader {
-                        title: @tr("Albums");
-                        badge: @tr("{n} album" | "{n} albums" % root.albums-count);
-                    }
-                    ListView {
-                        for album in root.albums: AlbumRow {
-                            item: album;
-                            selected: album.id == root.selected-album;
-                            clicked => {
-                                root.select-album(album.id);
-                            }
-                        }
-                    }
+                toggle-play => {
+                    root.toggle-play();
                 }
-            }
-
-            if root.selected-playlist == -1: Splitter {
-                target <=> root.albums-width;
-            }
-
-            Rectangle {
-                horizontal-stretch: 1;
-                background: Theme.panel-bg;
-
-                if root.selected-playlist == -1: VerticalLayout {
-                    PanelHeader {
-                        title: @tr("Tracks");
-                        badge: @tr("{n} track" | "{n} tracks" % root.tracks-count);
-                    }
-                    TrackList {
-                        items: root.track-items;
-                        playing-track: root.playing-track;
-                        running: root.playing;
-                        selected-track <=> root.selected-track;
-                        play-track(id) => {
-                            root.play-track(id);
-                        }
-                        track-action(id, name) => {
-                            root.track-action(id, name);
-                        }
-                        track-payload(id) => {
-                            return root.track-payload(id);
-                        }
-                    }
+                next => {
+                    root.next();
                 }
-
-                if root.selected-playlist != -1: VerticalLayout {
-                    PanelHeader {
-                        title: root.playlist-name;
-                        badge: @tr("{n} track" | "{n} tracks" % root.tracks-count);
-                    }
-                    PlaylistTrackList {
-                        items: root.playlist-items;
-                        playing-track: root.playing-track;
-                        running: root.playing;
-                        selected-track <=> root.selected-track;
-                        play-track(id) => {
-                            root.play-track(id);
-                        }
-                        track-action(id, name) => {
-                            root.track-action(id, name);
-                        }
-                        track-payload(id) => {
-                            return root.track-payload(id);
-                        }
-                    }
+                seek(ratio) => {
+                    root.seek(ratio);
                 }
-            }
-        }
-
-        // Barre d'état
-        Rectangle {
-            height: 26px;
-            background: Theme.bg-secondary;
-
-            Rectangle {
-                y: 0;
-                height: 1px;
-                background: Theme.border;
+                search(text) => {
+                    root.search(text);
+                }
             }
 
             HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 6px;
-                spacing: 8px;
-                Text {
-                    text: root.status-text;
-                    font-size: Theme.small-font-size;
-                    color: Theme.text-tertiary;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    overflow: elide;
-                }
-                IconButton {
-                    icon: Theme.dark ? @image-url("icons/moon.svg") : @image-url("icons/sun.svg");
-                    icon-size: 13px;
-                    width: 24px;
-                    height: 24px;
-                    clicked => {
-                        root.toggle-theme();
+                vertical-stretch: 1;
+
+                Sidebar {
+                    libraries: root.libraries;
+                    selected-library: root.selected-library;
+                    playlists: root.playlists;
+                    selected-playlist: root.selected-playlist;
+                    view: root.view;
+                    letter: root.letter;
+                    most-played-count: root.most-played-count;
+                    favorite-artists-count: root.favorite-artists-count;
+                    favorite-albums-count: root.favorite-albums-count;
+                    favorite-tracks-count: root.favorite-tracks-count;
+                    show-equalizer: root.show-equalizer;
+                    select-letter(letter) => {
+                        root.select-letter(letter);
                     }
+                    select-library(id) => {
+                        root.select-library(id);
+                    }
+                    select-view(view) => {
+                        root.select-view(view);
+                    }
+                    select-playlist(id) => {
+                        root.select-playlist(id);
+                    }
+                    accepts(data) => {
+                        return root.is-track-payload(data);
+                    }
+                    drop-on-playlist(id, data) => {
+                        root.drop-on-playlist(id, data);
+                    }
+                }
+
+                if root.view != View.playlist: Rectangle {
+                    width: root.artists-width;
+                    background: Theme.panel-bg;
+
+                    VerticalLayout {
+                        PanelHeader {
+                            title: @tr("Artists");
+                            badge: @tr("{n} artist" | "{n} artists" % root.artists-count);
+                        }
+                        ListView {
+                            for artist in root.artists: ArtistRow {
+                                item: artist;
+                                selected: artist.id == root.selected-artist;
+                                clicked => {
+                                    root.select-artist(artist.id);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if root.view != View.playlist: Splitter {
+                    target <=> root.artists-width;
+                }
+
+                if root.view != View.playlist: Rectangle {
+                    width: root.albums-width;
+                    background: Theme.panel-bg;
+
+                    VerticalLayout {
+                        PanelHeader {
+                            title: @tr("Albums");
+                            badge: @tr("{n} album" | "{n} albums" % root.albums-count);
+                        }
+                        ListView {
+                            for album in root.albums: AlbumRow {
+                                item: album;
+                                selected: album.id == root.selected-album;
+                                clicked => {
+                                    root.select-album(album.id);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if root.view != View.playlist: Splitter {
+                    target <=> root.albums-width;
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: Theme.panel-bg;
+
+                    if root.view != View.playlist: VerticalLayout {
+                        PanelHeader {
+                            title: @tr("Tracks");
+                            badge: @tr("{n} track" | "{n} tracks" % root.tracks-count);
+                        }
+                        TrackList {
+                            items: root.track-items;
+                            playing-track: root.playing-track;
+                            running: root.playing;
+                            selected-track <=> root.selected-track;
+                            play-track(id) => {
+                                root.play-track(id);
+                            }
+                            track-action(id, name) => {
+                                root.track-action(id, name);
+                            }
+                            track-payload(id) => {
+                                return root.track-payload(id);
+                            }
+                        }
+                    }
+
+                    if root.view == View.playlist: VerticalLayout {
+                        PanelHeader {
+                            title: root.playlist-name;
+                            badge: @tr("{n} track" | "{n} tracks" % root.tracks-count);
+                        }
+                        PlaylistTrackList {
+                            items: root.playlist-items;
+                            playing-track: root.playing-track;
+                            running: root.playing;
+                            selected-track <=> root.selected-track;
+                            play-track(id) => {
+                                root.play-track(id);
+                            }
+                            track-action(id, name) => {
+                                root.track-action(id, name);
+                            }
+                            track-payload(id) => {
+                                return root.track-payload(id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            StatusBar {
+                source: root.view == View.playlist ? StatusSource.playlist
+                    : root.view == View.recent ? StatusSource.recent
+                    : root.library-name == "" ? StatusSource.none : StatusSource.library;
+                source-name: root.view == View.playlist ? root.playlist-name : root.library-name;
+                artists: root.library-artists;
+                albums: root.library-albums;
+                tracks: root.library-count;
+                message: root.status.kind == StatusKind.summary ? "" : root.status-text;
+                version: root.version;
+                zoom <=> root.zoom;
+                show-equalizer <=> root.show-equalizer;
+                zoom-edited(value) => {
+                    root.zoom-edited(value);
+                }
+                toggle-theme => {
+                    root.toggle-theme();
                 }
             }
         }
