@@ -561,20 +561,26 @@ export component ThemedButton inherits Rectangle {
     in property <string> text;
     in property <bool> primary;
     in property <bool> enabled: true;
+    // Posé sur une fenêtre aux couleurs du thème inverse (fenêtre de mise à jour).
+    in property <bool> inverted;
+    property <bool> dark: root.inverted ? !Theme.dark : Theme.dark;
+    property <color> button-bg: root.dark ? #333333 : #ffffff;
+    property <color> button-border: root.dark ? #404040 : #dcdfe6;
+    property <color> button-text: root.dark ? #e5eaf3 : #606266;
     callback clicked();
     height: 32px;
     min-width: label.preferred-width + 30px;
     border-radius: 4px;
     border-width: Theme.hairline;
     opacity: root.enabled ? 1 : 0.5;
-    border-color: root.primary ? Theme.accent : touch.has-hover && root.enabled ? Theme.accent : Theme.button-border;
+    border-color: root.primary ? Theme.accent : touch.has-hover && root.enabled ? Theme.accent : root.button-border;
     background: root.primary ? (touch.has-hover && root.enabled ? Theme.accent-light-3 : Theme.accent)
-        : touch.has-hover && root.enabled ? Theme.hover-tint : Theme.button-bg;
+        : touch.has-hover && root.enabled ? Theme.hover-tint : root.button-bg;
 
     label := Text {
         text: root.text;
         font-size: 14px;
-        color: root.primary ? Theme.on-accent : touch.has-hover && root.enabled ? Theme.accent : Theme.button-text;
+        color: root.primary ? Theme.on-accent : touch.has-hover && root.enabled ? Theme.accent : root.button-text;
     }
     touch := TouchArea {
         enabled: root.enabled;

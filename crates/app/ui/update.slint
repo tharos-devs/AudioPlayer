@@ -20,16 +20,22 @@ export component UpdateCard inherits Rectangle {
     callback restart();
     callback open-notes();
     callback retry();
+    // Aux couleurs du thème inverse (claire en thème sombre, sombre en thème clair) :
+    // elle se détache du fond de l'app.
+    property <bool> dark: !Theme.dark;
+    property <color> text-primary: root.dark ? #e5eaf3 : #303133;
+    property <color> text-secondary: root.dark ? #cfd3dc : #606266;
+    property <color> text-tertiary: root.dark ? #a3a6ad : #909399;
 
     width: 310px;
     height: layout.preferred-height;
     border-radius: 6px;
-    background: Theme.footer-bg;
+    background: root.dark ? #262626 : #f5f5f5;
     border-width: Theme.hairline;
-    border-color: Theme.border-base;
-    drop-shadow-blur: 16px;
-    drop-shadow-offset-y: 4px;
-    drop-shadow-color: #00000080;
+    border-color: root.dark ? #404040 : #dcdfe6;
+    drop-shadow-blur: 24px;
+    drop-shadow-offset-y: 6px;
+    drop-shadow-color: #000000b3;
 
     // Absorbe les clics : la liste dessous ne les reçoit pas.
     TouchArea { }
@@ -63,7 +69,7 @@ export component UpdateCard inherits Rectangle {
                     : @tr("Update failed");
                 font-size: 13px;
                 font-weight: 600;
-                color: Theme.text-primary;
+                color: root.text-primary;
                 vertical-alignment: center;
             }
         }
@@ -73,7 +79,7 @@ export component UpdateCard inherits Rectangle {
             Text {
                 text: @tr("AudioPlayer {0} is available. You have version {1}.", root.version, root.current);
                 font-size: 12px;
-                color: Theme.text-secondary;
+                color: root.text-secondary;
                 wrap: word-wrap;
             }
             HorizontalLayout {
@@ -94,14 +100,14 @@ export component UpdateCard inherits Rectangle {
         if root.stage == UpdateStage.up-to-date: Text {
             text: @tr("Version {0} is the latest.", root.current);
             font-size: 12px;
-            color: Theme.text-secondary;
+            color: root.text-secondary;
         }
         if root.stage == UpdateStage.downloading: VerticalLayout {
             spacing: 6px;
             Rectangle {
                 height: 6px;
                 border-radius: 3px;
-                background: Theme.progress-bg;
+                background: root.dark ? #404040 : #e0e0e0;
                 Rectangle {
                     x: 0;
                     width: root.total > 0 ? parent.width * min(1, root.received / root.total) : 0px;
@@ -114,25 +120,25 @@ export component UpdateCard inherits Rectangle {
                     ? @tr("AudioPlayer {0}: {1} / {2} MB", root.version, root.received.to-fixed(1), root.total.to-fixed(1))
                     : @tr("AudioPlayer {0}: {1} MB", root.version, root.received.to-fixed(1));
                 font-size: 11px;
-                color: Theme.text-tertiary;
+                color: root.text-tertiary;
             }
         }
         if root.stage == UpdateStage.installing: Text {
             text: @tr("AudioPlayer {0} is being installed. Enter your password if the system asks for it.", root.version);
             font-size: 12px;
-            color: Theme.text-secondary;
+            color: root.text-secondary;
             wrap: word-wrap;
         }
         if root.stage == UpdateStage.installed: Text {
             text: @tr("AudioPlayer {0} is installed. Restart to use the new version.", root.version);
             font-size: 12px;
-            color: Theme.text-secondary;
+            color: root.text-secondary;
             wrap: word-wrap;
         }
         if root.stage == UpdateStage.failed: Text {
             text: root.message;
             font-size: 12px;
-            color: Theme.text-secondary;
+            color: root.text-secondary;
             wrap: word-wrap;
         }
 
@@ -142,6 +148,7 @@ export component UpdateCard inherits Rectangle {
             padding-top: 4px;
             ThemedButton {
                 height: 26px;
+                inverted: true;
                 text: root.stage == UpdateStage.available || root.stage == UpdateStage.installed ? @tr("Later") : @tr("Close");
                 clicked => {
                     root.dismiss();
@@ -149,6 +156,7 @@ export component UpdateCard inherits Rectangle {
             }
             if root.stage == UpdateStage.failed: ThemedButton {
                 height: 26px;
+                inverted: true;
                 text: @tr("Retry");
                 clicked => {
                     root.retry();
@@ -156,6 +164,7 @@ export component UpdateCard inherits Rectangle {
             }
             if root.stage == UpdateStage.available: ThemedButton {
                 height: 26px;
+                inverted: true;
                 primary: true;
                 text: root.installable ? @tr("Update") : @tr("Download");
                 clicked => {
@@ -168,6 +177,7 @@ export component UpdateCard inherits Rectangle {
             }
             if root.stage == UpdateStage.installed: ThemedButton {
                 height: 26px;
+                inverted: true;
                 primary: true;
                 text: @tr("Restart Now");
                 clicked => {
