@@ -7,10 +7,15 @@ version = "0.2.0"
 edition = "2021"
 
 [workspace.dependencies]
-slint = "1.18"
+# Rendu Skia plutôt que femtovg : texte nettement plus fin (crénage, lissage).
+slint = { version = "1.18", default-features = false, features = ["std", "backend-default", "renderer-skia", "accessibility", "compat-1-2"] }
 slint-build = "1.18"
 rusqlite = { version = "0.41", features = ["bundled"] }
 base64 = "0.23"
 tempfile = "3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 dirs = "7"
+
+# Les dépendances (décodage d'images, SQLite, rendu) restent optimisées même en debug.
+[profile.dev.package."*"]
+opt-level = 3

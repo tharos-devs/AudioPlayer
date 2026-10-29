@@ -36,8 +36,10 @@ struct App {
     libraries: Vec<audioplayer_db::Library>,
     selected_library: Option<usize>,
     library: Library,
-    // Décodées à la première demande.
-    covers: RefCell<HashMap<usize, Option<Image>>>,
+    // Catalogues déjà chargés, gardés pour revenir instantanément sur une bibliothèque.
+    catalogs: HashMap<usize, Library>,
+    // Pochettes décodées, par id d'album ; chargées par bibliothèque entière.
+    covers: HashMap<i64, Image>,
     artist_order: Vec<usize>,
     view: View,
     // Lettre de l'index des artistes : « * » = tout, « # » = hors A–Z.
@@ -68,7 +70,8 @@ impl App {
             libraries,
             selected_library: None,
             library: Library::default(),
-            covers: RefCell::default(),
+            catalogs: HashMap::new(),
+            covers: HashMap::new(),
             artist_order: Vec::new(),
             view: View::Library,
             letter: None,
@@ -94,13 +97,22 @@ impl App {
 
     // Remet à zéro la navigation : les index de l'ancienne bibliothèque ne valent plus rien.
     fn load_library(&mut self, index: usize) -> audioplayer_db::Result<()> {
-        let library = Library::load(&self.db, self.libraries[index].id)?;
+        let library = match self.catalogs.remove(&index) {
+            Some(library) => library,
+            None => {
+                let (library, pixels) = Library::load_with_covers(&self.db, self.libraries[index].id, COVER_SIZE)?;
+                self.add_covers(pixels);
+                library
+            }
+        };
+        if let Some(previous) = self.selected_library {
+            self.catalogs.insert(previous, std::mem::take(&mut self.library));
+        }
         let mut artist_order: Vec<usize> = (0..library.artists.len()).collect();
         artist_order.sort_by(|&a, &b| library.artists[a].sort_key.cmp(&library.artists[b].sort_key));
 
         self.selected_library = Some(index);
         self.library = library;
-        self.covers.borrow_mut().clear();
         self.artist_order = artist_order;
         self.visible.clear();
         self.playing = None;
@@ -108,6 +120,18 @@ impl App {
         self.is_playing = false;
         self.reset_navigation();
         Ok(())
+    }
+
+    fn add_covers(&mut self, pixels: Vec<(i64, covers::Pixels)>) {
+        self.covers.extend(pixels.into_iter().map(|(album, pixels)| (album, covers::to_image(pixels))));
+    }
+
+    // Catalogue préchargé en arrière-plan ; ignoré si l'utilisateur l'a déjà ouvert.
+    fn add_preloaded(&mut self, index: usize, library: Library, pixels: Vec<(i64, covers::Pixels)>) {
+        if self.selected_library != Some(index) && !self.catalogs.contains_key(&index) {
+            self.catalogs.insert(index, library);
+            self.add_covers(pixels);
+        }
     }
 
     // Retour à la racine de la bibliothèque (navigateToRoot de la v0.1).
@@ -196,15 +220,7 @@ impl App {
     }
 
     fn cover(&self, album: usize) -> (Image, bool) {
-        if !self.library.albums[album].has_artwork {
-            return (Image::default(), false);
-        }
-        let mut covers = self.covers.borrow_mut();
-        let cover = covers.entry(album).or_insert_with(|| {
-            let artwork = self.db.artwork(self.library.albums[album].id, COVER_SIZE);
-            artwork.ok().flatten().and_then(|artwork| covers::decode(&artwork.data))
-        });
-        match cover {
+        match self.covers.get(&self.library.albums[album].id) {
             Some(image) => (image.clone(), true),
             None => (Image::default(), false),
         }
@@ -740,6 +756,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Timer::single_shot(Duration::ZERO, move || {
         if let Some(ui) = w.upgrade() {
             z.attach(&ui);
+        }
+    });
+
+    // Préchargement des autres bibliothèques, sur une connexion dédiée.
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let pending: Vec<(usize, i64)> = ctx.app.borrow().libraries.iter().enumerate().skip(1).map(|(i, l)| (i, l.id)).collect();
+    std::thread::spawn(move || {
+        let Ok(db) = Database::open(&path) else { return };
+        for (index, id) in pending {
+            match Library::load_with_covers(&db, id, COVER_SIZE) {
+                Ok(loaded) => {
+                    if sender.send((index, loaded)).is_err() {
+                        return;
+                    }
+                }
+                Err(error) => eprintln!("preload library {id}: {error}"),
+            }
+        }
+    });
+    let c = ctx.clone();
+    let preload = Timer::default();
+    preload.start(TimerMode::Repeated, Duration::from_millis(100), move || {
+        while let Ok((index, (library, pixels))) = receiver.try_recv() {
+            c.app.borrow_mut().add_preloaded(index, library, pixels);
         }
     });
 

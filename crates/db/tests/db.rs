@@ -92,6 +92,10 @@ fn artwork_picks_the_smallest_sufficient_size() {
     assert_eq!(size(160), Some(600));
     assert_eq!(size(1200), Some(600));
     assert_eq!(db.artwork(11, 80).unwrap(), None);
+
+    let all: Vec<_> = db.library_artworks(1, 160).unwrap().into_iter().map(|(album, a)| (album, a.size)).collect();
+    assert_eq!(all, [(10, 600)]);
+    assert!(db.library_artworks(2, 160).unwrap().is_empty());
 }
 
 // Sous-ensemble du schéma de la v0.1, avec ses colonnes ajoutées après coup.

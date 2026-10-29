@@ -5,6 +5,8 @@ use std::collections::HashMap;
 
 use audioplayer_db::Database;
 
+use crate::covers::{self, Pixels};
+
 pub struct Artist {
     pub name: String,
     pub sort_key: String,
@@ -18,7 +20,6 @@ pub struct Album {
     pub sort_key: String,
     pub year: i32,
     pub total_discs: i32,
-    pub has_artwork: bool,
     pub is_favorite: bool,
 }
 
@@ -70,7 +71,6 @@ impl Library {
                 title: album.title,
                 year: album.year.unwrap_or(0),
                 total_discs: album.disc_count as i32,
-                has_artwork: album.has_artwork,
                 is_favorite: album.is_favorite,
             });
         }
@@ -96,6 +96,14 @@ impl Library {
             });
         }
         Ok(library)
+    }
+
+    /// Catalogue et pochettes décodées ; utilisable hors du fil de l'interface.
+    pub fn load_with_covers(db: &Database, library_id: i64, cover_size: u32) -> audioplayer_db::Result<(Self, Vec<(i64, Pixels)>)> {
+        let library = Library::load(db, library_id)?;
+        let artworks = db.library_artworks(library_id, cover_size)?;
+        let encoded = artworks.into_iter().map(|(album, artwork)| (album, artwork.data)).collect();
+        Ok((library, covers::decode_all(encoded)))
     }
 
     pub fn track_by_id(&self, id: i64) -> Option<usize> {

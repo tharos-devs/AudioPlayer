@@ -135,6 +135,24 @@ impl Database {
         Ok(self.conn.query_row("SELECT datetime('now', ?1)", [modifier], |row| row.get(0))?)
     }
 
+    /// Pochettes de tous les albums d'une bibliothèque, une par album, choisies
+    /// comme [`Database::artwork`].
+    pub fn library_artworks(&self, library_id: i64, min_size: u32) -> Result<Vec<(i64, Artwork)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT album_id, size, mime, data FROM (
+                 SELECT w.album_id, w.size, w.mime, w.data,
+                        row_number() OVER (PARTITION BY w.album_id
+                                           ORDER BY w.size < ?2, CASE WHEN w.size >= ?2 THEN w.size ELSE -w.size END) AS rank
+                 FROM artworks w JOIN albums al ON al.id = w.album_id
+                 WHERE al.library_id = ?1)
+             WHERE rank = 1",
+        )?;
+        let rows = stmt.query_map(params![library_id, min_size], |row| {
+            Ok((row.get(0)?, Artwork { size: row.get(1)?, mime: row.get(2)?, data: row.get(3)? }))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// La plus petite pochette d'au moins `min_size` pixels, sinon la plus grande disponible.
     pub fn artwork(&self, album_id: i64, min_size: u32) -> Result<Option<Artwork>> {
         let artwork = self
