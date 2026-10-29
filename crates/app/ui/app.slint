@@ -26,6 +26,8 @@ export component AppWindow inherits Window {
     min-height: 500px;
     background: Theme.bg-primary;
     default-font-size: 12px;
+    // Choix de l'utilisateur ; livrée avec macOS et Windows, sinon police de repli.
+    default-font-family: "Verdana";
 
     in property <[ListItem]> libraries;
     in-out property <int> selected-library: -1;
