@@ -174,8 +174,6 @@ export component ThemedMenu inherits PopupWindow {
 export global Menus {
     pure public function artist(favorite: bool) -> [MenuEntry] {
         return [
-            { action: "play", label: @tr("Play"), enabled: true },
-            { action: "play-next", label: @tr("Play Next"), enabled: true },
             { action: "enqueue", label: @tr("Add to Queue"), enabled: true },
             { action: "", label: @tr("Add to Playlist"), enabled: true, separated: true, submenu: true },
             { action: "favorite", label: favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites"), enabled: true },
@@ -185,8 +183,6 @@ export global Menus {
     }
     pure public function album(favorite: bool) -> [MenuEntry] {
         return [
-            { action: "play", label: @tr("Play"), enabled: true },
-            { action: "play-next", label: @tr("Play Next"), enabled: true },
             { action: "enqueue", label: @tr("Add to Queue"), enabled: true },
             { action: "show-on-disk", label: @tr("Show on Disk"), enabled: true, separated: true },
             { action: "set-artwork", label: @tr("Set Album Artwork…"), enabled: true },
@@ -198,8 +194,6 @@ export global Menus {
     }
     pure public function track(favorite: bool) -> [MenuEntry] {
         return [
-            { action: "play", label: @tr("Play"), enabled: true },
-            { action: "play-next", label: @tr("Play Next"), enabled: true },
             { action: "enqueue", label: @tr("Add to Queue"), enabled: true },
             { action: "show-album", label: @tr("Show Album"), enabled: true, separated: true },
             { action: "show-on-disk", label: @tr("Show on Disk"), enabled: true },

@@ -1141,8 +1141,6 @@ impl App {
     fn track_action(&mut self, ui: &AppWindow, id: i32, action: &str) {
         let Some(track) = from_ui_id(id).filter(|&t| t < self.library.tracks.len()) else { return };
         match action {
-            // Un morceau lancé depuis la liste : la file est la liste affichée.
-            "play" => self.play(ui, track),
             "show-album" => {
                 self.reveal_album(ui, self.library.tracks[track].album);
                 ui.set_selected_track(id);
@@ -1197,7 +1195,7 @@ impl App {
         }
     }
 
-    // « Play » d'un artiste ou d'un album : tous ses morceaux, dans l'ordre.
+    // Lance tous les morceaux d'un élément, dans l'ordre (file vide au départ).
     fn play_items(&mut self, ui: &AppWindow, item: Dragged) {
         let (Some(library), tracks) = (self.selected_library, self.tracks_of(item)) else { return };
         let Some(&first) = tracks.first() else { return };
@@ -1206,9 +1204,9 @@ impl App {
         self.start(ui);
     }
 
-    // « Play Next » (juste après le morceau en cours) ou « Add to Queue » (à la fin).
-    // Sans lecture en cours, ou depuis une autre bibliothèque, les morceaux sont lancés.
-    fn queue_items(&mut self, ui: &AppWindow, item: Dragged, next: bool) {
+    // « Add to Queue » : à la fin de la file. Sans lecture en cours, ou depuis une autre
+    // bibliothèque, les morceaux sont lancés.
+    fn enqueue(&mut self, ui: &AppWindow, item: Dragged) {
         let tracks = self.tracks_of(item);
         let same_library = self.now.as_ref().is_some_and(|now| Some(now.library) == self.selected_library);
         if tracks.is_empty() {
@@ -1229,11 +1227,9 @@ impl App {
             }
         };
         now.index = Some(index);
-        let at = if next { index + 1 } else { now.queue.len() };
-        now.queue.splice(at..at, tracks);
+        now.queue.extend(tracks);
         self.queue_next();
-        let kind = if next { StatusKind::PlayNext } else { StatusKind::Enqueued };
-        self.show_status(ui, Status { kind, track: self.label_of(item).into(), ..Default::default() });
+        self.show_status(ui, Status { kind: StatusKind::Enqueued, track: self.label_of(item).into(), ..Default::default() });
     }
 
     // Révèle le fichier (morceau) ou ouvre le dossier (album) dans le gestionnaire de fichiers.
@@ -1341,9 +1337,7 @@ impl App {
     // Menus contextuels : actions communes aux morceaux, albums et artistes.
     fn item_action(&mut self, ui: &AppWindow, item: Dragged, action: &str) {
         match action {
-            "play" => self.play_items(ui, item),
-            "play-next" => self.queue_items(ui, item, true),
-            "enqueue" => self.queue_items(ui, item, false),
+            "enqueue" => self.enqueue(ui, item),
             "show-on-disk" => self.show_on_disk(item),
             "set-artwork" => {
                 if let Dragged::Album(album) = item {

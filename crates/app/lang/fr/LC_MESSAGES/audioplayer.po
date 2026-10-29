@@ -54,11 +54,7 @@ msgstr "Aucune lecture"
 msgid "Peach"
 msgstr "Pêche"
 
-msgid "Play Next"
-msgstr "Lire ensuite"
 
-msgid "Play"
-msgstr "Lire"
 
 msgid "Playlists"
 msgstr "Playlists"
@@ -394,8 +390,6 @@ msgid "Reset Play Count"
 msgstr "Remettre les écoutes à zéro"
 
 
-msgid "“{0}” will play next"
-msgstr "« {0} » sera lu ensuite"
 
 msgid "“{0}” added to the queue"
 msgstr "« {0} » ajouté à la file"

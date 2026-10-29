@@ -11,7 +11,7 @@ import { SetupWindow, DatabaseProblem, DatabaseProblems } from "setup.slint";
 
 export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind }
 
-export enum StatusKind { summary, added-to-playlist, already-in-playlist, play-next, enqueued, tracks-added, scan-listing, scan-reading, scan-finished, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed }
+export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, tracks-added, scan-listing, scan-reading, scan-finished, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed }
 
 // Les messages d'état sont formatés ici (et non en Rust) pour passer par @tr.
 export struct Status {
@@ -88,8 +88,6 @@ export component AppWindow inherits Window {
         ? @tr("“{0}” added to “{1}”", root.status.track, root.status.playlist)
         : root.status.kind == StatusKind.already-in-playlist
         ? @tr("“{0}” is already in “{1}”", root.status.track, root.status.playlist)
-        : root.status.kind == StatusKind.play-next
-        ? @tr("“{0}” will play next", root.status.track)
         : root.status.kind == StatusKind.enqueued
         ? @tr("“{0}” added to the queue", root.status.track)
         : root.status.kind == StatusKind.scan-listing
