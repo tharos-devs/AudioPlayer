@@ -1974,13 +1974,10 @@ impl App {
         put("bitrate", details.iter().map(|d| number(d.bitrate)).collect());
         put("sample-rate", details.iter().map(|d| number(d.sample_rate)).collect());
         put("bit-depth", details.iter().map(|d| number(d.bit_depth)).collect());
-        put("channels", details.iter().map(|d| number(d.channels)).collect());
-        // Durée et taille : le total de la sélection.
         let seconds: u64 = details.iter().map(|d| d.duration_ms / 1000).sum();
         put("duration", vec![if details.is_empty() { String::new() } else { seconds.to_string() }]);
         let size = details.iter().map(|d| d.file_size).sum::<Option<u64>>();
         put("file-size", vec![size.map_or(String::new(), |s| s.to_string())]);
-        put("path", details.iter().map(|d| d.path.clone()).collect());
 
         self.tag_tracks = details.iter().map(|d| d.id).collect();
         self.tag_values = values;
@@ -2012,13 +2009,15 @@ impl App {
                 pair_multiple: *pair_multiple,
             });
         }
-        if self.tag_technical {
-            for &key in TECHNICAL_FIELDS {
-                let (text, multiple) = value(key);
-                rows.push(TagRow { key: key.into(), value: text.into(), multiple: *multiple, ..Default::default() });
-            }
-        }
         ui.set_tag_rows(model(rows));
+        // Tableau du bas, pour un seul morceau ; la résolution seulement si le format en a une.
+        let technical: Vec<TagRow> = TECHNICAL_FIELDS
+            .iter()
+            .filter(|_| self.tag_technical && self.tag_tracks.len() == 1)
+            .filter(|&&key| key != "bit-depth" || !value(key).0.is_empty())
+            .map(|&key| TagRow { key: key.into(), value: value(key).0.as_str().into(), ..Default::default() })
+            .collect();
+        ui.set_tag_technical(model(technical));
         let mut choices: Vec<TagChoice> =
             TAG_FIELDS.iter().map(|&key| TagChoice { key: key.into(), shown: self.tag_fields.iter().any(|f| f == key) }).collect();
         choices.push(TagChoice { key: "technical".into(), shown: self.tag_technical });
@@ -2287,7 +2286,7 @@ const GENRES: &[&str] = &[
     "Progressive Rock", "Punk", "R&B", "Reggae", "Rock", "Soul", "Soundtrack", "Swing", "Techno", "Trance", "Trip-Hop",
     "World",
 ];
-const TECHNICAL_FIELDS: &[&str] = &["codec", "bitrate", "sample-rate", "bit-depth", "channels", "duration", "file-size", "path"];
+const TECHNICAL_FIELDS: &[&str] = &["file-size", "duration", "bitrate", "sample-rate", "bit-depth", "codec"];
 
 // Valeur d'un champ modifiable, telle que la base la connaît.
 fn field_value(d: &TrackDetails, field: Field) -> String {

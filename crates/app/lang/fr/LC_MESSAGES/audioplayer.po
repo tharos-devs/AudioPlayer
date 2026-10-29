@@ -569,3 +569,9 @@ msgstr "{0} sur {1}"
 
 msgid "of"
 msgstr "sur"
+
+msgid "Length"
+msgstr "Durée"
+
+msgid "File Type"
+msgstr "Type de fichier"

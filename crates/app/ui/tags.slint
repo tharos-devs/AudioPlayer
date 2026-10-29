@@ -34,10 +34,9 @@ global TagLabels {
             : key == "barcode" ? @tr("Barcode") : key == "disc-subtitle" ? @tr("Disc Subtitle")
             : key == "compilation" ? @tr("Part of a Compilation")
             : key == "technical" ? @tr("Technical Details")
-            : key == "codec" ? @tr("Format") : key == "bitrate" ? @tr("Bitrate")
+            : key == "codec" ? @tr("File Type") : key == "bitrate" ? @tr("Bitrate")
             : key == "sample-rate" ? @tr("Sample Rate") : key == "bit-depth" ? @tr("Bit Depth")
-            : key == "channels" ? @tr("Channels") : key == "duration" ? @tr("Duration")
-            : key == "file-size" ? @tr("File Size") : key == "path" ? @tr("File") : key;
+            : key == "duration" ? @tr("Length") : key == "file-size" ? @tr("File Size") : key;
     }
 
     // Valeurs brutes envoyées par Rust, mises en forme ici.
@@ -46,12 +45,20 @@ global TagLabels {
         if key == "sample-rate" { return value + " Hz"; }
         if key == "bit-depth" { return value + " bit"; }
         if key == "compilation" { return value == "1" ? @tr("Yes") : @tr("No"); }
+        // Comme la v0.1 : 02:44, ou 1:02:44 au-delà d'une heure.
         if key == "duration" {
-            let seconds = value.to-float();
-            let rest = Math.mod(floor(seconds), 60);
-            return floor(seconds / 60) + ":" + (rest < 10 ? "0" : "") + rest;
+            let seconds = floor(value.to-float());
+            let hours = floor(seconds / 3600);
+            let minutes = Math.mod(floor(seconds / 60), 60);
+            let rest = Math.mod(seconds, 60);
+            return (hours > 0 ? hours + ":" : "") + (minutes < 10 ? "0" : "") + minutes + ":" + (rest < 10 ? "0" : "") + rest;
         }
-        if key == "file-size" { return (round(value.to-float() / 104857.6) / 10) + " MB"; }
+        if key == "file-size" {
+            let bytes = value.to-float();
+            return bytes < 1024 ? bytes + " B"
+                : bytes < 1048576 ? (bytes / 1024).to-fixed(1) + " KiB"
+                : (bytes / 1048576).to-fixed(2) + " MiB";
+        }
         return value;
     }
 }
@@ -231,6 +238,8 @@ export component TagsDrawer inherits Rectangle {
     in property <[TagRow]> rows;
     in property <[TagChoice]> choices;
     in property <[string]> genre-suggestions;
+    // Tableau technique du bas (un seul morceau, hors édition), comme la v0.1.
+    in property <[TagRow]> technical;
     // Nombre de morceaux affichés.
     in property <int> count;
     in property <bool> editing;
@@ -254,10 +263,9 @@ export component TagsDrawer inherits Rectangle {
                     text: (root.saving ? @tr("Saving Tags…")
                         : root.editing ? @tr("Edit Tags")
                         : root.count <= 1 ? @tr("Track Info")
-                        : @tr("{n} track selected" | "{n} tracks selected" % root.count)).to-uppercase();
-                    font-size: 11px;
+                        : @tr("{n} track selected" | "{n} tracks selected" % root.count));
+                    font-size: 12px;
                     font-weight: 600;
-                    letter-spacing: 0.5px;
                     color: root.editing ? Theme.accent : Theme.text-secondary;
                     vertical-alignment: center;
                     overflow: elide;
@@ -305,7 +313,7 @@ export component TagsDrawer inherits Rectangle {
             Rectangle {
                 y: parent.height - Theme.hairline;
                 height: Theme.hairline;
-                background: Theme.border;
+                background: Theme.border-base;
             }
         }
 
@@ -330,63 +338,44 @@ export component TagsDrawer inherits Rectangle {
             }
         }
 
-        if root.count > 0: ScrollView {
+        if root.count > 0: scroll := ScrollView {
             vertical-stretch: 1;
+            // Largeur imposée : sans elle, la hauteur d'un texte replié (long commentaire)
+            // est calculée pour une seule ligne et le bas est rogné.
             VerticalLayout {
-                padding: 12px;
-                spacing: 9px;
-                for row in root.rows: VerticalLayout {
-                    spacing: 3px;
-                    // En édition, les champs non modifiables s'estompent comme dans la v0.1.
-                    opacity: root.editing && !row.editable ? 0.55 : 1;
-                    Text {
-                        text: TagLabels.label(row.key);
-                        font-size: 10px;
-                        color: Theme.text-tertiary;
-                    }
-                    if !(root.editing && row.editable): TagValue {
-                        tag: row;
-                    }
-                    if root.editing && row.editable && row.key == "compilation": Choice {
-                        value: row.multiple ? "" : row.value;
-                        edited(value) => {
-                            root.value-edited(row.key, value);
+                width: scroll.visible-width;
+                alignment: start;
+                padding-top: 4px;
+                padding-bottom: 4px;
+                for row[index] in root.rows: Rectangle {
+                    VerticalLayout {
+                        padding-top: 5px;
+                        padding-bottom: 5px;
+                        padding-left: 14px;
+                        padding-right: 12px;
+                        spacing: 2px;
+                        // En édition, les champs non modifiables s'estompent comme dans la v0.1.
+                        opacity: root.editing && !row.editable ? 0.55 : 1;
+                        Text {
+                            text: TagLabels.label(row.key).to-uppercase();
+                            font-size: 10px;
+                            font-weight: 500;
+                            letter-spacing: 0.4px;
+                            color: Theme.text-tertiary;
                         }
-                    }
-                    if root.editing && row.editable && row.key == "genre": GenreField {
-                        value: row.value;
-                        placeholder: row.multiple ? @tr("Multiple values") : "";
-                        suggestions: root.genre-suggestions;
-                        edited(value) => {
-                            root.value-edited(row.key, value);
+                        if !(root.editing && row.editable): TagValue {
+                            tag: row;
                         }
-                        accepted => {
-                            root.save();
+                        if root.editing && row.editable && row.key == "compilation": Choice {
+                            value: row.multiple ? "" : row.value;
+                            edited(value) => {
+                                root.value-edited(row.key, value);
+                            }
                         }
-                        cancelled => {
-                            root.cancel();
-                        }
-                    }
-                    if root.editing && row.editable && row.pair-key == "" && row.key != "compilation" && row.key != "genre": TagField {
-                        text: row.value;
-                        placeholder: row.multiple ? @tr("Multiple values") : "";
-                        edited(value) => {
-                            root.value-edited(row.key, value);
-                        }
-                        accepted => {
-                            root.save();
-                        }
-                        cancelled => {
-                            root.cancel();
-                        }
-                    }
-                    if root.editing && row.editable && row.pair-key != "": HorizontalLayout {
-                        spacing: 8px;
-                        alignment: start;
-                        TagField {
-                            width: 64px;
-                            text: row.value;
-                            placeholder: row.multiple ? "…" : "";
+                        if root.editing && row.editable && row.key == "genre": GenreField {
+                            value: row.value;
+                            placeholder: row.multiple ? @tr("Multiple values") : "";
+                            suggestions: root.genre-suggestions;
                             edited(value) => {
                                 root.value-edited(row.key, value);
                             }
@@ -397,18 +386,11 @@ export component TagsDrawer inherits Rectangle {
                                 root.cancel();
                             }
                         }
-                        Text {
-                            text: @tr("of");
-                            font-size: 12px;
-                            color: Theme.text-tertiary;
-                            vertical-alignment: center;
-                        }
-                        TagField {
-                            width: 64px;
-                            text: row.pair-value;
-                            placeholder: row.pair-multiple ? "…" : "";
+                        if root.editing && row.editable && row.pair-key == "" && row.key != "compilation" && row.key != "genre": TagField {
+                            text: row.value;
+                            placeholder: row.multiple ? @tr("Multiple values") : "";
                             edited(value) => {
-                                root.value-edited(row.pair-key, value);
+                                root.value-edited(row.key, value);
                             }
                             accepted => {
                                 root.save();
@@ -417,6 +399,86 @@ export component TagsDrawer inherits Rectangle {
                                 root.cancel();
                             }
                         }
+                        if root.editing && row.editable && row.pair-key != "": HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            TagField {
+                                width: 64px;
+                                text: row.value;
+                                placeholder: row.multiple ? "…" : "";
+                                edited(value) => {
+                                    root.value-edited(row.key, value);
+                                }
+                                accepted => {
+                                    root.save();
+                                }
+                                cancelled => {
+                                    root.cancel();
+                                }
+                            }
+                            Text {
+                                text: @tr("of");
+                                font-size: 12px;
+                                color: Theme.text-tertiary;
+                                vertical-alignment: center;
+                            }
+                            TagField {
+                                width: 64px;
+                                text: row.pair-value;
+                                placeholder: row.pair-multiple ? "…" : "";
+                                edited(value) => {
+                                    root.value-edited(row.pair-key, value);
+                                }
+                                accepted => {
+                                    root.save();
+                                }
+                                cancelled => {
+                                    root.cancel();
+                                }
+                            }
+                        }
+                    }
+                    // Séparateur sous chaque champ, sauf le dernier.
+                    if index < root.rows.length - 1: Rectangle {
+                        x: 0;
+                        y: parent.height - Theme.hairline;
+                        width: parent.width;
+                        height: Theme.hairline;
+                        background: Theme.border;
+                    }
+                }
+            }
+        }
+
+        if root.count == 1 && !root.editing && !root.saving && root.technical.length > 0: Rectangle {
+            background: Theme.bg-secondary;
+            Rectangle {
+                y: 0;
+                height: Theme.hairline;
+                background: Theme.border-base;
+            }
+            VerticalLayout {
+                padding-top: 6px;
+                padding-bottom: 8px;
+                padding-left: 14px;
+                padding-right: 14px;
+                for item in root.technical: HorizontalLayout {
+                    padding-top: 2px;
+                    padding-bottom: 2px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: TagLabels.label(item.key);
+                        font-size: 10px;
+                        font-weight: 500;
+                        color: Theme.text-tertiary;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: item.value == "" ? "—" : TagLabels.format(item.key, item.value);
+                        font-size: 11px;
+                        color: Theme.text-secondary;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
                     }
                 }
             }
