@@ -274,15 +274,16 @@ export component ArtistRow inherits Rectangle {
     DragArea {
         allow-copy: true;
         data: root.payload();
+        touch := TouchArea {
+            clicked => {
+                root.clicked();
+            }
+        }
+        // Par-dessus la ligne : il prend le clic droit, laisse passer clics, survol et glisser.
         ArtistMenuArea {
             favorite: root.item.favorite;
             action(name) => {
                 root.action(name);
-            }
-            touch := TouchArea {
-                clicked => {
-                    root.clicked();
-                }
             }
         }
     }
@@ -345,15 +346,16 @@ export component AlbumRow inherits Rectangle {
     DragArea {
         allow-copy: true;
         data: root.payload();
+        touch := TouchArea {
+            clicked => {
+                root.clicked();
+            }
+        }
+        // Par-dessus la ligne : il prend le clic droit, laisse passer clics, survol et glisser.
         AlbumMenuArea {
             favorite: root.item.favorite;
             action(name) => {
                 root.action(name);
-            }
-            touch := TouchArea {
-                clicked => {
-                    root.clicked();
-                }
             }
         }
     }

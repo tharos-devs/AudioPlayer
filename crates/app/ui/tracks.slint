@@ -221,83 +221,83 @@ component TrackListRow inherits Rectangle {
         allow-copy: true;
         data: root.payload(root.item.id);
 
+        Rectangle {
+            height: Metrics.cell;
+            background: root.playing ? Theme.playing-bg : (root.selected ? Theme.current-bg : (touch.has-hover ? Theme.item-hover : transparent));
+
+            Rectangle {
+                x: 0;
+                width: 3px;
+                background: root.playing ? Theme.accent : transparent;
+            }
+
+            touch := TouchArea {
+                clicked => {
+                    root.select();
+                }
+                double-clicked => {
+                    root.play();
+                }
+            }
+
+            HorizontalLayout {
+                Rectangle {
+                    width: Metrics.number;
+                    if root.playing && root.running: PlayingIndicator {
+                        alignment: center;
+                    }
+                    if !(root.playing && root.running): Text {
+                        // 0 = numéro absent des tags.
+                        text: root.item.number > 0 ? root.item.number : "";
+                        font-size: 12px;
+                        color: root.playing ? Theme.accent : Theme.text-tertiary;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 8px;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: root.item.title;
+                        font-size: 13px;
+                        font-weight: root.playing || root.selected ? 500 : 400;
+                        color: root.playing || root.selected ? Theme.accent : Theme.text-primary;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        min-width: 0px;
+                    }
+                }
+                HorizontalLayout {
+                    width: Metrics.duration;
+                    padding-right: 16px;
+                    Text {
+                        text: root.item.duration;
+                        font-size: 11px;
+                        color: Theme.text-tertiary;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                }
+                HorizontalLayout {
+                    width: Metrics.disc;
+                    padding-right: 16px;
+                    Text {
+                        text: root.item.disc;
+                        font-size: 11px;
+                        color: Theme.text-tertiary;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        // Par-dessus la ligne : il prend le clic droit, laisse passer clics, survol et glisser.
         TrackContextArea {
             favorite: root.item.favorite;
             action(name) => {
                 root.action(name);
-            }
-
-            Rectangle {
-                height: Metrics.cell;
-                background: root.playing ? Theme.playing-bg : (root.selected ? Theme.current-bg : (touch.has-hover ? Theme.item-hover : transparent));
-
-                Rectangle {
-                    x: 0;
-                    width: 3px;
-                    background: root.playing ? Theme.accent : transparent;
-                }
-
-                touch := TouchArea {
-                    clicked => {
-                        root.select();
-                    }
-                    double-clicked => {
-                        root.play();
-                    }
-                }
-
-                HorizontalLayout {
-                    Rectangle {
-                        width: Metrics.number;
-                        if root.playing && root.running: PlayingIndicator {
-                            alignment: center;
-                        }
-                        if !(root.playing && root.running): Text {
-                            // 0 = numéro absent des tags.
-                            text: root.item.number > 0 ? root.item.number : "";
-                            font-size: 12px;
-                            color: root.playing ? Theme.accent : Theme.text-tertiary;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                    }
-                    HorizontalLayout {
-                        padding-left: 16px;
-                        padding-right: 8px;
-                        horizontal-stretch: 1;
-                        Text {
-                            text: root.item.title;
-                            font-size: 13px;
-                            font-weight: root.playing || root.selected ? 500 : 400;
-                            color: root.playing || root.selected ? Theme.accent : Theme.text-primary;
-                            vertical-alignment: center;
-                            overflow: elide;
-                            min-width: 0px;
-                        }
-                    }
-                    HorizontalLayout {
-                        width: Metrics.duration;
-                        padding-right: 16px;
-                        Text {
-                            text: root.item.duration;
-                            font-size: 11px;
-                            color: Theme.text-tertiary;
-                            horizontal-alignment: right;
-                            vertical-alignment: center;
-                        }
-                    }
-                    HorizontalLayout {
-                        width: Metrics.disc;
-                        padding-right: 16px;
-                        Text {
-                            text: root.item.disc;
-                            font-size: 11px;
-                            color: Theme.text-tertiary;
-                            horizontal-alignment: right;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
             }
         }
     }
@@ -445,75 +445,75 @@ component PlaylistTrackRow inherits Rectangle {
         allow-copy: true;
         data: root.payload(root.item.id);
 
+        touch := TouchArea {
+            clicked => {
+                root.select();
+            }
+            double-clicked => {
+                root.play();
+            }
+        }
+
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            Rectangle {
+                width: 36px;
+                if root.playing && root.running: PlayingIndicator {
+                    alignment: center;
+                }
+                if !(root.playing && root.running): Text {
+                    text: root.item.number;
+                    font-size: 12px;
+                    color: root.playing ? Theme.accent : Theme.text-tertiary;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+            Rectangle {
+                width: 48px;
+                Artwork {
+                    size: 36px;
+                    radius: 3px;
+                    icon-size: 14px;
+                    source: root.item.artwork;
+                    has-image: root.item.has-artwork;
+                }
+            }
+            VerticalLayout {
+                padding-left: 4px;
+                padding-right: 8px;
+                alignment: center;
+                spacing: 2px;
+                horizontal-stretch: 1;
+                Text {
+                    text: root.item.title;
+                    font-size: 13px;
+                    font-weight: root.playing || root.selected ? 500 : 400;
+                    color: root.playing || root.selected ? Theme.accent : Theme.text-primary;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.item.artist + " • " + root.item.album;
+                    font-size: 11px;
+                    color: Theme.text-tertiary;
+                    overflow: elide;
+                }
+            }
+            Text {
+                width: Metrics.duration;
+                text: root.item.duration;
+                font-size: 11px;
+                color: Theme.text-tertiary;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+        }
+        // Par-dessus la ligne : il prend le clic droit, laisse passer clics, survol et glisser.
         TrackContextArea {
             favorite: root.item.favorite;
             action(name) => {
                 root.action(name);
-            }
-
-            touch := TouchArea {
-                clicked => {
-                    root.select();
-                }
-                double-clicked => {
-                    root.play();
-                }
-            }
-
-            HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                Rectangle {
-                    width: 36px;
-                    if root.playing && root.running: PlayingIndicator {
-                        alignment: center;
-                    }
-                    if !(root.playing && root.running): Text {
-                        text: root.item.number;
-                        font-size: 12px;
-                        color: root.playing ? Theme.accent : Theme.text-tertiary;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-                Rectangle {
-                    width: 48px;
-                    Artwork {
-                        size: 36px;
-                        radius: 3px;
-                        icon-size: 14px;
-                        source: root.item.artwork;
-                        has-image: root.item.has-artwork;
-                    }
-                }
-                VerticalLayout {
-                    padding-left: 4px;
-                    padding-right: 8px;
-                    alignment: center;
-                    spacing: 2px;
-                    horizontal-stretch: 1;
-                    Text {
-                        text: root.item.title;
-                        font-size: 13px;
-                        font-weight: root.playing || root.selected ? 500 : 400;
-                        color: root.playing || root.selected ? Theme.accent : Theme.text-primary;
-                        overflow: elide;
-                    }
-                    Text {
-                        text: root.item.artist + " • " + root.item.album;
-                        font-size: 11px;
-                        color: Theme.text-tertiary;
-                        overflow: elide;
-                    }
-                }
-                Text {
-                    width: Metrics.duration;
-                    text: root.item.duration;
-                    font-size: 11px;
-                    color: Theme.text-tertiary;
-                    horizontal-alignment: right;
-                    vertical-alignment: center;
-                }
             }
         }
     }
