@@ -1,0 +1,542 @@
+import { LineEdit, ListView, Palette } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { ListItem, PanelHeader, SelectableRow, ArtistRow, AlbumRow, Artwork, Splitter, IconButton, AccentPicker } from "widgets.slint";
+import { TrackItem, TrackItemKind, TrackList, PlaylistTrackList } from "tracks.slint";
+
+export { Theme, ListItem, TrackItem, TrackItemKind }
+
+export enum StatusKind { summary, added-to-playlist, already-in-playlist, play-next, enqueued }
+
+// Les messages d'état sont formatés ici (et non en Rust) pour passer par @tr.
+export struct Status {
+    kind: StatusKind,
+    track: string,
+    playlist: string,
+}
+
+component PlaylistRow inherits Rectangle {
+    in property <ListItem> item;
+    in property <bool> selected;
+    callback clicked();
+    pure callback accepts(data-transfer) -> bool;
+    callback drop-tracks(data-transfer);
+    height: Theme.row-height;
+    border-width: drop.has-drag ? 1px : 0px;
+    border-color: Theme.accent;
+    background: drop.has-drag ? Theme.drop-bg : transparent;
+
+    drop := DropArea {
+        can-drop(event) => {
+            return root.accepts(event.data) ? DragAction.copy : DragAction.none;
+        }
+        dropped(event) => {
+            root.drop-tracks(event.data);
+            return event.proposed-action;
+        }
+
+        SelectableRow {
+            label: "♫  " + root.item.label;
+            detail: root.item.count;
+            selected: root.selected;
+            clicked => {
+                root.clicked();
+            }
+        }
+    }
+}
+
+component PlayerBar inherits Rectangle {
+    in property <string> title;
+    in property <string> artist;
+    in property <image> artwork;
+    in property <bool> has-artwork;
+    in property <bool> has-track;
+    in property <bool> playing;
+    in property <int> position;
+    in property <int> duration;
+    in property <string> position-text;
+    in property <string> duration-text;
+    in-out property <string> search-text;
+    callback show-current();
+    callback previous();
+    callback toggle-play();
+    callback next();
+    callback seek(float);
+    callback search(string);
+
+    height: 64px;
+    background: Theme.bg-secondary;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 16px;
+
+        // Jaquette du morceau en cours : un clic ramène à son album.
+        VerticalLayout {
+            alignment: center;
+            art := Rectangle {
+                width: 45px;
+                height: 45px;
+                border-radius: 6px;
+                drop-shadow-blur: art-touch.has-hover ? 8px : 0px;
+                drop-shadow-offset-y: 2px;
+                drop-shadow-color: Theme.artwork-shadow;
+                Artwork {
+                    size: 45px;
+                    radius: 6px;
+                    icon-size: 20px;
+                    source: root.artwork;
+                    has-image: root.has-artwork;
+                }
+                art-touch := TouchArea {
+                    mouse-cursor: root.has-track ? pointer : default;
+                    clicked => {
+                        root.show-current();
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: 4px;
+            IconButton {
+                icon: @image-url("icons/previous.svg");
+                clicked => {
+                    root.previous();
+                }
+            }
+            IconButton {
+                icon: root.playing ? @image-url("icons/pause.svg") : @image-url("icons/play.svg");
+                icon-size: 22px;
+                width: 40px;
+                height: 40px;
+                active: true;
+                clicked => {
+                    root.toggle-play();
+                }
+            }
+            IconButton {
+                icon: @image-url("icons/next.svg");
+                clicked => {
+                    root.next();
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 4px;
+
+            Text {
+                text: root.has-track ? root.title : @tr("Nothing playing");
+                font-size: 13px;
+                font-weight: 600;
+                color: Theme.text-primary;
+                overflow: elide;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: root.artist;
+                font-size: Theme.small-font-size;
+                color: Theme.accent;
+                overflow: elide;
+                horizontal-alignment: center;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: root.position-text;
+                    font-size: 10px;
+                    color: Theme.text-tertiary;
+                    vertical-alignment: center;
+                    width: 36px;
+                    horizontal-alignment: right;
+                }
+                Rectangle {
+                    height: 12px;
+                    horizontal-stretch: 1;
+
+                    Rectangle {
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Theme.border-base;
+                    }
+                    Rectangle {
+                        x: 0;
+                        height: 4px;
+                        border-radius: 2px;
+                        width: root.duration > 0 ? parent.width * root.position / root.duration : 0px;
+                        background: Theme.accent;
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.seek(self.mouse-x / self.width);
+                        }
+                    }
+                }
+                Text {
+                    text: root.duration-text;
+                    font-size: 10px;
+                    color: Theme.text-tertiary;
+                    vertical-alignment: center;
+                    width: 36px;
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            LineEdit {
+                width: 240px;
+                text <=> root.search-text;
+                placeholder-text: @tr("Search title, artist, album…");
+                edited(text) => {
+                    root.search(text);
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "AudioPlayer";
+    preferred-width: 1360px;
+    preferred-height: 820px;
+    min-width: 900px;
+    min-height: 500px;
+    background: Theme.bg-primary;
+    default-font-size: 12px;
+
+    in property <[ListItem]> artists;
+    in property <[ListItem]> albums;
+    in property <[ListItem]> playlists;
+    in property <[TrackItem]> track-items;
+    in property <[TrackItem]> playlist-items;
+    in-out property <int> selected-artist: -1;
+    in-out property <int> selected-album: -1;
+    in-out property <int> selected-playlist: -1;
+    in-out property <int> selected-track: -1;
+    in property <string> playlist-name;
+    in property <int> library-count;
+    in property <int> artists-count;
+    in property <int> albums-count;
+    in property <int> tracks-count;
+    in property <int> tracks-duration;
+
+    in property <int> playing-track: -1;
+    in property <bool> playing;
+    in property <string> now-title;
+    in property <string> now-artist;
+    in property <image> now-artwork;
+    in property <bool> now-has-artwork;
+    in property <int> position;
+    in property <int> duration;
+    in property <string> position-text: "0:00";
+    in property <string> duration-text: "0:00";
+
+    in property <Status> status;
+    property <string> status-text: root.status.kind == StatusKind.added-to-playlist
+        ? @tr("“{0}” added to “{1}”", root.status.track, root.status.playlist)
+        : root.status.kind == StatusKind.already-in-playlist
+        ? @tr("“{0}” is already in “{1}”", root.status.track, root.status.playlist)
+        : root.status.kind == StatusKind.play-next
+        ? @tr("“{0}” will play next (not wired yet)", root.status.track)
+        : root.status.kind == StatusKind.enqueued
+        ? @tr("“{0}” added to the queue (not wired yet)", root.status.track)
+        : @tr("{n} track" | "{n} tracks" % root.tracks-count) + " · "
+            + @tr("{0} h {1} min", floor(root.tracks-duration / 3600), Math.mod(floor(root.tracks-duration / 60), 60));
+    in-out property <string> search-text;
+
+    in-out property <length> sidebar-width: 210px;
+    in-out property <length> artists-width: 220px;
+    in-out property <length> albums-width: 280px;
+
+    callback select-artist(int);
+    callback select-album(int);
+    callback select-playlist(int);
+    callback search(string);
+    callback play-track(int);
+    callback show-current();
+    callback toggle-play();
+    callback previous();
+    callback next();
+    callback seek(float);
+    callback track-action(int, string);
+    callback drop-on-playlist(int, data-transfer);
+    pure callback track-payload(int) -> data-transfer;
+    pure callback is-track-payload(data-transfer) -> bool;
+    callback select-language(string);
+    in-out property <string> language: "en";
+
+    function toggle-theme() {
+        Theme.dark = !Theme.dark;
+        Palette.color-scheme = Theme.dark ? ColorScheme.dark : ColorScheme.light;
+    }
+
+    init => {
+        Palette.color-scheme = Theme.dark ? ColorScheme.dark : ColorScheme.light;
+    }
+
+    MenuBar {
+        Menu {
+            title: @tr("View");
+            MenuItem {
+                title: Theme.dark ? @tr("Light Theme") : @tr("Dark Theme");
+                activated => {
+                    root.toggle-theme();
+                }
+            }
+            Menu {
+                title: @tr("Language");
+                MenuItem {
+                    title: "English";
+                    checkable: true;
+                    checked: root.language == "en";
+                    activated => {
+                        root.select-language("en");
+                    }
+                }
+                MenuItem {
+                    title: "Français";
+                    checkable: true;
+                    checked: root.language == "fr";
+                    activated => {
+                        root.select-language("fr");
+                    }
+                }
+            }
+        }
+    }
+
+    VerticalLayout {
+        PlayerBar {
+            title: root.now-title;
+            artist: root.now-artist;
+            artwork: root.now-artwork;
+            has-artwork: root.now-has-artwork;
+            has-track: root.playing-track != -1;
+            playing: root.playing;
+            position: root.position;
+            duration: root.duration;
+            position-text: root.position-text;
+            duration-text: root.duration-text;
+            search-text <=> root.search-text;
+            show-current => {
+                root.show-current();
+            }
+            previous => {
+                root.previous();
+            }
+            toggle-play => {
+                root.toggle-play();
+            }
+            next => {
+                root.next();
+            }
+            seek(ratio) => {
+                root.seek(ratio);
+            }
+            search(text) => {
+                root.search(text);
+            }
+        }
+
+        HorizontalLayout {
+            vertical-stretch: 1;
+
+            // Bibliothèque + playlists + sélecteur d'accent
+            Rectangle {
+                width: root.sidebar-width;
+                background: Theme.bg-secondary;
+
+                VerticalLayout {
+                    PanelHeader {
+                        title: @tr("Library");
+                    }
+                    SelectableRow {
+                        label: "♪  " + @tr("All Tracks");
+                        detail: root.library-count;
+                        selected: root.selected-playlist == -1;
+                        clicked => {
+                            root.select-playlist(-1);
+                        }
+                    }
+                    PanelHeader {
+                        title: @tr("Playlists");
+                    }
+                    for playlist in root.playlists: PlaylistRow {
+                        item: playlist;
+                        selected: playlist.id == root.selected-playlist;
+                        clicked => {
+                            root.select-playlist(playlist.id);
+                        }
+                        accepts(data) => {
+                            return root.is-track-payload(data);
+                        }
+                        drop-tracks(data) => {
+                            root.drop-on-playlist(playlist.id, data);
+                        }
+                    }
+                    Rectangle {
+                        vertical-stretch: 1;
+                    }
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.border;
+                    }
+                    AccentPicker { }
+                }
+            }
+
+            Splitter {
+                target <=> root.sidebar-width;
+                minimum: 160px;
+                maximum: 360px;
+            }
+
+            if root.selected-playlist == -1: Rectangle {
+                width: root.artists-width;
+                background: Theme.panel-bg;
+
+                VerticalLayout {
+                    PanelHeader {
+                        title: @tr("Artists");
+                        badge: @tr("{n} artist" | "{n} artists" % root.artists-count);
+                    }
+                    ListView {
+                        for artist in root.artists: ArtistRow {
+                            item: artist;
+                            selected: artist.id == root.selected-artist;
+                            clicked => {
+                                root.select-artist(artist.id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.selected-playlist == -1: Splitter {
+                target <=> root.artists-width;
+            }
+
+            if root.selected-playlist == -1: Rectangle {
+                width: root.albums-width;
+                background: Theme.panel-bg;
+
+                VerticalLayout {
+                    PanelHeader {
+                        title: @tr("Albums");
+                        badge: @tr("{n} album" | "{n} albums" % root.albums-count);
+                    }
+                    ListView {
+                        for album in root.albums: AlbumRow {
+                            item: album;
+                            selected: album.id == root.selected-album;
+                            clicked => {
+                                root.select-album(album.id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.selected-playlist == -1: Splitter {
+                target <=> root.albums-width;
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+                background: Theme.panel-bg;
+
+                if root.selected-playlist == -1: VerticalLayout {
+                    PanelHeader {
+                        title: @tr("Tracks");
+                        badge: @tr("{n} track" | "{n} tracks" % root.tracks-count);
+                    }
+                    TrackList {
+                        items: root.track-items;
+                        playing-track: root.playing-track;
+                        running: root.playing;
+                        selected-track <=> root.selected-track;
+                        play-track(id) => {
+                            root.play-track(id);
+                        }
+                        track-action(id, name) => {
+                            root.track-action(id, name);
+                        }
+                        track-payload(id) => {
+                            return root.track-payload(id);
+                        }
+                    }
+                }
+
+                if root.selected-playlist != -1: VerticalLayout {
+                    PanelHeader {
+                        title: root.playlist-name;
+                        badge: @tr("{n} track" | "{n} tracks" % root.tracks-count);
+                    }
+                    PlaylistTrackList {
+                        items: root.playlist-items;
+                        playing-track: root.playing-track;
+                        running: root.playing;
+                        selected-track <=> root.selected-track;
+                        play-track(id) => {
+                            root.play-track(id);
+                        }
+                        track-action(id, name) => {
+                            root.track-action(id, name);
+                        }
+                        track-payload(id) => {
+                            return root.track-payload(id);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Barre d'état
+        Rectangle {
+            height: 26px;
+            background: Theme.bg-secondary;
+
+            Rectangle {
+                y: 0;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 6px;
+                spacing: 8px;
+                Text {
+                    text: root.status-text;
+                    font-size: Theme.small-font-size;
+                    color: Theme.text-tertiary;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                IconButton {
+                    icon: Theme.dark ? @image-url("icons/moon.svg") : @image-url("icons/sun.svg");
+                    icon-size: 13px;
+                    width: 24px;
+                    height: 24px;
+                    clicked => {
+                        root.toggle-theme();
+                    }
+                }
+            }
+        }
+    }
+}

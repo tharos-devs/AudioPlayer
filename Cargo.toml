@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/app"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+
+[workspace.dependencies]
+slint = "1.18"
+slint-build = "1.18"

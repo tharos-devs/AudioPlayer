@@ -1,0 +1,467 @@
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Artwork, PlayingIndicator } from "widgets.slint";
+
+export enum TrackItemKind { album-header, track }
+
+// Une ligne de la liste des morceaux : en-tête d'album ou morceau.
+export struct TrackItem {
+    kind: TrackItemKind,
+    id: int,
+    number: int,
+    title: string,
+    duration: string,
+    disc: string,
+    artist: string,
+    album: string,
+    year: int,
+    track-count: int,
+    artwork: image,
+    has-artwork: bool,
+    first-in-album: bool,
+}
+
+// Mesures de la v0.1 : lignes de 43px, colonne de jaquette de 92px (80px + marge).
+global Metrics {
+    out property <length> row: 43px;
+    out property <length> cell: 32px;
+    out property <length> padding: 12px;
+    out property <length> artwork-column: 92px;
+    out property <length> artwork: 80px;
+    out property <length> number: 50px;
+    out property <length> duration: 70px;
+    out property <length> disc: 50px;
+}
+
+component TrackContextArea inherits ContextMenuArea {
+    callback action(string);
+
+    Menu {
+        MenuItem {
+            title: @tr("Play");
+            activated => {
+                root.action("play");
+            }
+        }
+        MenuItem {
+            title: @tr("Play Next");
+            activated => {
+                root.action("play-next");
+            }
+        }
+        MenuItem {
+            title: @tr("Add to Queue");
+            activated => {
+                root.action("enqueue");
+            }
+        }
+        MenuSeparator { }
+        MenuItem {
+            title: @tr("Show Album");
+            activated => {
+                root.action("show-album");
+            }
+        }
+        MenuItem {
+            title: @tr("Add to Favorites");
+            activated => {
+                root.action("favorite");
+            }
+        }
+        MenuSeparator { }
+        MenuItem {
+            title: @tr("Edit Tags…");
+            enabled: false;
+        }
+    }
+}
+
+// La jaquette de 80px commence dans l'en-tête et déborde sur le premier morceau.
+// Chaque ligne dessine sa tranche (`offset`) : le rendu reste juste même quand la
+// ListView a recyclé l'en-tête hors de l'écran.
+component ArtworkSlice inherits Rectangle {
+    in property <TrackItem> item;
+    in property <length> offset;
+    x: Metrics.padding;
+    width: Metrics.artwork-column;
+    clip: true;
+
+    Artwork {
+        x: 0;
+        y: 1px - root.offset;
+        size: Metrics.artwork;
+        radius: 6px;
+        icon-size: 32px;
+        source: root.item.artwork;
+        has-image: root.item.has-artwork;
+    }
+}
+
+component AlbumHeaderRow inherits Rectangle {
+    in property <TrackItem> item;
+    height: Metrics.row;
+
+    ArtworkSlice {
+        item: root.item;
+        offset: 0;
+    }
+
+    Rectangle {
+        x: Metrics.padding + Metrics.artwork-column;
+        width: parent.width - self.x - Metrics.padding;
+        height: Metrics.cell;
+        border-radius: 4px;
+        background: Theme.group-bg;
+
+        VerticalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            alignment: center;
+            spacing: 1px;
+            Text {
+                text: root.item.album;
+                font-size: 12px;
+                font-weight: 600;
+                color: Theme.text-primary;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                text: root.item.artist + " • " + root.item.year + " • " + @tr("{n} track" | "{n} tracks" % root.item.track-count);
+                font-size: 10px;
+                color: Theme.text-tertiary;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+component TrackListRow inherits Rectangle {
+    in property <TrackItem> item;
+    in property <bool> selected;
+    in property <bool> playing;
+    in property <bool> running;
+    callback select();
+    callback play();
+    callback action(string);
+    pure callback payload(int) -> data-transfer;
+    height: Metrics.row;
+
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.item-border;
+    }
+
+    if root.item.first-in-album: ArtworkSlice {
+        item: root.item;
+        offset: Metrics.row;
+    }
+
+    DragArea {
+        x: Metrics.padding + Metrics.artwork-column;
+        width: parent.width - self.x - Metrics.padding;
+        allow-copy: true;
+        data: root.payload(root.item.id);
+
+        TrackContextArea {
+            action(name) => {
+                root.action(name);
+            }
+
+            Rectangle {
+                height: Metrics.cell;
+                background: root.playing ? Theme.playing-bg : (root.selected ? Theme.current-bg : (touch.has-hover ? Theme.item-hover : transparent));
+
+                Rectangle {
+                    x: 0;
+                    width: 3px;
+                    background: root.playing ? Theme.accent : transparent;
+                }
+
+                touch := TouchArea {
+                    clicked => {
+                        root.select();
+                    }
+                    double-clicked => {
+                        root.play();
+                    }
+                }
+
+                HorizontalLayout {
+                    Rectangle {
+                        width: Metrics.number;
+                        if root.playing && root.running: PlayingIndicator {
+                            alignment: center;
+                        }
+                        if !(root.playing && root.running): Text {
+                            text: root.item.number;
+                            font-size: 12px;
+                            color: root.playing ? Theme.accent : Theme.text-tertiary;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 8px;
+                        horizontal-stretch: 1;
+                        Text {
+                            text: root.item.title;
+                            font-size: 13px;
+                            font-weight: root.playing || root.selected ? 500 : 400;
+                            color: root.playing || root.selected ? Theme.accent : Theme.text-primary;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            min-width: 0px;
+                        }
+                    }
+                    HorizontalLayout {
+                        width: Metrics.duration;
+                        padding-right: 16px;
+                        Text {
+                            text: root.item.duration;
+                            font-size: 11px;
+                            color: Theme.text-tertiary;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                        }
+                    }
+                    HorizontalLayout {
+                        width: Metrics.disc;
+                        padding-right: 16px;
+                        Text {
+                            text: root.item.disc;
+                            font-size: 11px;
+                            color: Theme.text-tertiary;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component ColumnLabel inherits Text {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    color: Theme.text-tertiary;
+    vertical-alignment: center;
+}
+
+// Vue bibliothèque : morceaux groupés par album, avec jaquettes.
+export component TrackList inherits VerticalLayout {
+    in property <[TrackItem]> items;
+    in property <int> playing-track: -1;
+    in property <bool> running;
+    in-out property <int> selected-track: -1;
+    callback play-track(int);
+    callback track-action(int, string);
+    pure callback track-payload(int) -> data-transfer;
+
+    Rectangle {
+        height: 25px;
+
+        HorizontalLayout {
+            padding-left: Metrics.padding + Metrics.artwork-column;
+            padding-right: Metrics.padding;
+            ColumnLabel {
+                width: Metrics.number;
+                text: "#";
+                horizontal-alignment: center;
+            }
+            HorizontalLayout {
+                padding-left: 16px;
+                horizontal-stretch: 1;
+                ColumnLabel {
+                    text: @tr("Title").to-uppercase();
+                }
+            }
+            HorizontalLayout {
+                width: Metrics.duration;
+                padding-right: 16px;
+                ColumnLabel {
+                    text: @tr("Time").to-uppercase();
+                    horizontal-alignment: right;
+                }
+            }
+            HorizontalLayout {
+                width: Metrics.disc;
+                padding-right: 16px;
+                ColumnLabel {
+                    text: @tr("Disc").to-uppercase();
+                    horizontal-alignment: right;
+                }
+            }
+        }
+
+        Rectangle {
+            y: parent.height - 1px;
+            height: 1px;
+            background: Theme.item-border;
+        }
+    }
+
+    // ListView n'instancie que les lignes visibles : 10 000+ morceaux restent fluides.
+    ListView {
+        for item in root.items: Rectangle {
+            height: Metrics.row;
+
+            if item.kind == TrackItemKind.album-header: AlbumHeaderRow {
+                item: item;
+            }
+            if item.kind == TrackItemKind.track: TrackListRow {
+                item: item;
+                selected: item.id == root.selected-track;
+                playing: item.id == root.playing-track;
+                running: root.running;
+                select => {
+                    root.selected-track = item.id;
+                }
+                play => {
+                    root.play-track(item.id);
+                }
+                action(name) => {
+                    root.track-action(item.id, name);
+                }
+                payload(id) => {
+                    return root.track-payload(id);
+                }
+            }
+        }
+    }
+}
+
+// Ligne de playlist (52px) : position, petite jaquette, titre et artiste • album.
+component PlaylistTrackRow inherits Rectangle {
+    in property <TrackItem> item;
+    in property <bool> selected;
+    in property <bool> playing;
+    in property <bool> running;
+    callback select();
+    callback play();
+    callback action(string);
+    pure callback payload(int) -> data-transfer;
+    height: 52px;
+    background: root.playing ? Theme.playing-bg : (root.selected ? Theme.current-bg : (touch.has-hover ? Theme.item-hover : transparent));
+
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.item-border;
+    }
+    Rectangle {
+        x: 0;
+        width: 3px;
+        background: root.playing ? Theme.accent : transparent;
+    }
+
+    DragArea {
+        allow-copy: true;
+        data: root.payload(root.item.id);
+
+        TrackContextArea {
+            action(name) => {
+                root.action(name);
+            }
+
+            touch := TouchArea {
+                clicked => {
+                    root.select();
+                }
+                double-clicked => {
+                    root.play();
+                }
+            }
+
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                Rectangle {
+                    width: 36px;
+                    if root.playing && root.running: PlayingIndicator {
+                        alignment: center;
+                    }
+                    if !(root.playing && root.running): Text {
+                        text: root.item.number;
+                        font-size: 12px;
+                        color: root.playing ? Theme.accent : Theme.text-tertiary;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                Rectangle {
+                    width: 48px;
+                    Artwork {
+                        size: 36px;
+                        radius: 3px;
+                        icon-size: 14px;
+                        source: root.item.artwork;
+                        has-image: root.item.has-artwork;
+                    }
+                }
+                VerticalLayout {
+                    padding-left: 4px;
+                    padding-right: 8px;
+                    alignment: center;
+                    spacing: 2px;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: root.item.title;
+                        font-size: 13px;
+                        font-weight: root.playing || root.selected ? 500 : 400;
+                        color: root.playing || root.selected ? Theme.accent : Theme.text-primary;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.item.artist + " • " + root.item.album;
+                        font-size: 11px;
+                        color: Theme.text-tertiary;
+                        overflow: elide;
+                    }
+                }
+                Text {
+                    width: Metrics.duration;
+                    text: root.item.duration;
+                    font-size: 11px;
+                    color: Theme.text-tertiary;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+export component PlaylistTrackList inherits ListView {
+    in property <[TrackItem]> items;
+    in property <int> playing-track: -1;
+    in property <bool> running;
+    in-out property <int> selected-track: -1;
+    callback play-track(int);
+    callback track-action(int, string);
+    pure callback track-payload(int) -> data-transfer;
+
+    for item in root.items: PlaylistTrackRow {
+        item: item;
+        selected: item.id == root.selected-track;
+        playing: item.id == root.playing-track;
+        running: root.running;
+        select => {
+            root.selected-track = item.id;
+        }
+        play => {
+            root.play-track(item.id);
+        }
+        action(name) => {
+            root.track-action(item.id, name);
+        }
+        payload(id) => {
+            return root.track-payload(id);
+        }
+    }
+}

@@ -1,0 +1,10 @@
+[package]
+name = "audioplayer"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+slint.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true

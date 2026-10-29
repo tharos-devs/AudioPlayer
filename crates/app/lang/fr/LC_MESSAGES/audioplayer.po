@@ -1,0 +1,121 @@
+msgid ""
+msgstr ""
+"Language: fr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "Add to Favorites"
+msgstr "Ajouter aux favoris"
+
+msgid "Add to Queue"
+msgstr "Ajouter à la file d'attente"
+
+msgid "Albums"
+msgstr "Albums"
+
+msgid "All Tracks"
+msgstr "Tous les morceaux"
+
+msgid "Amber"
+msgstr "Ambre"
+
+msgid "Artists"
+msgstr "Artistes"
+
+msgid "Blue"
+msgstr "Bleu"
+
+msgid "Dark Theme"
+msgstr "Thème sombre"
+
+msgid "Edit Tags…"
+msgstr "Éditer les tags…"
+
+msgid "Indigo"
+msgstr "Indigo"
+
+msgid "Language"
+msgstr "Langue"
+
+msgid "Library"
+msgstr "Bibliothèque"
+
+msgid "Light Theme"
+msgstr "Thème clair"
+
+msgid "Nothing playing"
+msgstr "Aucune lecture"
+
+msgid "Peach"
+msgstr "Pêche"
+
+msgid "Play Next"
+msgstr "Lire ensuite"
+
+msgid "Play"
+msgstr "Lire"
+
+msgid "Playlists"
+msgstr "Playlists"
+
+msgid "Purple"
+msgstr "Violet"
+
+msgid "Rose"
+msgstr "Rose"
+
+msgid "Search title, artist, album…"
+msgstr "Rechercher titre, artiste, album…"
+
+msgid "Show Album"
+msgstr "Afficher l'album"
+
+msgid "Teal"
+msgstr "Vert"
+
+msgid "Title"
+msgstr "Titre"
+
+msgid "Tracks"
+msgstr "Morceaux"
+
+msgid "View"
+msgstr "Affichage"
+
+msgid "{0} h {1} min"
+msgstr "{0} h {1} min"
+
+msgid "“{0}” added to the queue (not wired yet)"
+msgstr "« {0} » ajouté à la file (non branché)"
+
+msgid "“{0}” added to “{1}”"
+msgstr "« {0} » ajouté à « {1} »"
+
+msgid "“{0}” is already in “{1}”"
+msgstr "« {0} » est déjà dans « {1} »"
+
+msgid "“{0}” will play next (not wired yet)"
+msgstr "« {0} » sera lu ensuite (non branché)"
+
+msgid "{n} track"
+msgid_plural "{n} tracks"
+msgstr[0] "{n} morceau"
+msgstr[1] "{n} morceaux"
+
+msgid "Time"
+msgstr "Durée"
+
+msgid "Disc"
+msgstr "Disque"
+
+msgid "{n} album"
+msgid_plural "{n} albums"
+msgstr[0] "{n} album"
+msgstr[1] "{n} albums"
+
+msgid "{n} artist"
+msgid_plural "{n} artists"
+msgstr[0] "{n} artiste"
+msgstr[1] "{n} artistes"

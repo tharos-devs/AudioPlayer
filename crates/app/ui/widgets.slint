@@ -1,0 +1,310 @@
+import { Theme } from "theme.slint";
+
+export struct ListItem {
+    id: int,
+    label: string,
+    count: int,
+    artwork: image,
+    has-artwork: bool,
+}
+
+// En-tête de panneau : titre en capitales + pastille de comptage, comme la v0.1.
+export component PanelHeader inherits Rectangle {
+    in property <string> title;
+    in property <string> badge;
+    height: 36px;
+    background: Theme.panel-bg;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 10px;
+        spacing: 8px;
+        alignment: start;
+        Text {
+            text: root.title.to-uppercase();
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            color: Theme.text-secondary;
+            vertical-alignment: center;
+        }
+        if root.badge != "": VerticalLayout {
+            alignment: center;
+            Rectangle {
+                height: 16px;
+                border-radius: 8px;
+                background: Theme.hover-bg;
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    Text {
+                        text: root.badge;
+                        font-size: 9px;
+                        color: Theme.accent;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Jaquette arrondie, avec l'icône dossier de la v0.1 quand l'album n'en a pas.
+export component Artwork inherits Rectangle {
+    in property <image> source;
+    in property <bool> has-image;
+    in property <length> size: 40px;
+    in property <length> radius: 4px;
+    in property <length> icon-size: 16px;
+    width: root.size;
+    height: root.size;
+    border-radius: root.radius;
+    clip: true;
+    background: Theme.placeholder-bg;
+
+    if root.has-image: Image {
+        width: 100%;
+        height: 100%;
+        source: root.source;
+        image-fit: cover;
+    }
+    if !root.has-image: Image {
+        width: root.icon-size;
+        height: root.icon-size;
+        source: @image-url("icons/folder.svg");
+        colorize: Theme.text-tertiary;
+    }
+}
+
+export component ArtistRow inherits Rectangle {
+    in property <ListItem> item;
+    in property <bool> selected;
+    callback clicked();
+    height: 48px;
+
+    Rectangle {
+        x: 4px;
+        width: parent.width - 8px;
+        border-radius: 6px;
+        clip: true;
+        background: root.selected ? Theme.selected-bg : (touch.has-hover ? Theme.item-hover : transparent);
+
+        Rectangle {
+            x: 0;
+            width: 3px;
+            background: root.selected ? Theme.accent : transparent;
+        }
+
+        VerticalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.item.label;
+                font-size: 13px;
+                font-weight: 500;
+                color: root.selected ? Theme.accent : Theme.text-primary;
+                overflow: elide;
+            }
+            Text {
+                text: @tr("{n} album" | "{n} albums" % root.item.count);
+                font-size: 11px;
+                color: Theme.text-tertiary;
+                overflow: elide;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component AlbumRow inherits Rectangle {
+    in property <ListItem> item;
+    in property <bool> selected;
+    callback clicked();
+    height: 61px;
+    background: root.selected ? Theme.selected-bg : (touch.has-hover ? Theme.item-hover : transparent);
+
+    Rectangle {
+        x: 0;
+        width: 3px;
+        background: root.selected ? Theme.accent : transparent;
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.item-border;
+    }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            Artwork {
+                source: root.item.artwork;
+                has-image: root.item.has-artwork;
+                size: 40px;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.item.label;
+                font-size: 13px;
+                font-weight: 500;
+                color: root.selected ? Theme.accent : Theme.text-primary;
+                overflow: elide;
+            }
+            Text {
+                text: @tr("{n} track" | "{n} tracks" % root.item.count);
+                font-size: 11px;
+                color: Theme.text-tertiary;
+                overflow: elide;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Ligne simple de la barre latérale (bibliothèque, playlists).
+export component SelectableRow inherits Rectangle {
+    in property <string> label;
+    in property <string> detail;
+    in property <bool> selected;
+    callback clicked();
+    height: Theme.row-height;
+    background: root.selected ? Theme.selected-bg : (touch.has-hover ? Theme.item-hover : transparent);
+
+    Rectangle {
+        x: 0;
+        width: 3px;
+        height: 100%;
+        background: root.selected ? Theme.accent : transparent;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 10px;
+        spacing: 6px;
+        Text {
+            text: root.label;
+            font-size: Theme.font-size;
+            color: root.selected ? Theme.accent : Theme.text-primary;
+            overflow: elide;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: root.detail;
+            font-size: Theme.small-font-size;
+            color: Theme.text-tertiary;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Trois barres animées, affichées à la place du numéro du morceau en cours.
+export component PlayingIndicator inherits HorizontalLayout {
+    in property <bool> animated: true;
+    spacing: 2px;
+    alignment: end;
+
+    for bar in 3: VerticalLayout {
+        alignment: center;
+        Rectangle {
+            width: 3px;
+            border-radius: 1px;
+            background: Theme.accent;
+            height: root.animated ? 4px + 10px * abs(sin(animation-tick() / 500ms * 180deg + bar * 70deg)) : 6px;
+        }
+    }
+}
+
+// Poignée de redimensionnement verticale entre deux panneaux.
+export component Splitter inherits Rectangle {
+    in-out property <length> target;
+    in property <length> minimum: 120px;
+    in property <length> maximum: 600px;
+    width: 5px;
+
+    Rectangle {
+        width: touch.has-hover || touch.pressed ? 3px : 1px;
+        background: touch.has-hover || touch.pressed ? Theme.accent : Theme.border;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: col-resize;
+        moved => {
+            root.target = clamp(root.target + self.mouse-x - self.pressed-x, root.minimum, root.maximum);
+        }
+    }
+}
+
+export component IconButton inherits Rectangle {
+    in property <image> icon;
+    in property <length> icon-size: 16px;
+    in property <bool> active;
+    callback clicked();
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: touch.has-hover ? Theme.hover-bg : transparent;
+
+    Image {
+        source: root.icon;
+        width: root.icon-size;
+        height: root.icon-size;
+        colorize: touch.has-hover || root.active ? Theme.accent : Theme.text-secondary;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Pastilles de couleur d'accent, comme en bas du panneau Bibliothèque de la v0.1.
+export component AccentPicker inherits HorizontalLayout {
+    padding: 10px;
+    spacing: 8px;
+    alignment: center;
+
+    for accent in Theme.accents: Rectangle {
+        width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        background: accent.value;
+        border-width: Theme.accent-id == accent.id ? 2px : 0px;
+        border-color: Theme.text-primary;
+        drop-shadow-blur: swatch.has-hover ? 4px : 0px;
+        drop-shadow-color: accent.value;
+
+        swatch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                Theme.accent-id = accent.id;
+                Theme.accent = accent.value;
+            }
+        }
+    }
+}

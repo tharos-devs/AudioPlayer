@@ -1,0 +1,50 @@
+export struct AccentColor {
+    id: string,
+    label: string,
+    value: color,
+}
+
+// Toutes les nuances dérivent de `dark` et `accent` : changer l'un des deux
+// suffit à re-thémer toute l'interface. Valeurs reprises de la v0.1.
+export global Theme {
+    in-out property <bool> dark: true;
+    in-out property <string> accent-id: "blue";
+    in-out property <color> accent: #409eff;
+
+    out property <[AccentColor]> accents: [
+        { id: "rose", label: @tr("Rose"), value: #e85d75 },
+        { id: "peach", label: @tr("Peach"), value: #f0883e },
+        { id: "amber", label: @tr("Amber"), value: #c8961e },
+        { id: "teal", label: @tr("Teal"), value: #14a59b },
+        { id: "blue", label: @tr("Blue"), value: #409eff },
+        { id: "indigo", label: @tr("Indigo"), value: #5b78d1 },
+        { id: "purple", label: @tr("Purple"), value: #9952c0 },
+    ];
+
+    out property <color> bg-primary: dark ? #141414 : #ffffff;
+    out property <color> bg-secondary: dark ? #1d1d1d : #f5f7fa;
+    out property <color> bg-tertiary: dark ? #262626 : #e4e7ed;
+    out property <color> panel-bg: dark ? #1d1d1d : #fdfdfd;
+
+    out property <color> text-primary: dark ? #e5eaf3 : #303133;
+    out property <color> text-secondary: dark ? #cfd3dc : #606266;
+    out property <color> text-tertiary: dark ? #a3a6ad : #909399;
+
+    out property <color> border: dark ? #333333 : #ebeef5;
+    out property <color> border-base: dark ? #404040 : #dcdfe6;
+    out property <color> item-border: dark ? #333333 : #f0f0f0;
+    out property <color> item-hover: dark ? #262626 : #f0f0f0;
+    out property <color> group-bg: dark ? #303133 : #f4f4f5;
+    out property <color> placeholder-bg: dark ? #262626 : #f0f0f0;
+    out property <color> artwork-shadow: dark ? #0000004d : #0000001a;
+
+    out property <color> hover-bg: accent.with-alpha(0.06);
+    out property <color> selected-bg: accent.with-alpha(0.12);
+    out property <color> current-bg: accent.with-alpha(0.08);
+    out property <color> playing-bg: accent.with-alpha(0.18);
+    out property <color> drop-bg: accent.with-alpha(0.25);
+
+    out property <length> font-size: 12px;
+    out property <length> small-font-size: 11px;
+    out property <length> row-height: 26px;
+}
