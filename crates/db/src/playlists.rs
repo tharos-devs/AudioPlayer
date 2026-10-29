@@ -85,6 +85,42 @@ impl Database {
         Ok(added)
     }
 
+    /// Place `track_ids` à la position `at` (index dans la playlist avant l'opération) :
+    /// ceux déjà présents sont déplacés, les autres ajoutés. Renvoie le nombre d'ajouts.
+    pub fn place_in_playlist(&mut self, playlist_id: i64, at: usize, track_ids: &[i64]) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let order: Vec<i64> = {
+            let mut stmt = tx.prepare("SELECT track_id FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position")?;
+            let rows = stmt.query_map([playlist_id], |row| row.get(0))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let mut moving: Vec<i64> = Vec::new();
+        for id in track_ids {
+            if !moving.contains(id) {
+                moving.push(*id);
+            }
+        }
+        // La position visée se décale des morceaux déplacés qui étaient avant elle.
+        let before = order.iter().take(at).filter(|id| moving.contains(id)).count();
+        let mut rest: Vec<i64> = order.iter().copied().filter(|id| !moving.contains(id)).collect();
+        let at = at.saturating_sub(before).min(rest.len());
+        let added = moving.iter().filter(|id| !order.contains(id)).count();
+        rest.splice(at..at, moving.iter().copied());
+        {
+            let mut insert = tx.prepare("INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id, position) VALUES (?1, ?2, -1)")?;
+            for id in &moving {
+                insert.execute(params![playlist_id, id])?;
+            }
+            let mut place = tx.prepare("UPDATE playlist_tracks SET position = ?3 WHERE playlist_id = ?1 AND track_id = ?2")?;
+            for (position, id) in rest.iter().enumerate() {
+                place.execute(params![playlist_id, id, position as i64])?;
+            }
+        }
+        tx.execute("UPDATE playlists SET updated_at = datetime('now') WHERE id = ?1", [playlist_id])?;
+        tx.commit()?;
+        Ok(added)
+    }
+
     pub fn remove_from_playlist(&mut self, playlist_id: i64, track_ids: &[i64]) -> Result<()> {
         let tx = self.conn.transaction()?;
         {

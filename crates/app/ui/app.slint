@@ -204,6 +204,7 @@ export component AppWindow inherits Window {
     // Morceau, artiste ou album : tout ce qui peut rejoindre une playlist.
     pure callback is-track-payload(data-transfer) -> bool;
     callback artist-action(int, string);
+    callback playlist-reorder(data-transfer, int);
     callback album-action(int, string);
     callback select-language(string);
     callback new-database();
@@ -568,6 +569,12 @@ export component AppWindow inherits Window {
                                 }
                                 track-payload(id) => {
                                     return root.track-payload(id);
+                                }
+                                accepts(data) => {
+                                    return root.is-track-payload(data);
+                                }
+                                reorder(data, row) => {
+                                    root.playlist-reorder(data, row);
                                 }
                             }
                         }

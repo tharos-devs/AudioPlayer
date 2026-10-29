@@ -1326,6 +1326,17 @@ impl App {
         self.show_status(ui, Status { kind, track: label, playlist: name.into(), count: added as i32, ..Default::default() });
     }
 
+    // Glisser dans une playlist affichée : déplacer ses morceaux, ou insérer un artiste/album.
+    fn place_in_playlist(&mut self, ui: &AppWindow, item: Dragged, row: usize) {
+        let Some(playlist) = self.selected_playlist.filter(|_| self.view == View::Playlist) else { return };
+        let ids: Vec<i64> = self.tracks_of(item).into_iter().map(|t| self.library.tracks[t].id).collect();
+        if let Err(error) = self.db.place_in_playlist(playlist, row, &ids) {
+            return eprintln!("playlist {playlist}: {error}");
+        }
+        self.refresh_playlists(ui);
+        self.refresh_tracks(ui);
+    }
+
     // Menus contextuels : actions communes aux morceaux, albums et artistes.
     fn item_action(&mut self, ui: &AppWindow, item: Dragged, action: &str) {
         match action {
@@ -2075,6 +2086,14 @@ fn launch(path: &Path) -> Result<(), Problem> {
     ui.on_artist_payload(|id| payload(ARTIST_PAYLOAD_PREFIX, id));
     ui.on_album_payload(|id| payload(ALBUM_PAYLOAD_PREFIX, id));
     ui.on_is_track_payload(|data| dragged(&data).is_some());
+    let c = ctx.clone();
+    ui.on_playlist_reorder(move |data, row| {
+        c.update(|app, ui| {
+            if let (Some(item), Ok(row)) = (dragged(&data), usize::try_from(row)) {
+                app.place_in_playlist(ui, item, row);
+            }
+        })
+    });
     let c = ctx.clone();
     ui.on_artist_action(move |id, action| {
         c.update(|app, ui| {

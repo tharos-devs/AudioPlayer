@@ -425,3 +425,19 @@ fn scan_writes_update_in_place_and_clean_orphans() {
     assert_eq!(count, 1);
     assert_eq!(db.artwork(album, 150).unwrap().unwrap().data, [1]);
 }
+
+#[test]
+fn playlist_moves_and_inserts_at_a_position() {
+    let mut db = Database::open_in_memory().unwrap();
+    sample(&db);
+    let p = db.create_playlist(1, "P").unwrap().unwrap();
+    db.add_to_playlist(p, &[100, 101, 102]).unwrap();
+    // Déplacer 102 en tête, puis 100 en dernière position (après 101).
+    assert_eq!(db.place_in_playlist(p, 0, &[102]).unwrap(), 0);
+    assert_eq!(db.playlist_tracks(p).unwrap(), [102, 100, 101]);
+    assert_eq!(db.place_in_playlist(p, 3, &[100]).unwrap(), 0);
+    assert_eq!(db.playlist_tracks(p).unwrap(), [102, 101, 100]);
+    // Insérer un nouveau morceau au milieu, avec un déjà présent : pas de doublon.
+    assert_eq!(db.place_in_playlist(p, 1, &[103, 100]).unwrap(), 1);
+    assert_eq!(db.playlist_tracks(p).unwrap(), [102, 103, 100, 101]);
+}

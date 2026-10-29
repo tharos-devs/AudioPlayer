@@ -415,6 +415,9 @@ component PlaylistTrackRow inherits Rectangle {
     callback play();
     callback action(string);
     pure callback payload(int) -> data-transfer;
+    // Dépôt sur la ligne : les éléments glissés sont placés à sa position.
+    pure callback accepts(data-transfer) -> bool;
+    callback dropped(data-transfer);
     height: 52px;
     background: root.playing ? Theme.playing-bg : (root.selected ? Theme.current-bg : (touch.has-hover ? Theme.item-hover : transparent));
 
@@ -428,6 +431,15 @@ component PlaylistTrackRow inherits Rectangle {
         width: 3px;
         background: root.playing ? Theme.accent : transparent;
     }
+
+    drop := DropArea {
+        can-drop(event) => {
+            return root.accepts(event.data) ? DragAction.copy : DragAction.none;
+        }
+        dropped(event) => {
+            root.dropped(event.data);
+            return event.proposed-action;
+        }
 
     DragArea {
         allow-copy: true;
@@ -505,6 +517,14 @@ component PlaylistTrackRow inherits Rectangle {
             }
         }
     }
+    }
+
+    // Trait d'insertion pendant un glisser au-dessus de la ligne.
+    if drop.has-drag: Rectangle {
+        y: 0;
+        height: 2px;
+        background: Theme.accent;
+    }
 }
 
 export component PlaylistTrackList inherits ListView {
@@ -525,8 +545,11 @@ export component PlaylistTrackList inherits ListView {
     callback play-track(int);
     callback track-action(int, string);
     pure callback track-payload(int) -> data-transfer;
+    pure callback accepts(data-transfer) -> bool;
+    // Éléments glissés sur la ligne `row` : à placer à cette position.
+    callback reorder(data-transfer, int);
 
-    for item in root.items: PlaylistTrackRow {
+    for item[row] in root.items: PlaylistTrackRow {
         item: item;
         selected: item.id == root.selected-track;
         playing: item.id == root.playing-track;
@@ -542,6 +565,12 @@ export component PlaylistTrackList inherits ListView {
         }
         payload(id) => {
             return root.track-payload(id);
+        }
+        accepts(data) => {
+            return root.accepts(data);
+        }
+        dropped(data) => {
+            root.reorder(data, row);
         }
     }
 }
