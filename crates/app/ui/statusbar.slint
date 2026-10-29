@@ -112,6 +112,9 @@ export component StatusBar inherits Rectangle {
     in property <string> database-path;
     in-out property <bool> show-path;
     callback path-closed();
+    // Scan ou vérification en cours : bouton d'arrêt devant le message de progression.
+    in property <bool> scanning;
+    callback stop-scan();
 
     height: 44px;
     background: Theme.status-bg;
@@ -159,6 +162,43 @@ export component StatusBar inherits Rectangle {
             selection-foreground-color: Theme.text-primary;
             vertical-alignment: center;
             horizontal-stretch: 1;
+        }
+
+        if !root.show-path && root.scanning: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                height: 22px;
+                width: stop-row.preferred-width + 16px;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: stop-touch.has-hover ? Theme.accent : Theme.border-base;
+                background: stop-touch.has-hover ? Theme.hover-tint : Theme.library-button-bg;
+                stop-row := HorizontalLayout {
+                    x: 8px;
+                    spacing: 5px;
+                    VerticalLayout {
+                        alignment: center;
+                        Image {
+                            source: @image-url("icons/stop.svg");
+                            width: 11px;
+                            height: 11px;
+                            colorize: stop-touch.has-hover ? Theme.accent : Theme.status-text;
+                        }
+                    }
+                    Text {
+                        text: @tr("Stop");
+                        font-size: 11px;
+                        color: stop-touch.has-hover ? Theme.accent : Theme.status-text;
+                        vertical-alignment: center;
+                    }
+                }
+                stop-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.stop-scan();
+                    }
+                }
+            }
         }
 
         // Message temporaire (scan, etc.) : remplace les trois colonnes.

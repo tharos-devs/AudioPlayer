@@ -393,8 +393,6 @@ msgstr "Supprimer de la bibliothèque…"
 msgid "Reset Play Count"
 msgstr "Remettre les écoutes à zéro"
 
-msgid "Stop Scan"
-msgstr "Arrêter le scan"
 
 msgid "“{0}” will play next"
 msgstr "« {0} » sera lu ensuite"
@@ -412,3 +410,6 @@ msgid "Delete “{0}” from the library ({n} track)?"
 msgid_plural "Delete “{0}” from the library ({n} tracks)?"
 msgstr[0] "Supprimer « {0} » de la bibliothèque ({n} morceau) ?"
 msgstr[1] "Supprimer « {0} » de la bibliothèque ({n} morceaux) ?"
+
+msgid "Stop"
+msgstr "Arrêter"

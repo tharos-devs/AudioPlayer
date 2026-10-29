@@ -475,7 +475,6 @@ export component Sidebar inherits Rectangle {
                         { action: "scan", label: @tr("Scan for Changes"), enabled: root.selected-library != -1 && !root.scanning, separated: true },
                         { action: "rescan", label: @tr("Rescan All Files"), enabled: root.selected-library != -1 && !root.scanning },
                         { action: "health", label: @tr("Check Library Health"), enabled: root.selected-library != -1 && !root.scanning },
-                        { action: "stop-scan", label: @tr("Stop Scan"), enabled: root.scanning },
                         { action: "delete-library", label: @tr("Delete Library…"), enabled: root.selected-library != -1, danger: true, separated: true },
                         { action: "new-database", label: @tr("New Database…"), enabled: true, separated: true },
                         { action: "open-database", label: @tr("Open Database…"), enabled: true },

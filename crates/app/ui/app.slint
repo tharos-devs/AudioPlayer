@@ -157,6 +157,7 @@ export component AppWindow inherits Window {
     in property <int> album-reveal-serial;
     callback cycle-panel(int);
     callback library-menu(string);
+    callback stop-scan();
     callback playlist-menu(string);
     in property <int> recent-amount: 2;
     in property <string> recent-unit: "weeks";
@@ -601,6 +602,10 @@ export component AppWindow inherits Window {
                     database-path: root.database-path;
                     path-closed => {
                         keys.focus();
+                    }
+                    scanning: root.scanning;
+                    stop-scan => {
+                        root.stop-scan();
                     }
                 }
             }

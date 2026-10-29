@@ -79,6 +79,7 @@ enum ScanMessage {
     Scanned(Result<audioplayer_scanner::Report, audioplayer_scanner::Error>),
     // Vérification : `None` si le dossier est introuvable, sinon les morceaux absents.
     Checked(Option<Vec<i64>>),
+    CheckStopped,
 }
 
 struct ScanJob {
@@ -1541,11 +1542,6 @@ impl App {
             "scan" => self.start_scan(ui, index, audioplayer_scanner::Mode::Changes),
             "rescan" => self.start_scan(ui, index, audioplayer_scanner::Mode::Full),
             "health" => self.check_library(ui, index),
-            "stop-scan" => {
-                if let Some(job) = &self.scan {
-                    job.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
-            }
             "delete-library" => self.ask_confirmation(ui, ConfirmKind::DeleteLibrary, &name, ConfirmRequest::DeleteLibrary(index)),
             _ => {}
         }
@@ -1639,6 +1635,13 @@ impl App {
         ui.set_scanning(true);
     }
 
+    // Bouton « Arrêter » de la barre d'état : le scan s'arrête au plus vite, sans rien retirer.
+    fn stop_scan(&self) {
+        if let Some(job) = &self.scan {
+            job.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     // Vérification : chaque fichier de la bibliothèque existe-t-il encore ?
     fn check_library(&mut self, ui: &AppWindow, index: usize) {
         if self.scan.is_some() {
@@ -1648,13 +1651,15 @@ impl App {
         let tracks: Vec<(i64, String)> = self.library.tracks.iter().map(|t| (t.id, t.path.clone())).collect();
         let (sender, messages) = std::sync::mpsc::channel();
         let root = PathBuf::from(&library.root_path);
-        std::thread::spawn(move || {
-            let result = root.is_dir().then(|| {
-                tracks.into_iter().filter(|(_, path)| !Path::new(path).exists()).map(|(id, _)| id).collect()
-            });
-            let _ = sender.send(ScanMessage::Checked(result));
-        });
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop = cancel.clone();
+        std::thread::spawn(move || {
+            let stopped = || stop.load(std::sync::atomic::Ordering::Relaxed);
+            let result = root.is_dir().then(|| {
+                tracks.into_iter().take_while(|_| !stopped()).filter(|(_, path)| !Path::new(path).exists()).map(|(id, _)| id).collect()
+            });
+            let _ = sender.send(if stopped() { ScanMessage::CheckStopped } else { ScanMessage::Checked(result) });
+        });
         self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel });
         ui.set_scanning(true);
         ui.set_status(Status { kind: StatusKind::ScanListing, track: library.name.into(), ..Default::default() });
@@ -1716,6 +1721,7 @@ impl App {
                 ui.set_confirm_count(missing.len() as i32);
                 self.ask_confirmation(ui, ConfirmKind::RemoveMissing, &name, ConfirmRequest::RemoveMissing { library, tracks: missing });
             }
+            ScanMessage::CheckStopped => ui.set_status(Status::default()),
             ScanMessage::Progress(_) => {}
         }
     }
@@ -2118,6 +2124,8 @@ fn launch(path: &Path) -> Result<(), Problem> {
         "open-database" => database_action(&c, choose_existing_database),
         action => c.update(|app, ui| app.library_menu(ui, action)),
     });
+    let c = ctx.clone();
+    ui.on_stop_scan(move || c.update(|app, _| app.stop_scan()));
     let c = ctx.clone();
     ui.on_playlist_menu(move |action| c.update(|app, ui| app.playlist_menu(ui, &action)));
     let c = ctx.clone();
