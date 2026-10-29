@@ -79,15 +79,29 @@ export component ThemedMenu inherits PopupWindow {
                                 : entry.danger ? #f56c6c
                                 : item.has-hover ? Theme.accent : Theme.text-primary;
                         }
-                        if entry.submenu: Text {
-                            text: "▸";
-                            font-size: 11px;
-                            vertical-alignment: center;
-                            color: item.has-hover ? Theme.accent : Theme.text-tertiary;
+                        // Chevron : le caractère « ▸ » ressemblait à un point à cette taille.
+                        if entry.submenu: VerticalLayout {
+                            alignment: center;
+                            Image {
+                                source: @image-url("icons/ep-arrow-right.svg");
+                                width: 11px;
+                                height: 11px;
+                                colorize: item.has-hover ? Theme.accent : Theme.text-secondary;
+                            }
                         }
                     }
                     item := TouchArea {
                         enabled: entry.enabled;
+                        // Comme les menus macOS : le sous-menu s'ouvre au survol, ou au clic.
+                        changed has-hover => {
+                            if self.has-hover && entry.submenu {
+                                root.submenu-y = self.absolute-position.y - root.absolute-position.y;
+                                playlists.show();
+                            } else if self.has-hover {
+                                // Survoler une autre entrée referme le sous-menu.
+                                playlists.close();
+                            }
+                        }
                         clicked => {
                             if entry.submenu {
                                 root.submenu-y = self.absolute-position.y - root.absolute-position.y;
