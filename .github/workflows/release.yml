@@ -1,19 +1,39 @@
-# Publie une Release GitHub vX.Y.Z avec les trois fichiers que lit la mise à jour intégrée
-# à l'app : AudioPlayer-X.Y.Z.pkg, AudioPlayer-X.Y.Z-x64.exe, AudioPlayer-X.Y.Z-x86_64.AppImage.
-# Lancé à la main ou en poussant un tag vX.Y.Z ; la version vient de Cargo.toml.
+# Pousser un tag vX.Y.Z (scripts/release.sh) construit AudioPlayer pour macOS, Windows et
+# Linux, chacun séparément, puis publie la Release GitHub vX.Y.Z avec les trois fichiers que
+# lit la mise à jour intégrée à l'app : AudioPlayer-X.Y.Z.pkg, AudioPlayer-X.Y.Z-x64.exe,
+# AudioPlayer-X.Y.Z-x86_64.AppImage. La Release n'est créée qu'une fois les trois builds
+# réussis : une app ne voit jamais une version sans le fichier de son système.
 name: Release
 
 on:
-  workflow_dispatch:
   push:
     tags: ["v*"]
 
+# Lecture seule par défaut ; seule la publication écrit (création de la Release).
+permissions:
+  contents: read
+
 jobs:
+  # Avant de compiler : le tag doit être la version de Cargo.toml, affichée par l'app.
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME but Cargo.toml says $version"
+            exit 1
+          fi
+
   macos:
+    needs: version
     uses: ./.github/workflows/build-macos.yml
   windows:
+    needs: version
     uses: ./.github/workflows/build-windows.yml
   linux:
+    needs: version
     uses: ./.github/workflows/build-linux.yml
 
   publish:
@@ -22,16 +42,6 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - id: version
-        run: echo "version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
-      - name: Tag matches Cargo.toml
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          if [ "${GITHUB_REF_NAME}" != "v${{ steps.version.outputs.version }}" ]; then
-            echo "Tag ${GITHUB_REF_NAME} but Cargo.toml says ${{ steps.version.outputs.version }}" >&2
-            exit 1
-          fi
       - uses: actions/download-artifact@v4
         with:
           pattern: AudioPlayer-*
@@ -40,8 +50,9 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          mv parts/AudioPlayer.exe "parts/AudioPlayer-$VERSION-x64.exe"
+          version="${GITHUB_REF_NAME#v}"
+          mv parts/AudioPlayer.exe "parts/AudioPlayer-$version-x64.exe"
           ls -l parts
-          gh release create "v$VERSION" parts/* --title "AudioPlayer $VERSION" --generate-notes --target "$GITHUB_SHA"
+          gh release create "$GITHUB_REF_NAME" parts/* --repo "$GITHUB_REPOSITORY" \
+            --title "AudioPlayer $version" --generate-notes --verify-tag
