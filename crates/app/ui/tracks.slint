@@ -1,6 +1,6 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Artwork, PlayingIndicator, ListItem, TrackMenu } from "widgets.slint";
+import { Artwork, PlayingIndicator, ListItem, TrackMenu, ThemedMenu, Menus } from "widgets.slint";
 
 export { TrackMenu }
 
@@ -38,99 +38,6 @@ global Metrics {
 }
 
 // Les actions sont des chaînes transmises à Rust ; « add-to-playlist:<id> » vise une playlist.
-// Les actions sont des chaînes transmises à Rust ; « add-to-playlist:<id> » vise une playlist.
-component TrackContextArea inherits ContextMenuArea {
-    in property <bool> favorite;
-    callback action(string);
-
-    Menu {
-        MenuItem {
-            title: @tr("Play");
-            activated => {
-                root.action("play");
-            }
-        }
-        MenuItem {
-            title: @tr("Play Next");
-            activated => {
-                root.action("play-next");
-            }
-        }
-        MenuItem {
-            title: @tr("Add to Queue");
-            activated => {
-                root.action("enqueue");
-            }
-        }
-        MenuSeparator { }
-        MenuItem {
-            title: @tr("Show Album");
-            activated => {
-                root.action("show-album");
-            }
-        }
-        MenuItem {
-            title: @tr("Show on Disk");
-            activated => {
-                root.action("show-on-disk");
-            }
-        }
-        MenuSeparator { }
-        Menu {
-            title: @tr("Add to Playlist");
-            MenuItem {
-                title: @tr("New Playlist…");
-                activated => {
-                    root.action("add-to-new-playlist");
-                }
-            }
-            if TrackMenu.playlists.length > 0: MenuSeparator { }
-            for playlist in TrackMenu.playlists: MenuItem {
-                title: playlist.label;
-                activated => {
-                    root.action("add-to-playlist:" + playlist.id);
-                }
-            }
-        }
-        MenuItem {
-            title: root.favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites");
-            activated => {
-                root.action("favorite");
-            }
-        }
-        if TrackMenu.most-played: MenuItem {
-            title: @tr("Reset Play Count");
-            activated => {
-                root.action("reset-plays");
-            }
-        }
-        MenuSeparator { }
-        MenuItem {
-            title: @tr("Rescan Audio Tags");
-            activated => {
-                root.action("rescan");
-            }
-        }
-        MenuItem {
-            title: @tr("Edit Tags…");
-            enabled: false;
-        }
-        MenuSeparator { }
-        if TrackMenu.in-playlist: MenuItem {
-            title: @tr("Remove from Playlist");
-            activated => {
-                root.action("remove-from-playlist");
-            }
-        }
-        if !TrackMenu.in-playlist: MenuItem {
-            title: @tr("Delete from Library…");
-            activated => {
-                root.action("delete");
-            }
-        }
-    }
-}
-
 // La jaquette de 80px commence dans l'en-tête et déborde sur le premier morceau.
 // Chaque ligne dessine sa tranche (`offset`) : le rendu reste juste même quand la
 // ListView a recyclé l'en-tête hors de l'écran.
@@ -235,8 +142,24 @@ component TrackListRow inherits Rectangle {
                 clicked => {
                     root.select();
                 }
-                double-clicked => {
-                    root.play();
+                // Clic droit : menu au style de l'app, à l'endroit du clic.
+                pointer-event(event) => {
+                    if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                        root.select();
+                        menu-anchor.x = self.mouse-x;
+                        menu-anchor.y = self.mouse-y;
+                        menu.show();
+                    }
+                }
+            }
+            menu-anchor := Rectangle {
+                width: 0px;
+                height: 0px;
+                menu := ThemedMenu {
+                    entries: Menus.track(root.item.favorite);
+                    selected(name) => {
+                        root.action(name);
+                    }
                 }
             }
 
@@ -291,13 +214,6 @@ component TrackListRow inherits Rectangle {
                         vertical-alignment: center;
                     }
                 }
-            }
-        }
-        // Par-dessus la ligne : il prend le clic droit, laisse passer clics, survol et glisser.
-        TrackContextArea {
-            favorite: root.item.favorite;
-            action(name) => {
-                root.action(name);
             }
         }
     }
@@ -449,8 +365,24 @@ component PlaylistTrackRow inherits Rectangle {
             clicked => {
                 root.select();
             }
-            double-clicked => {
-                root.play();
+            // Clic droit : menu au style de l'app, à l'endroit du clic.
+            pointer-event(event) => {
+                if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                    root.select();
+                    menu-anchor.x = self.mouse-x;
+                    menu-anchor.y = self.mouse-y;
+                    menu.show();
+                }
+            }
+        }
+        menu-anchor := Rectangle {
+            width: 0px;
+            height: 0px;
+            menu := ThemedMenu {
+                entries: Menus.track(root.item.favorite);
+                selected(name) => {
+                    root.action(name);
+                }
             }
         }
 
@@ -507,13 +439,6 @@ component PlaylistTrackRow inherits Rectangle {
                 color: Theme.text-tertiary;
                 horizontal-alignment: right;
                 vertical-alignment: center;
-            }
-        }
-        // Par-dessus la ligne : il prend le clic droit, laisse passer clics, survol et glisser.
-        TrackContextArea {
-            favorite: root.item.favorite;
-            action(name) => {
-                root.action(name);
             }
         }
     }

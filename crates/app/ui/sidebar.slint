@@ -1,6 +1,6 @@
 import { ScrollView, SpinBox, ComboBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { ListItem, ThemedButton } from "widgets.slint";
+import { ListItem, ThemedButton, MenuEntry } from "widgets.slint";
 import { Equalizer } from "equalizer.slint";
 
 // Ce que montrent les panneaux Artistes / Albums / Morceaux.
@@ -30,16 +30,6 @@ export component SmallButton inherits Rectangle {
             root.clicked();
         }
     }
-}
-
-// Entrée des menus « + » ; `action` est transmise à Rust.
-export struct MenuEntry {
-    action: string,
-    label: string,
-    enabled: bool,
-    danger: bool,
-    // Filet au-dessus de l'entrée.
-    separated: bool,
 }
 
 // Menu déroulant de la v0.1 : sous le bouton, aligné à droite, items 8px 12px.

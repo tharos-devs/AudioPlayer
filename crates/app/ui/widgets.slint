@@ -20,142 +20,197 @@ export global TrackMenu {
     in property <bool> most-played;
 }
 
-// Menus contextuels des artistes et des albums (ceux de la v0.1, plus la lecture).
-// Les actions sont des chaînes transmises à Rust ; « add-to-playlist:<id> » vise une playlist.
-component ArtistMenuArea inherits ContextMenuArea {
-    in property <bool> favorite;
-    callback action(string);
-    Menu {
-        MenuItem {
-            title: @tr("Play");
-            activated => {
-                root.action("play");
-            }
-        }
-        MenuItem {
-            title: @tr("Play Next");
-            activated => {
-                root.action("play-next");
-            }
-        }
-        MenuItem {
-            title: @tr("Add to Queue");
-            activated => {
-                root.action("enqueue");
-            }
-        }
-        MenuSeparator { }
-        Menu {
-            title: @tr("Add to Playlist");
-            MenuItem {
-                title: @tr("New Playlist…");
-                activated => {
-                    root.action("add-to-new-playlist");
+// Entrée de menu ; `action` est transmise à Rust (« add-to-playlist:<id> » vise une playlist).
+export struct MenuEntry {
+    action: string,
+    label: string,
+    enabled: bool,
+    danger: bool,
+    // Filet au-dessus de l'entrée.
+    separated: bool,
+    // Entrée absente du menu (selon la vue) : les tableaux Slint ne se filtrent pas.
+    hidden: bool,
+    // Ouvre le sous-menu des playlists.
+    submenu: bool,
+}
+
+// Menu contextuel au style de l'app (comme les menus « + »), à la place du menu natif
+// du système qui ignore le thème. Le sous-menu liste les playlists de la bibliothèque.
+export component ThemedMenu inherits PopupWindow {
+    in property <[MenuEntry]> entries;
+    callback selected(string);
+    property <length> submenu-y;
+    width: 220px;
+    // Ouvrir le sous-menu ne doit pas refermer le menu : seuls un choix ou un clic dehors le ferment.
+    close-policy: close-on-click-outside;
+
+    Rectangle {
+        background: Theme.footer-bg;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: Theme.border-base;
+        drop-shadow-blur: 10px;
+        drop-shadow-color: #00000066;
+
+        VerticalLayout {
+            padding-top: 5px;
+            padding-bottom: 5px;
+            for entry in root.entries: VerticalLayout {
+                if !entry.hidden && entry.separated: Rectangle {
+                    height: 9px;
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.border;
+                    }
+                }
+                if !entry.hidden: Rectangle {
+                    height: 28px;
+                    background: entry.enabled && item.has-hover ? Theme.hover-tint : transparent;
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 10px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: entry.label;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            color: !entry.enabled ? Theme.text-disabled
+                                : entry.danger ? #f56c6c
+                                : item.has-hover ? Theme.accent : Theme.text-primary;
+                        }
+                        if entry.submenu: Text {
+                            text: "▸";
+                            font-size: 11px;
+                            vertical-alignment: center;
+                            color: item.has-hover ? Theme.accent : Theme.text-tertiary;
+                        }
+                    }
+                    item := TouchArea {
+                        enabled: entry.enabled;
+                        clicked => {
+                            if entry.submenu {
+                                root.submenu-y = self.absolute-position.y - root.absolute-position.y;
+                                playlists.show();
+                            } else {
+                                root.selected(entry.action);
+                                root.close();
+                            }
+                        }
+                    }
                 }
             }
-            if TrackMenu.playlists.length > 0: MenuSeparator { }
-            for playlist in TrackMenu.playlists: MenuItem {
-                title: playlist.label;
-                activated => {
-                    root.action("add-to-playlist:" + playlist.id);
+        }
+    }
+
+    playlists := PopupWindow {
+        x: root.width - 6px;
+        y: root.submenu-y - 5px;
+        width: 200px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            background: Theme.footer-bg;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Theme.border-base;
+            drop-shadow-blur: 10px;
+            drop-shadow-color: #00000066;
+            VerticalLayout {
+                padding-top: 5px;
+                padding-bottom: 5px;
+                Rectangle {
+                    height: 28px;
+                    background: new.has-hover ? Theme.hover-tint : transparent;
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        Text {
+                            text: @tr("New Playlist…");
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            color: new.has-hover ? Theme.accent : Theme.text-primary;
+                        }
+                    }
+                    new := TouchArea {
+                        clicked => {
+                            root.selected("add-to-new-playlist");
+                            root.close();
+                        }
+                    }
                 }
-            }
-        }
-        MenuItem {
-            title: root.favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites");
-            activated => {
-                root.action("favorite");
-            }
-        }
-        MenuSeparator { }
-        MenuItem {
-            title: @tr("Rescan Audio Tags");
-            activated => {
-                root.action("rescan");
-            }
-        }
-        MenuSeparator { }
-        MenuItem {
-            title: @tr("Delete from Library…");
-            activated => {
-                root.action("delete");
+                if TrackMenu.playlists.length > 0: Rectangle {
+                    height: 9px;
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.border;
+                    }
+                }
+                for playlist in TrackMenu.playlists: Rectangle {
+                    height: 28px;
+                    background: pick.has-hover ? Theme.hover-tint : transparent;
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 10px;
+                        Text {
+                            text: playlist.label;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            color: pick.has-hover ? Theme.accent : Theme.text-primary;
+                        }
+                    }
+                    pick := TouchArea {
+                        clicked => {
+                            root.selected("add-to-playlist:" + playlist.id);
+                            root.close();
+                        }
+                    }
+                }
             }
         }
     }
 }
 
-component AlbumMenuArea inherits ContextMenuArea {
-    in property <bool> favorite;
-    callback action(string);
-    Menu {
-        MenuItem {
-            title: @tr("Play");
-            activated => {
-                root.action("play");
-            }
-        }
-        MenuItem {
-            title: @tr("Play Next");
-            activated => {
-                root.action("play-next");
-            }
-        }
-        MenuItem {
-            title: @tr("Add to Queue");
-            activated => {
-                root.action("enqueue");
-            }
-        }
-        MenuSeparator { }
-        MenuItem {
-            title: @tr("Show on Disk");
-            activated => {
-                root.action("show-on-disk");
-            }
-        }
-        MenuItem {
-            title: @tr("Set Album Artwork…");
-            activated => {
-                root.action("set-artwork");
-            }
-        }
-        MenuSeparator { }
-        Menu {
-            title: @tr("Add to Playlist");
-            MenuItem {
-                title: @tr("New Playlist…");
-                activated => {
-                    root.action("add-to-new-playlist");
-                }
-            }
-            if TrackMenu.playlists.length > 0: MenuSeparator { }
-            for playlist in TrackMenu.playlists: MenuItem {
-                title: playlist.label;
-                activated => {
-                    root.action("add-to-playlist:" + playlist.id);
-                }
-            }
-        }
-        MenuItem {
-            title: root.favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites");
-            activated => {
-                root.action("favorite");
-            }
-        }
-        MenuSeparator { }
-        MenuItem {
-            title: @tr("Rescan Audio Tags");
-            activated => {
-                root.action("rescan");
-            }
-        }
-        MenuSeparator { }
-        MenuItem {
-            title: @tr("Delete from Library…");
-            activated => {
-                root.action("delete");
-            }
-        }
+// Entrées des menus contextuels ; les libellés sont formés ici pour @tr.
+export global Menus {
+    pure public function artist(favorite: bool) -> [MenuEntry] {
+        return [
+            { action: "play", label: @tr("Play"), enabled: true },
+            { action: "play-next", label: @tr("Play Next"), enabled: true },
+            { action: "enqueue", label: @tr("Add to Queue"), enabled: true },
+            { action: "", label: @tr("Add to Playlist"), enabled: true, separated: true, submenu: true },
+            { action: "favorite", label: favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites"), enabled: true },
+            { action: "rescan", label: @tr("Rescan Audio Tags"), enabled: true, separated: true },
+            { action: "delete", label: @tr("Delete from Library…"), enabled: true, separated: true, danger: true },
+        ];
+    }
+    pure public function album(favorite: bool) -> [MenuEntry] {
+        return [
+            { action: "play", label: @tr("Play"), enabled: true },
+            { action: "play-next", label: @tr("Play Next"), enabled: true },
+            { action: "enqueue", label: @tr("Add to Queue"), enabled: true },
+            { action: "show-on-disk", label: @tr("Show on Disk"), enabled: true, separated: true },
+            { action: "set-artwork", label: @tr("Set Album Artwork…"), enabled: true },
+            { action: "", label: @tr("Add to Playlist"), enabled: true, separated: true, submenu: true },
+            { action: "favorite", label: favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites"), enabled: true },
+            { action: "rescan", label: @tr("Rescan Audio Tags"), enabled: true, separated: true },
+            { action: "delete", label: @tr("Delete from Library…"), enabled: true, separated: true, danger: true },
+        ];
+    }
+    pure public function track(favorite: bool) -> [MenuEntry] {
+        return [
+            { action: "play", label: @tr("Play"), enabled: true },
+            { action: "play-next", label: @tr("Play Next"), enabled: true },
+            { action: "enqueue", label: @tr("Add to Queue"), enabled: true },
+            { action: "show-album", label: @tr("Show Album"), enabled: true, separated: true },
+            { action: "show-on-disk", label: @tr("Show on Disk"), enabled: true },
+            { action: "", label: @tr("Add to Playlist"), enabled: true, separated: true, submenu: true },
+            { action: "favorite", label: favorite ? @tr("Remove from Favorites") : @tr("Add to Favorites"), enabled: true },
+            { action: "reset-plays", label: @tr("Reset Play Count"), enabled: true, hidden: !TrackMenu.most-played },
+            { action: "rescan", label: @tr("Rescan Audio Tags"), enabled: true, separated: true },
+            { action: "edit-tags", label: @tr("Edit Tags…"), enabled: false },
+            { action: "remove-from-playlist", label: @tr("Remove from Playlist"), enabled: true, separated: true, hidden: !TrackMenu.in-playlist },
+            { action: "delete", label: @tr("Delete from Library…"), enabled: true, separated: true, danger: true, hidden: TrackMenu.in-playlist },
+        ];
     }
 }
 
@@ -278,12 +333,23 @@ export component ArtistRow inherits Rectangle {
             clicked => {
                 root.clicked();
             }
+            // Clic droit : menu au style de l'app, à l'endroit du clic.
+            pointer-event(event) => {
+                if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                    menu-anchor.x = self.mouse-x;
+                    menu-anchor.y = self.mouse-y;
+                    menu.show();
+                }
+            }
         }
-        // Par-dessus la ligne : il prend le clic droit, laisse passer clics, survol et glisser.
-        ArtistMenuArea {
-            favorite: root.item.favorite;
-            action(name) => {
-                root.action(name);
+        menu-anchor := Rectangle {
+            width: 0px;
+            height: 0px;
+            menu := ThemedMenu {
+                entries: Menus.artist(root.item.favorite);
+                selected(name) => {
+                    root.action(name);
+                }
             }
         }
     }
@@ -350,12 +416,23 @@ export component AlbumRow inherits Rectangle {
             clicked => {
                 root.clicked();
             }
+            // Clic droit : menu au style de l'app, à l'endroit du clic.
+            pointer-event(event) => {
+                if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                    menu-anchor.x = self.mouse-x;
+                    menu-anchor.y = self.mouse-y;
+                    menu.show();
+                }
+            }
         }
-        // Par-dessus la ligne : il prend le clic droit, laisse passer clics, survol et glisser.
-        AlbumMenuArea {
-            favorite: root.item.favorite;
-            action(name) => {
-                root.action(name);
+        menu-anchor := Rectangle {
+            width: 0px;
+            height: 0px;
+            menu := ThemedMenu {
+                entries: Menus.album(root.item.favorite);
+                selected(name) => {
+                    root.action(name);
+                }
             }
         }
     }
