@@ -1,0 +1,29 @@
+# Exécutable Windows x64 : artefact AudioPlayer-<version>-Windows, téléchargé en .zip
+# contenant AudioPlayer.exe.
+name: Build Windows
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - id: version
+        run: echo "version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
+      - name: Build AudioPlayer.exe
+        run: |
+          cargo build --release -p audioplayer
+          mkdir -p dist
+          cp target/release/audioplayer.exe dist/AudioPlayer.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AudioPlayer-${{ steps.version.outputs.version }}-Windows
+          path: dist/AudioPlayer.exe
+          if-no-files-found: error

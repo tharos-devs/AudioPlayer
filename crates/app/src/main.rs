@@ -1,5 +1,5 @@
-// Prototype : la bibliothèque vient de la base SQLite (importée de la v0.1), mais
-// il n'y a pas encore d'audio : la lecture est simulée par un minuteur.
+// Sous Windows, une app graphique : pas de console ouverte à côté de la fenêtre.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod covers;
 mod library;

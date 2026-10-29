@@ -1,0 +1,30 @@
+# AppImage Linux x86_64 : artefact AudioPlayer-<version>-Linux, téléchargé en .zip
+# contenant AudioPlayer-<version>-x86_64.AppImage. Ubuntu 22.04 : une glibc ancienne
+# pour que l'AppImage tourne aussi sur des distributions plus vieilles.
+name: Build Linux
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libasound2-dev libdbus-1-dev libfontconfig1-dev \
+            libfreetype6-dev libxkbcommon-dev libwayland-dev libx11-xcb-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libgl1-mesa-dev file
+      - id: version
+        run: echo "version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
+      - name: Build the AppImage
+        run: packaging/linux/appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AudioPlayer-${{ steps.version.outputs.version }}-Linux
+          path: dist/AudioPlayer-${{ steps.version.outputs.version }}-x86_64.AppImage
+          if-no-files-found: error

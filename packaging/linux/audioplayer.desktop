@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=AudioPlayer
+Comment=Music library player
+Exec=audioplayer
+Icon=audioplayer
+Categories=AudioVideo;Audio;Player;
+Terminal=false

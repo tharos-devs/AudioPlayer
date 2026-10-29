@@ -1,0 +1,50 @@
+#!/bin/bash
+# Paquet d'installation macOS : dist/AudioPlayer-<version>.pkg, app universelle
+# (Apple Silicon + Intel) installée dans /Applications.
+#
+# Affiche la version en cours et demande la nouvelle (Entrée garde l'actuelle) ; une
+# nouvelle version est écrite dans Cargo.toml, d'où l'app la tire pour la barre d'état.
+#   --yes             garde la version sans rien demander (CI)
+#   --version X.Y.Z   fixe la version sans rien demander
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+current=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+version=$current
+case "${1:-}" in
+    --yes) ;;
+    --version) version=${2:?"--version demande un numéro"} ;;
+    "")
+        echo "Version actuelle : $current"
+        read -r -p "Nouvelle version [$current] : " answer
+        version=${answer:-$current}
+        ;;
+    *) echo "usage : $0 [--yes | --version X.Y.Z]" >&2; exit 2 ;;
+esac
+
+if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+    echo "Version invalide : $version (attendu : 1.2.3)" >&2
+    exit 1
+fi
+if [ "$version" != "$current" ]; then
+    # La première ligne `version =` est celle de [workspace.package], partagée par tous les crates.
+    perl -0pi -e 's/(\[workspace\.package\]\nversion = ")[^"]*"/${1}'"$version"'"/' Cargo.toml
+    echo "Cargo.toml : $current -> $version"
+fi
+
+packaging/macos/bundle.sh --universal
+
+mkdir -p dist
+pkg=dist/AudioPlayer-$version.pkg
+root=$(mktemp -d)
+trap 'rm -rf "$root"' EXIT
+cp -R target/release/bundle/AudioPlayer.app "$root/"
+# Sans cela, l'installeur mettrait à jour une autre copie de l'app trouvée ailleurs sur
+# le disque (target/…) au lieu de l'installer dans /Applications.
+pkgbuild --analyze --root "$root" "$root.plist" >/dev/null
+plutil -replace 0.BundleIsRelocatable -bool NO "$root.plist"
+pkgbuild --root "$root" --component-plist "$root.plist" --install-location /Applications \
+    --identifier com.audioplayer.player --version "$version" "$pkg"
+rm -f "$root.plist"
+
+echo "$pkg"

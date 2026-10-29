@@ -1,0 +1,25 @@
+# Paquet macOS universel (Apple Silicon + Intel) : artefact AudioPlayer-<version>-macOS,
+# téléchargé en .zip contenant AudioPlayer-<version>.pkg.
+name: Build macOS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - id: version
+        run: echo "version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
+      - name: Build the .pkg
+        run: packaging/macos/make-pkg.sh --yes
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AudioPlayer-${{ steps.version.outputs.version }}-macOS
+          path: dist/AudioPlayer-${{ steps.version.outputs.version }}.pkg
+          if-no-files-found: error
