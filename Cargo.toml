@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/app"]
+members = ["crates/app", "crates/db"]
 
 [workspace.package]
 version = "0.2.0"
@@ -9,3 +9,6 @@ edition = "2021"
 [workspace.dependencies]
 slint = "1.18"
 slint-build = "1.18"
+rusqlite = { version = "0.41", features = ["bundled"] }
+base64 = "0.23"
+tempfile = "3"

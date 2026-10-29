@@ -1,0 +1,140 @@
+//! Schéma versionné : la migration d'index `i` amène la base à la version `i + 1`,
+//! enregistrée dans `PRAGMA user_version`. Une migration publiée ne se modifie
+//! plus : toute évolution passe par une nouvelle entrée en fin de liste.
+
+use rusqlite::Connection;
+
+use crate::{Error, Result};
+
+pub const MIGRATIONS: &[&str] = &[V1];
+
+// Les dates sont du texte UTC « AAAA-MM-JJ HH:MM:SS », comme `datetime('now')`.
+const V1: &str = "
+CREATE TABLE libraries (
+    id           INTEGER PRIMARY KEY,
+    name         TEXT NOT NULL UNIQUE,
+    -- Une bibliothèque = un dossier physique ; elles restent étanches entre elles.
+    root_path    TEXT NOT NULL UNIQUE,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    last_scan_at TEXT
+) STRICT;
+
+CREATE TABLE artists (
+    id           INTEGER PRIMARY KEY,
+    library_id   INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    name         TEXT NOT NULL,
+    sort_name    TEXT,
+    favorited_at TEXT,
+    UNIQUE (library_id, name),
+    -- Cible de la clé composite des albums.
+    UNIQUE (library_id, id)
+) STRICT;
+
+CREATE TABLE albums (
+    id             INTEGER PRIMARY KEY,
+    library_id     INTEGER NOT NULL,
+    artist_id      INTEGER NOT NULL,
+    title          TEXT NOT NULL,
+    sort_title     TEXT,
+    year           INTEGER,
+    is_compilation INTEGER NOT NULL DEFAULT 0 CHECK (is_compilation IN (0, 1)),
+    folder_path    TEXT,
+    favorited_at   TEXT,
+    added_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (library_id, artist_id, title),
+    -- L'album appartient forcément à la bibliothèque de son artiste.
+    FOREIGN KEY (library_id, artist_id) REFERENCES artists(library_id, id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE tracks (
+    id             INTEGER PRIMARY KEY,
+    album_id       INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+    -- Interprète du morceau ; l'artiste de l'album est porté par l'album.
+    artist_id      INTEGER NOT NULL REFERENCES artists(id),
+    title          TEXT NOT NULL,
+    disc_number    INTEGER,
+    disc_subtitle  TEXT,
+    track_number   INTEGER,
+    duration_ms    INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0),
+    file_path      TEXT NOT NULL UNIQUE,
+    file_size      INTEGER,
+    file_mtime     INTEGER,
+    codec          TEXT,
+    bitrate        INTEGER,
+    sample_rate    INTEGER,
+    bit_depth      INTEGER,
+    channels       INTEGER,
+    genre          TEXT,
+    composer       TEXT,
+    conductor      TEXT,
+    lyricist       TEXT,
+    grouping       TEXT,
+    work           TEXT,
+    comment        TEXT,
+    publisher      TEXT,
+    catalog_number TEXT,
+    barcode        TEXT,
+    bpm            INTEGER,
+    play_count     INTEGER NOT NULL DEFAULT 0 CHECK (play_count >= 0),
+    last_played_at TEXT,
+    rating         INTEGER CHECK (rating BETWEEN 0 AND 5),
+    favorited_at   TEXT,
+    added_at       TEXT NOT NULL DEFAULT (datetime('now'))
+) STRICT;
+
+-- Une ligne par taille (côté du carré, en pixels).
+CREATE TABLE artworks (
+    album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+    size     INTEGER NOT NULL CHECK (size > 0),
+    mime     TEXT NOT NULL,
+    data     BLOB NOT NULL,
+    PRIMARY KEY (album_id, size)
+) STRICT;
+
+CREATE TABLE playlists (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+) STRICT;
+
+CREATE TABLE playlist_tracks (
+    id          INTEGER PRIMARY KEY,
+    playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+    track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL,
+    added_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (playlist_id, track_id)
+) STRICT;
+
+CREATE INDEX albums_by_artist       ON albums (artist_id, year);
+CREATE INDEX tracks_by_album        ON tracks (album_id, disc_number, track_number);
+CREATE INDEX tracks_by_artist       ON tracks (artist_id);
+CREATE INDEX tracks_by_added        ON tracks (added_at);
+CREATE INDEX tracks_by_play_count   ON tracks (play_count) WHERE play_count > 0;
+CREATE INDEX artists_favorited      ON artists (favorited_at) WHERE favorited_at IS NOT NULL;
+CREATE INDEX albums_favorited       ON albums (favorited_at) WHERE favorited_at IS NOT NULL;
+CREATE INDEX tracks_favorited       ON tracks (favorited_at) WHERE favorited_at IS NOT NULL;
+CREATE INDEX playlist_tracks_order  ON playlist_tracks (playlist_id, position);
+CREATE INDEX playlist_tracks_track  ON playlist_tracks (track_id);
+";
+
+pub fn version(conn: &Connection) -> Result<usize> {
+    let version: u32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    Ok(version as usize)
+}
+
+/// Applique les migrations manquantes, chacune dans sa propre transaction.
+pub fn migrate(conn: &mut Connection) -> Result<()> {
+    let current = version(conn)?;
+    if current > MIGRATIONS.len() {
+        return Err(Error::SchemaTooNew { found: current, supported: MIGRATIONS.len() });
+    }
+    for (index, sql) in MIGRATIONS.iter().enumerate().skip(current) {
+        let tx = conn.transaction()?;
+        tx.execute_batch(sql)?;
+        tx.pragma_update(None, "user_version", index as u32 + 1)?;
+        tx.commit()?;
+    }
+    Ok(())
+}
