@@ -192,9 +192,6 @@ msgstr "Nouvelle base…"
 msgid "Open Database…"
 msgstr "Ouvrir une base…"
 
-msgid "Database: {0}"
-msgstr "Base : {0}"
-
 msgid "Welcome to AudioPlayer!"
 msgstr "Bienvenue dans AudioPlayer !"
 

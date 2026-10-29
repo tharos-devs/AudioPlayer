@@ -1,6 +1,6 @@
 import { ListView, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { ListItem, PanelHeader, ArtistRow, AlbumRow, Splitter } from "widgets.slint";
+import { ListItem, PanelHeader, ArtistList, AlbumList, Splitter } from "widgets.slint";
 import { TrackItem, TrackItemKind, TrackList, PlaylistTrackList } from "tracks.slint";
 import { Sidebar, View } from "sidebar.slint";
 import { ControlBar } from "controlbar.slint";
@@ -10,7 +10,7 @@ import { SetupWindow, DatabaseProblem, DatabaseProblems } from "setup.slint";
 
 export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem }
 
-export enum StatusKind { summary, added-to-playlist, already-in-playlist, play-next, enqueued, database, database-problem, playback-failed, no-output }
+export enum StatusKind { summary, added-to-playlist, already-in-playlist, play-next, enqueued, database-problem, playback-failed, no-output }
 
 // Les messages d'état sont formatés ici (et non en Rust) pour passer par @tr.
 export struct Status {
@@ -86,8 +86,6 @@ export component AppWindow inherits Window {
         ? @tr("“{0}” will play next (not wired yet)", root.status.track)
         : root.status.kind == StatusKind.enqueued
         ? @tr("“{0}” added to the queue (not wired yet)", root.status.track)
-        : root.status.kind == StatusKind.database
-        ? @tr("Database: {0}", root.status.track)
         : root.status.kind == StatusKind.playback-failed
         ? @tr("Cannot play “{0}”: {1}", root.status.track, root.status.playlist)
         : root.status.kind == StatusKind.no-output
@@ -117,9 +115,24 @@ export component AppWindow inherits Window {
     callback seek(float);
     callback seek-by(int);
     callback move-selection(int);
-    callback play-selected();
     in property <int> reveal-row;
     in property <int> reveal-serial;
+    // Navigation clavier : 0 = artistes, 1 = albums, 2 = morceaux.
+    in-out property <int> active-panel: 2;
+    in property <int> artist-cursor: -1;
+    in property <int> album-cursor: -1;
+    in property <int> artist-reveal-row;
+    in property <int> artist-reveal-serial;
+    in property <int> album-reveal-row;
+    in property <int> album-reveal-serial;
+    callback cycle-panel(int);
+    callback activate();
+    // Un clic dans la liste des morceaux la rend active.
+    changed selected-track => {
+        if root.selected-track != -1 {
+            root.active-panel = 2;
+        }
+    }
     callback track-action(int, string);
     callback drop-on-playlist(int, data-transfer);
     pure callback track-payload(int) -> data-transfer;
@@ -127,7 +140,7 @@ export component AppWindow inherits Window {
     callback select-language(string);
     callback new-database();
     callback open-database();
-    callback show-database();
+    in property <string> database-path;
     in-out property <string> language: "en";
 
     function toggle-theme() {
@@ -245,7 +258,11 @@ export component AppWindow inherits Window {
                     return accept;
                 }
                 if event.text == Key.Return {
-                    root.play-selected();
+                    root.activate();
+                    return accept;
+                }
+                if event.text == Key.Tab || event.text == Key.Backtab {
+                    root.cycle-panel(event.text == Key.Backtab || event.modifiers.shift ? -1 : 1);
                     return accept;
                 }
                 if event.text == Key.LeftArrow || event.text == Key.RightArrow {
@@ -362,14 +379,16 @@ export component AppWindow inherits Window {
                             PanelHeader {
                                 title: @tr("Artists");
                                 badge: @tr("{n} artist" | "{n} artists" % root.artists-count);
+                                active: root.active-panel == 0;
                             }
-                            ListView {
-                                for artist in root.artists: ArtistRow {
-                                    item: artist;
-                                    selected: artist.id == root.selected-artist;
-                                    clicked => {
-                                        root.select-artist(artist.id);
-                                    }
+                            ArtistList {
+                                items: root.artists;
+                                selected: root.selected-artist;
+                                cursor: root.active-panel == 0 ? root.artist-cursor : -1;
+                                reveal-row: root.artist-reveal-row;
+                                reveal-serial: root.artist-reveal-serial;
+                                clicked(id) => {
+                                    root.select-artist(id);
                                 }
                             }
                         }
@@ -387,14 +406,16 @@ export component AppWindow inherits Window {
                             PanelHeader {
                                 title: @tr("Albums");
                                 badge: @tr("{n} album" | "{n} albums" % root.albums-count);
+                                active: root.active-panel == 1;
                             }
-                            ListView {
-                                for album in root.albums: AlbumRow {
-                                    item: album;
-                                    selected: album.id == root.selected-album;
-                                    clicked => {
-                                        root.select-album(album.id);
-                                    }
+                            AlbumList {
+                                items: root.albums;
+                                selected: root.selected-album;
+                                cursor: root.active-panel == 1 ? root.album-cursor : -1;
+                                reveal-row: root.album-reveal-row;
+                                reveal-serial: root.album-reveal-serial;
+                                clicked(id) => {
+                                    root.select-album(id);
                                 }
                             }
                         }
@@ -411,6 +432,7 @@ export component AppWindow inherits Window {
                         if root.view != View.playlist: VerticalLayout {
                             PanelHeader {
                                 title: @tr("Tracks");
+                                active: root.active-panel == 2;
                                 badge: @tr("{n} track" | "{n} tracks" % root.tracks-count);
                             }
                             TrackList {
@@ -435,6 +457,7 @@ export component AppWindow inherits Window {
                         if root.view == View.playlist: VerticalLayout {
                             PanelHeader {
                                 title: root.playlist-name;
+                                active: root.active-panel == 2;
                                 badge: @tr("{n} track" | "{n} tracks" % root.tracks-count);
                             }
                             PlaylistTrackList {
@@ -475,8 +498,9 @@ export component AppWindow inherits Window {
                     toggle-theme => {
                         root.toggle-theme();
                     }
-                    show-database => {
-                        root.show-database();
+                    database-path: root.database-path;
+                    path-closed => {
+                        keys.focus();
                     }
                 }
             }

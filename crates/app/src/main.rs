@@ -53,7 +53,6 @@ struct Playlist {
 
 struct App {
     db: Database,
-    db_path: PathBuf,
     libraries: Vec<audioplayer_db::Library>,
     selected_library: Option<usize>,
     library: Library,
@@ -78,6 +77,9 @@ struct App {
     // Ligne de chaque morceau affiché (les en-têtes d'album occupent aussi des lignes).
     rows: HashMap<usize, usize>,
     reveal_serial: i32,
+    // Artistes et albums listés, dans l'ordre : pour la navigation au clavier.
+    artist_rows: Vec<usize>,
+    album_rows: Vec<usize>,
     engine: Engine,
     now: Option<NowPlaying>,
     is_playing: bool,
@@ -100,13 +102,12 @@ struct App {
 
 impl App {
     /// `library` : nom de la bibliothèque à ouvrir, la première sinon.
-    fn new(db: Database, db_path: PathBuf, library: Option<&str>) -> audioplayer_db::Result<Self> {
+    fn new(db: Database, library: Option<&str>) -> audioplayer_db::Result<Self> {
         let libraries = db.libraries()?;
         let recent_cutoff = db.datetime_from_now(RECENT_MODIFIER)?;
 
         let mut app = App {
             db,
-            db_path,
             libraries,
             selected_library: None,
             library: Library::default(),
@@ -126,6 +127,8 @@ impl App {
             visible: Vec::new(),
             rows: HashMap::new(),
             reveal_serial: 0,
+            artist_rows: Vec::new(),
+            album_rows: Vec::new(),
             engine: Engine::start(),
             now: None,
             is_playing: false,
@@ -277,7 +280,7 @@ impl App {
         }
     }
 
-    fn refresh_artists(&self, ui: &AppWindow) {
+    fn refresh_artists(&mut self, ui: &AppWindow) {
         let mut album_counts = vec![0; self.library.artists.len()];
         for (album, &count) in self.album_counts.iter().enumerate() {
             if count > 0 {
@@ -300,11 +303,12 @@ impl App {
             })
             .collect();
         ui.set_artists_count(rows.len() as i32);
+        self.artist_rows = rows.iter().map(|row| row.id as usize).collect();
         ui.set_artists(model(rows));
         ui.set_selected_artist(to_ui_id(self.selected_artist));
     }
 
-    fn refresh_albums(&self, ui: &AppWindow) {
+    fn refresh_albums(&mut self, ui: &AppWindow) {
         let albums = &self.library.albums;
         let listed = match self.view {
             View::MostPlayed | View::FavoriteTracks | View::Playlist => false,
@@ -321,6 +325,7 @@ impl App {
         ids.sort_by(|&a, &b| albums[a].sort_key.cmp(&albums[b].sort_key).then(a.cmp(&b)));
 
         ui.set_albums_count(ids.len() as i32);
+        self.album_rows = ids.clone();
         let rows = ids.into_iter().map(|album| {
             let (artwork, has_artwork) = self.cover(album);
             ListItem {
@@ -548,6 +553,8 @@ impl App {
     // Un second clic sur l'artiste sélectionné le désélectionne.
     fn select_artist(&mut self, ui: &AppWindow, id: i32) {
         let artist = from_ui_id(id);
+        ui.set_active_panel(0);
+        ui.set_artist_cursor(id);
         self.selected_artist = if self.selected_artist == artist { None } else { artist };
         self.selected_album = None;
         self.query.clear();
@@ -560,6 +567,8 @@ impl App {
     // Sélectionner un album sélectionne aussi son artiste (correctif de la v0.1.1).
     fn select_album(&mut self, ui: &AppWindow, id: i32) {
         let album = from_ui_id(id);
+        ui.set_active_panel(1);
+        ui.set_album_cursor(id);
         if self.selected_album == album {
             self.selected_album = None;
         } else if let Some(album) = album {
@@ -707,8 +716,81 @@ impl App {
         }
     }
 
-    // ↑/↓ : morceau précédent/suivant de la liste ; sans sélection, le premier (↓) ou le dernier (↑).
+    // Tab / Maj+Tab : panneau suivant ou précédent parmi ceux qui ont du contenu.
+    fn cycle_panel(&mut self, ui: &AppWindow, direction: i32) {
+        let available = [!self.artist_rows.is_empty() && self.view != View::Playlist,
+            !self.album_rows.is_empty() && self.view != View::Playlist, true];
+        let mut panel = ui.get_active_panel();
+        for _ in 0..3 {
+            panel = (panel + direction).rem_euclid(3);
+            if available[panel as usize] {
+                break;
+            }
+        }
+        ui.set_active_panel(panel);
+        // En arrivant, le curseur se place sur l'élément sélectionné, sinon le premier.
+        match panel {
+            0 => self.place_cursor(ui, 0, self.selected_artist.or(self.artist_rows.first().copied())),
+            1 => self.place_cursor(ui, 1, self.selected_album.or(self.album_rows.first().copied())),
+            _ => {}
+        }
+    }
+
+    fn place_cursor(&mut self, ui: &AppWindow, panel: i32, item: Option<usize>) {
+        let rows = if panel == 0 { &self.artist_rows } else { &self.album_rows };
+        let Some(row) = item.and_then(|item| rows.iter().position(|&r| r == item)) else { return };
+        let id = rows[row] as i32;
+        self.reveal_serial += 1;
+        if panel == 0 {
+            ui.set_artist_cursor(id);
+            ui.set_artist_reveal_row(row as i32);
+            ui.set_artist_reveal_serial(self.reveal_serial);
+        } else {
+            ui.set_album_cursor(id);
+            ui.set_album_reveal_row(row as i32);
+            ui.set_album_reveal_serial(self.reveal_serial);
+        }
+    }
+
+    // Entrée : valide l'élément sous le curseur, comme un clic.
+    fn activate(&mut self, ui: &AppWindow) {
+        match ui.get_active_panel() {
+            0 => {
+                if let Some(artist) = from_ui_id(ui.get_artist_cursor()).filter(|a| self.artist_rows.contains(a)) {
+                    self.select_artist(ui, artist as i32);
+                }
+            }
+            1 => {
+                if let Some(album) = from_ui_id(ui.get_album_cursor()).filter(|a| self.album_rows.contains(a)) {
+                    self.select_album(ui, album as i32);
+                }
+            }
+            _ => self.play_selected(ui),
+        }
+    }
+
+    // ↑/↓ : élément précédent/suivant du panneau actif ; sans position, le premier (↓) ou le dernier (↑).
     fn move_selection(&mut self, ui: &AppWindow, delta: isize) {
+        let panel = ui.get_active_panel();
+        if panel == 0 || panel == 1 {
+            let (rows, cursor) = if panel == 0 {
+                (&self.artist_rows, ui.get_artist_cursor())
+            } else {
+                (&self.album_rows, ui.get_album_cursor())
+            };
+            if rows.is_empty() {
+                return;
+            }
+            let current = from_ui_id(cursor).and_then(|c| rows.iter().position(|&r| r == c));
+            let index = match current {
+                Some(index) => index.saturating_add_signed(delta).min(rows.len() - 1),
+                None if delta < 0 => rows.len() - 1,
+                None => 0,
+            };
+            let item = rows[index];
+            self.place_cursor(ui, panel, Some(item));
+            return;
+        }
         if self.visible.is_empty() {
             return;
         }
@@ -1227,7 +1309,7 @@ fn launch(path: &Path) -> Result<(), Problem> {
     check_database(path)?;
     let db = Database::open(path).map_err(|e| Problem::failed(path, e))?;
     let initial = Settings::load(&db);
-    let app = App::new(db, path.to_owned(), initial.session.library.as_deref()).map_err(|e| Problem::failed(path, e))?;
+    let app = App::new(db, initial.session.library.as_deref()).map_err(|e| Problem::failed(path, e))?;
     let first = app.selected_library;
 
     let ui = AppWindow::new().map_err(|e| Problem::failed(path, e))?;
@@ -1273,7 +1355,9 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let c = ctx.clone();
     ui.on_move_selection(move |delta| c.update(|app, ui| app.move_selection(ui, delta as isize)));
     let c = ctx.clone();
-    ui.on_play_selected(move || c.update(|app, ui| app.play_selected(ui)));
+    ui.on_cycle_panel(move |direction| c.update(|app, ui| app.cycle_panel(ui, direction)));
+    let c = ctx.clone();
+    ui.on_activate(move || c.update(|app, ui| app.activate(ui)));
     let c = ctx.clone();
     ui.on_track_action(move |id, action| c.update(|app, ui| app.track_action(ui, id, &action)));
     let c = ctx.clone();
@@ -1293,13 +1377,7 @@ fn launch(path: &Path) -> Result<(), Problem> {
     ui.on_track_payload(track_payload);
     ui.on_is_track_payload(|data| payload_track(&data).is_some());
 
-    let c = ctx.clone();
-    ui.on_show_database(move || {
-        c.update(|app, ui| {
-            let track = app.db_path.display().to_string().into();
-            app.show_status(ui, Status { kind: StatusKind::Database, track, ..Default::default() });
-        })
-    });
+    ui.set_database_path(path.display().to_string().into());
     let c = ctx.clone();
     ui.on_new_database(move || database_action(&c, choose_new_database));
     let c = ctx.clone();

@@ -108,7 +108,10 @@ export component StatusBar inherits Rectangle {
     in-out property <bool> show-equalizer;
     callback zoom-edited(float);
     callback toggle-theme();
-    callback show-database();
+    // Chemin de la base, affiché à la place de la barre par l'icône de gauche.
+    in property <string> database-path;
+    in-out property <bool> show-path;
+    callback path-closed();
 
     height: 44px;
     background: Theme.status-bg;
@@ -123,9 +126,43 @@ export component StatusBar inherits Rectangle {
         padding-left: 16px;
         padding-right: 16px;
         padding-top: 1px;
+        spacing: 8px;
+
+        // Icône de la base : bascule entre la barre et le chemin du fichier .db.
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("icons/ep-coin.svg");
+                width: 14px;
+                height: 14px;
+                colorize: root.show-path || db-touch.has-hover ? Theme.accent : Theme.status-text;
+                db-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.show-path = !root.show-path;
+                        if !root.show-path {
+                            root.path-closed();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sélectionnable à la souris et copiable (Cmd+C), pour le Terminal ou le Finder.
+        if root.show-path: TextInput {
+            text: root.database-path;
+            read-only: true;
+            single-line: true;
+            font-size: 12px;
+            color: Theme.status-text;
+            selection-background-color: Theme.tint-strong;
+            selection-foreground-color: Theme.text-primary;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
 
         // Message temporaire (scan, etc.) : remplace les trois colonnes.
-        if root.message != "": Text {
+        if !root.show-path && root.message != "": Text {
             text: root.message;
             font-size: 12px;
             color: Theme.status-text;
@@ -133,25 +170,10 @@ export component StatusBar inherits Rectangle {
             overflow: elide;
         }
 
-        if root.message == "": HorizontalLayout {
+        if !root.show-path && root.message == "": HorizontalLayout {
             HorizontalLayout {
                 horizontal-stretch: 1;
-                spacing: 8px;
                 alignment: start;
-                VerticalLayout {
-                    alignment: center;
-                    Image {
-                        source: @image-url("icons/ep-coin.svg");
-                        width: 14px;
-                        height: 14px;
-                        colorize: db-touch.has-hover ? Theme.accent : Theme.status-text;
-                        db-touch := TouchArea {
-                            clicked => {
-                                root.show-database();
-                            }
-                        }
-                    }
-                }
                 Text {
                     text: root.source == StatusSource.library ? @tr("Library: {0}", root.source-name)
                         : root.source == StatusSource.recent ? @tr("Playlist: Last added")

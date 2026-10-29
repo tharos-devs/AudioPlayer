@@ -1,3 +1,4 @@
+import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 
 export struct ListItem {
@@ -12,6 +13,8 @@ export struct ListItem {
 export component PanelHeader inherits Rectangle {
     in property <string> title;
     in property <string> badge;
+    // Panneau qui reçoit les flèches du clavier (Tab pour changer).
+    in property <bool> active;
     height: 36px;
     background: Theme.panel-bg;
 
@@ -25,7 +28,7 @@ export component PanelHeader inherits Rectangle {
             font-size: 11px;
             font-weight: 600;
             letter-spacing: 0.5px;
-            color: Theme.text-secondary;
+            color: root.active ? Theme.accent : Theme.text-secondary;
             vertical-alignment: center;
         }
         if root.badge != "": VerticalLayout {
@@ -79,6 +82,8 @@ export component Artwork inherits Rectangle {
 export component ArtistRow inherits Rectangle {
     in property <ListItem> item;
     in property <bool> selected;
+    // Position du curseur clavier : Entrée la sélectionne.
+    in property <bool> cursor;
     callback clicked();
     height: 48px;
 
@@ -87,6 +92,8 @@ export component ArtistRow inherits Rectangle {
         width: parent.width - 8px;
         border-radius: 6px;
         clip: true;
+        border-width: root.cursor ? 1px : 0px;
+        border-color: Theme.accent;
         background: root.selected ? Theme.selected-bg : (touch.has-hover ? Theme.item-hover : transparent);
 
         Rectangle {
@@ -126,8 +133,11 @@ export component ArtistRow inherits Rectangle {
 export component AlbumRow inherits Rectangle {
     in property <ListItem> item;
     in property <bool> selected;
+    in property <bool> cursor;
     callback clicked();
     height: 61px;
+    border-width: root.cursor ? 1px : 0px;
+    border-color: Theme.accent;
     background: root.selected ? Theme.selected-bg : (touch.has-hover ? Theme.item-hover : transparent);
 
     Rectangle {
@@ -212,6 +222,59 @@ export component Splitter inherits Rectangle {
         mouse-cursor: col-resize;
         moved => {
             root.target = clamp(root.target + self.mouse-x - self.pressed-x, root.minimum, root.maximum);
+        }
+    }
+}
+
+// Listes Artistes et Albums : `reveal-serial` change à chaque demande de rendre `reveal-row` visible.
+export component ArtistList inherits ListView {
+    in property <[ListItem]> items;
+    in property <int> selected: -1;
+    in property <int> cursor: -1;
+    in property <int> reveal-row;
+    in property <int> reveal-serial;
+    callback clicked(int);
+    changed reveal-serial => {
+        let top = root.reveal-row * 48px;
+        if top < -root.content-y {
+            root.content-y = -top;
+        } else if top + 48px > -root.content-y + root.visible-height {
+            root.content-y = -(top + 48px - root.visible-height);
+        }
+    }
+
+    for artist in root.items: ArtistRow {
+        item: artist;
+        selected: artist.id == root.selected;
+        cursor: artist.id == root.cursor;
+        clicked => {
+            root.clicked(artist.id);
+        }
+    }
+}
+
+export component AlbumList inherits ListView {
+    in property <[ListItem]> items;
+    in property <int> selected: -1;
+    in property <int> cursor: -1;
+    in property <int> reveal-row;
+    in property <int> reveal-serial;
+    callback clicked(int);
+    changed reveal-serial => {
+        let top = root.reveal-row * 61px;
+        if top < -root.content-y {
+            root.content-y = -top;
+        } else if top + 61px > -root.content-y + root.visible-height {
+            root.content-y = -(top + 61px - root.visible-height);
+        }
+    }
+
+    for album in root.items: AlbumRow {
+        item: album;
+        selected: album.id == root.selected;
+        cursor: album.id == root.cursor;
+        clicked => {
+            root.clicked(album.id);
         }
     }
 }
