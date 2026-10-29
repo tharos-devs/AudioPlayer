@@ -190,6 +190,8 @@ pub struct TrackDetails {
     pub year: Option<i32>,
     pub track_number: Option<u32>,
     pub disc_number: Option<u32>,
+    pub track_total: Option<u32>,
+    pub disc_total: Option<u32>,
     pub disc_subtitle: Option<String>,
     pub genre: Option<String>,
     pub composer: Option<String>,
@@ -218,7 +220,7 @@ impl Database {
             "SELECT t.id, t.file_path, t.title, ar.name, aa.name, al.title, al.year, t.track_number, t.disc_number,
                     t.disc_subtitle, t.genre, t.composer, t.conductor, t.lyricist, t.grouping, t.work, t.comment,
                     t.publisher, t.catalog_number, t.barcode, al.is_compilation, t.codec, t.bitrate, t.sample_rate,
-                    t.bit_depth, t.channels, t.duration_ms, t.file_size
+                    t.bit_depth, t.channels, t.duration_ms, t.file_size, t.track_total, t.disc_total
              FROM tracks t
              JOIN artists ar ON ar.id = t.artist_id
              JOIN albums al ON al.id = t.album_id
@@ -258,6 +260,8 @@ impl Database {
                         channels: r.get(25)?,
                         duration_ms: r.get::<_, i64>(26)?.max(0) as u64,
                         file_size: r.get::<_, Option<i64>>(27)?.map(|s| s.max(0) as u64),
+                        track_total: r.get(28)?,
+                        disc_total: r.get(29)?,
                     })
                 })
                 .optional()?;

@@ -20,6 +20,8 @@ pub enum Field {
     Album,
     TrackNumber,
     DiscNumber,
+    TrackTotal,
+    DiscTotal,
     Year,
     Genre,
     Composer,
@@ -35,13 +37,15 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 18] = [
+    pub const ALL: [Field; 20] = [
         Field::Title,
         Field::Artist,
         Field::AlbumArtist,
         Field::Album,
         Field::TrackNumber,
         Field::DiscNumber,
+        Field::TrackTotal,
+        Field::DiscTotal,
         Field::Year,
         Field::Genre,
         Field::Composer,
@@ -65,6 +69,8 @@ impl Field {
             Field::Album => "album",
             Field::TrackNumber => "track-number",
             Field::DiscNumber => "disc-number",
+            Field::TrackTotal => "track-total",
+            Field::DiscTotal => "disc-total",
             Field::Year => "year",
             Field::Genre => "genre",
             Field::Composer => "composer",
@@ -85,7 +91,7 @@ impl Field {
     }
 
     pub fn is_numeric(self) -> bool {
-        matches!(self, Field::TrackNumber | Field::DiscNumber | Field::Year)
+        matches!(self, Field::TrackNumber | Field::DiscNumber | Field::TrackTotal | Field::DiscTotal | Field::Year)
     }
 
     fn item_key(self) -> Option<ItemKey> {
@@ -129,6 +135,10 @@ fn apply(tag: &mut Tag, field: Field, value: Option<&str>) -> Result<(), String>
         (Field::TrackNumber, None) => tag.remove_track(),
         (Field::DiscNumber, Some(v)) => tag.set_disk(number(v)?),
         (Field::DiscNumber, None) => tag.remove_disk(),
+        (Field::TrackTotal, Some(v)) => tag.set_track_total(number(v)?),
+        (Field::TrackTotal, None) => tag.remove_track_total(),
+        (Field::DiscTotal, Some(v)) => tag.set_disk_total(number(v)?),
+        (Field::DiscTotal, None) => tag.remove_disk_total(),
         (Field::Year, Some(v)) => {
             let year = u16::try_from(number(v)?).map_err(|_| format!("not a year: {v}"))?;
             tag.remove_key(ItemKey::Year);

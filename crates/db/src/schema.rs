@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::{Error, Result};
 
-pub const MIGRATIONS: &[&str] = &[V1, V2, V3];
+pub const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
 
 // Les dates sont du texte UTC « AAAA-MM-JJ HH:MM:SS », comme `datetime('now')`.
 const V1: &str = "
@@ -188,6 +188,12 @@ WHEN (SELECT al.library_id FROM tracks t JOIN albums al ON al.id = t.album_id WH
 BEGIN
     SELECT RAISE(ABORT, 'track and playlist belong to different libraries');
 END;
+";
+
+// Totaux de pistes et de disques (« 3 of 12 » du tiroir des tags), relus au prochain scan.
+const V4: &str = "
+ALTER TABLE tracks ADD COLUMN track_total INTEGER;
+ALTER TABLE tracks ADD COLUMN disc_total INTEGER;
 ";
 
 pub fn version(conn: &Connection) -> Result<usize> {

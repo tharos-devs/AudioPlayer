@@ -13,6 +13,7 @@ pub struct Settings {
     pub player: PlayerSettings,
     pub equalizer: EqualizerSettings,
     pub recent: RecentSettings,
+    pub tags: TagsSettings,
 }
 
 // Tout champ absent prend sa valeur par défaut : on peut en ajouter sans migration.
@@ -74,6 +75,22 @@ pub struct EqualizerSettings {
 pub struct RecentSettings {
     pub amount: u32,
     pub unit: String,
+}
+
+/// Tiroir des tags : champs affichés (clés de l'interface) et section technique.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TagsSettings {
+    pub fields: Vec<String>,
+    pub technical: bool,
+}
+
+// Ceux cochés par défaut dans la v0.1.
+impl Default for TagsSettings {
+    fn default() -> Self {
+        let fields = ["title", "artist", "album", "track-number", "disc-number", "year", "genre", "album-artist", "composer", "comment", "grouping"];
+        TagsSettings { fields: fields.map(String::from).to_vec(), technical: true }
+    }
 }
 
 impl Default for RecentSettings {
@@ -145,6 +162,7 @@ impl Settings {
             player: read(db, "player"),
             equalizer: read(db, "equalizer"),
             recent: read(db, "recent"),
+            tags: read(db, "tags"),
         }
     }
 
@@ -156,7 +174,8 @@ impl Settings {
         write(db, "panels", &self.panels, &previous.panels)?;
         write(db, "player", &self.player, &previous.player)?;
         write(db, "equalizer", &self.equalizer, &previous.equalizer)?;
-        write(db, "recent", &self.recent, &previous.recent)
+        write(db, "recent", &self.recent, &previous.recent)?;
+        write(db, "tags", &self.tags, &previous.tags)
     }
 }
 

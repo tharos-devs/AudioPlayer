@@ -163,8 +163,12 @@ struct App {
     // Tiroir des tags : morceaux montrés (ids en base, stables d'un rechargement à
     // l'autre), lignes d'origine et saisies par ligne.
     tag_tracks: Vec<i64>,
-    tag_rows: Vec<TagRow>,
-    tag_edits: HashMap<usize, String>,
+    // Valeur d'origine de chaque champ (et « valeurs multiples ») ; saisies par champ.
+    tag_values: HashMap<String, (String, bool)>,
+    tag_edits: HashMap<String, String>,
+    // Champs visibles (réglage « tags ») et section technique.
+    tag_fields: Vec<String>,
+    tag_technical: bool,
     // Lecture suspendue pendant l'écriture : position et état à reprendre.
     tag_resume: Option<(Duration, bool)>,
 }
@@ -221,8 +225,10 @@ impl App {
             rng: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0x5eed, |d| d.as_nanos() as u64) | 1,
             status_timer: Timer::default(),
             tag_tracks: Vec::new(),
-            tag_rows: Vec::new(),
+            tag_values: HashMap::new(),
             tag_edits: HashMap::new(),
+            tag_fields: settings::TagsSettings::default().fields,
+            tag_technical: true,
             tag_resume: None,
         };
         if !app.libraries.is_empty() {
@@ -1941,7 +1947,7 @@ impl App {
             return;
         }
         let ids: Vec<i64> = self.tracks_of(Dragged::Selection).into_iter().map(|t| self.library.tracks[t].id).collect();
-        if ids != self.tag_tracks || self.tag_rows.is_empty() {
+        if ids != self.tag_tracks || self.tag_values.is_empty() {
             self.show_tags(ui, ids);
         }
     }
@@ -1951,34 +1957,81 @@ impl App {
             eprintln!("tags: {error}");
             Vec::new()
         });
-        let mut rows = Vec::new();
-        let mut push = |key: &str, values: Vec<String>, editable: bool| {
-            let multiple = values.windows(2).any(|pair| pair[0] != pair[1]);
-            let value = if multiple { String::new() } else { values.into_iter().next().unwrap_or_default() };
-            rows.push(TagRow { key: key.into(), value: value.into(), multiple, editable });
+        let mut values = HashMap::new();
+        let mut put = |key: &str, all: Vec<String>| {
+            let multiple = all.windows(2).any(|pair| pair[0] != pair[1]);
+            let value = if multiple { String::new() } else { all.into_iter().next().unwrap_or_default() };
+            values.insert(key.to_owned(), (value, multiple));
         };
         for field in Field::ALL {
-            push(field.key(), details.iter().map(|d| field_value(d, field)).collect(), true);
+            put(field.key(), details.iter().map(|d| field_value(d, field)).collect());
         }
         let number = |value: Option<u32>| value.map_or(String::new(), |n| n.to_string());
-        push("compilation", details.iter().map(|d| u8::from(d.compilation).to_string()).collect(), false);
-        push("codec", details.iter().map(|d| d.codec.clone().unwrap_or_default()).collect(), false);
-        push("bitrate", details.iter().map(|d| number(d.bitrate)).collect(), false);
-        push("sample-rate", details.iter().map(|d| number(d.sample_rate)).collect(), false);
-        push("bit-depth", details.iter().map(|d| number(d.bit_depth)).collect(), false);
-        push("channels", details.iter().map(|d| number(d.channels)).collect(), false);
+        put("compilation", details.iter().map(|d| u8::from(d.compilation).to_string()).collect());
+        put("codec", details.iter().map(|d| d.codec.clone().unwrap_or_default()).collect());
+        put("bitrate", details.iter().map(|d| number(d.bitrate)).collect());
+        put("sample-rate", details.iter().map(|d| number(d.sample_rate)).collect());
+        put("bit-depth", details.iter().map(|d| number(d.bit_depth)).collect());
+        put("channels", details.iter().map(|d| number(d.channels)).collect());
         // Durée et taille : le total de la sélection.
         let seconds: u64 = details.iter().map(|d| d.duration_ms / 1000).sum();
-        push("duration", vec![if details.is_empty() { String::new() } else { seconds.to_string() }], false);
+        put("duration", vec![if details.is_empty() { String::new() } else { seconds.to_string() }]);
         let size = details.iter().map(|d| d.file_size).sum::<Option<u64>>();
-        push("file-size", vec![size.map_or(String::new(), |s| s.to_string())], false);
-        push("path", details.iter().map(|d| d.path.clone()).collect(), false);
+        put("file-size", vec![size.map_or(String::new(), |s| s.to_string())]);
+        put("path", details.iter().map(|d| d.path.clone()).collect());
 
         self.tag_tracks = details.iter().map(|d| d.id).collect();
+        self.tag_values = values;
         self.tag_edits.clear();
         ui.set_tag_count(self.tag_tracks.len() as i32);
-        ui.set_tag_rows(model(rows.clone()));
-        self.tag_rows = rows;
+        self.refresh_tag_rows(ui);
+    }
+
+    // Lignes du tiroir : champs visibles dans l'ordre de la v0.1, puis la section technique.
+    fn refresh_tag_rows(&self, ui: &AppWindow) {
+        let empty = (String::new(), false);
+        let value = |key: &str| self.tag_values.get(key).unwrap_or(&empty);
+        let mut rows = Vec::new();
+        for &key in TAG_FIELDS.iter().filter(|&&key| self.tag_fields.iter().any(|f| f == key)) {
+            let (text, multiple) = value(key);
+            let pair_key = match key {
+                "track-number" => "track-total",
+                "disc-number" => "disc-total",
+                _ => "",
+            };
+            let (pair_value, pair_multiple) = if pair_key.is_empty() { &empty } else { value(pair_key) };
+            rows.push(TagRow {
+                key: key.into(),
+                value: text.into(),
+                multiple: *multiple,
+                editable: Field::from_key(key).is_some(),
+                pair_key: pair_key.into(),
+                pair_value: pair_value.into(),
+                pair_multiple: *pair_multiple,
+            });
+        }
+        if self.tag_technical {
+            for &key in TECHNICAL_FIELDS {
+                let (text, multiple) = value(key);
+                rows.push(TagRow { key: key.into(), value: text.into(), multiple: *multiple, ..Default::default() });
+            }
+        }
+        ui.set_tag_rows(model(rows));
+        let mut choices: Vec<TagChoice> =
+            TAG_FIELDS.iter().map(|&key| TagChoice { key: key.into(), shown: self.tag_fields.iter().any(|f| f == key) }).collect();
+        choices.push(TagChoice { key: "technical".into(), shown: self.tag_technical });
+        ui.set_tag_choices(model(choices));
+    }
+
+    fn toggle_tag_field(&mut self, ui: &AppWindow, key: &str) {
+        if key == "technical" {
+            self.tag_technical = !self.tag_technical;
+        } else if let Some(at) = self.tag_fields.iter().position(|f| f == key) {
+            self.tag_fields.remove(at);
+        } else if TAG_FIELDS.contains(&key) {
+            self.tag_fields.push(key.to_owned());
+        }
+        self.refresh_tag_rows(ui);
     }
 
     fn edit_tags(&mut self, ui: &AppWindow) {
@@ -1991,7 +2044,7 @@ impl App {
     fn cancel_tags(&mut self, ui: &AppWindow) {
         ui.set_tags_editing(false);
         // Les champs reprennent leurs valeurs d'origine.
-        self.tag_rows.clear();
+        self.tag_values.clear();
         self.refresh_tags(ui);
     }
 
@@ -2000,14 +2053,13 @@ impl App {
             return;
         }
         let mut edits = Vec::new();
-        let mut rows: Vec<_> = self.tag_edits.iter().collect();
-        rows.sort();
-        for (&row, value) in rows {
-            let Some(original) = self.tag_rows.get(row) else { continue };
-            let Some(field) = Field::from_key(&original.key) else { continue };
+        for field in Field::ALL {
+            let (Some(value), Some((original, multiple))) = (self.tag_edits.get(field.key()), self.tag_values.get(field.key())) else {
+                continue;
+            };
             let value = value.trim();
             // Valeurs multiples : un champ laissé vide garde la valeur de chaque morceau.
-            if (original.multiple && value.is_empty()) || (!original.multiple && value == original.value.trim()) {
+            if (*multiple && value.is_empty()) || (!*multiple && value == original.trim()) {
                 continue;
             }
             if field.is_numeric() && !value.is_empty() && value.parse::<u16>().is_err() {
@@ -2195,6 +2247,13 @@ fn from_ui_id(id: i32) -> Option<usize> {
     usize::try_from(id).ok()
 }
 
+// Champs du tiroir, dans l'ordre de la v0.1 ; les totaux s'affichent avec leur numéro.
+const TAG_FIELDS: &[&str] = &[
+    "title", "artist", "album-artist", "album", "track-number", "disc-number", "year", "genre", "grouping", "composer",
+    "conductor", "lyricist", "comment", "publisher", "catalog-number", "disc-subtitle", "barcode", "work", "compilation",
+];
+const TECHNICAL_FIELDS: &[&str] = &["codec", "bitrate", "sample-rate", "bit-depth", "channels", "duration", "file-size", "path"];
+
 // Valeur d'un champ modifiable, telle que la base la connaît.
 fn field_value(d: &TrackDetails, field: Field) -> String {
     let text = |value: &Option<String>| value.clone().unwrap_or_default();
@@ -2206,6 +2265,8 @@ fn field_value(d: &TrackDetails, field: Field) -> String {
         Field::Album => d.album.clone(),
         Field::TrackNumber => number(d.track_number),
         Field::DiscNumber => number(d.disc_number),
+        Field::TrackTotal => number(d.track_total),
+        Field::DiscTotal => number(d.disc_total),
         Field::Year => d.year.map_or(String::new(), |y| y.to_string()),
         Field::Genre => text(&d.genre),
         Field::Composer => text(&d.composer),
@@ -2368,6 +2429,7 @@ fn capture_settings(ui: &AppWindow, app: &App, previous: &Settings) -> Settings 
             gains: equalizer.get_gains().iter().collect(),
         },
         recent: settings::RecentSettings { amount: app.recent.0, unit: app.recent.1.clone() },
+        tags: settings::TagsSettings { fields: app.tag_fields.clone(), technical: app.tag_technical },
     }
 }
 
@@ -2409,6 +2471,9 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let initial = Settings::load(&db);
     let app = App::new(db, path.to_owned(), initial.session.library.as_deref()).map_err(|e| Problem::failed(path, e))?;
     let first = app.selected_library;
+    let mut app = app;
+    app.tag_fields = initial.tags.fields.clone();
+    app.tag_technical = initial.tags.technical;
 
     let ui = AppWindow::new().map_err(|e| Problem::failed(path, e))?;
     ui.set_version(env!("CARGO_PKG_VERSION").into());
@@ -2542,11 +2607,13 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let c = ctx.clone();
     ui.on_tags_cancel(move || c.update(|app, ui| app.cancel_tags(ui)));
     let c = ctx.clone();
-    ui.on_tag_edited(move |row, value| {
+    ui.on_tag_edited(move |key, value| {
         c.update(|app, _| {
-            app.tag_edits.insert(row as usize, value.into());
+            app.tag_edits.insert(key.into(), value.into());
         })
     });
+    let c = ctx.clone();
+    ui.on_tag_field_toggled(move |key| c.update(|app, ui| app.toggle_tag_field(ui, &key)));
     let c = ctx.clone();
     ui.on_playlist_menu(move |action| c.update(|app, ui| app.playlist_menu(ui, &action)));
     let c = ctx.clone();

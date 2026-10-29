@@ -40,6 +40,12 @@ fn disc(text: &str) -> Option<u32> {
     number(Some(first.to_owned()))
 }
 
+// « 2/3 » ou « 2 of 3 » : le total.
+fn disc_total(text: &str) -> Option<u32> {
+    let rest = text.split_once('/').or_else(|| text.split_once(" of "))?.1;
+    number(Some(rest.to_owned()))
+}
+
 fn codec(file_type: FileType) -> Option<&'static str> {
     Some(match file_type {
         FileType::Mpeg => "MP3",
@@ -97,6 +103,7 @@ pub fn read(file: &AudioFile) -> Result<Read, String> {
         .or_else(|| number(text(tag, ItemKey::Year)).map(|y| y as i32))
         .filter(|&y| y > 0);
     let disc_number = text(tag, ItemKey::DiscNumber).and_then(|d| disc(&d)).or_else(|| tag.and_then(|t| t.disk()));
+    let disc_total = text(tag, ItemKey::DiscNumber).and_then(|d| disc_total(&d)).or_else(|| tag.and_then(|t| t.disk_total()));
     let compilation = text(tag, ItemKey::FlagCompilation).is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
 
     let picture = tag.and_then(|t| {
@@ -120,6 +127,8 @@ pub fn read(file: &AudioFile) -> Result<Read, String> {
         year,
         track_number: tag.and_then(|t| t.track()).filter(|&n| n > 0),
         disc_number: disc_number.filter(|&n| n > 0),
+        track_total: tag.and_then(|t| t.track_total()).filter(|&n| n > 0),
+        disc_total: disc_total.filter(|&n| n > 0),
         disc_subtitle: text(tag, ItemKey::SetSubtitle),
         duration_ms: properties.duration().as_millis() as u64,
         codec: codec(tagged.file_type()).map(str::to_owned),
@@ -155,5 +164,6 @@ mod tests {
         assert_eq!(disc(" 4 "), Some(4));
         assert_eq!(disc("0"), None);
         assert_eq!(disc("x"), None);
+        assert_eq!((disc_total("2/3"), disc_total("2 of 3"), disc_total("2")), (Some(3), Some(3), None));
     }
 }

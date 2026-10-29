@@ -23,6 +23,8 @@ pub struct TrackRecord {
     pub year: Option<i32>,
     pub track_number: Option<u32>,
     pub disc_number: Option<u32>,
+    pub track_total: Option<u32>,
+    pub disc_total: Option<u32>,
     pub disc_subtitle: Option<String>,
     pub duration_ms: u64,
     pub codec: Option<String>,
@@ -220,9 +222,9 @@ fn write_track(tx: &Transaction, library_id: i64, r: &TrackRecord) -> rusqlite::
         "INSERT INTO tracks (album_id, artist_id, title, disc_number, disc_subtitle, track_number, duration_ms,
                              file_path, file_size, file_mtime, codec, bitrate, sample_rate, bit_depth, channels,
                              genre, composer, conductor, lyricist, grouping, work, comment, publisher,
-                             catalog_number, barcode, bpm)
+                             catalog_number, barcode, bpm, track_total, disc_total)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
-                 ?21, ?22, ?23, ?24, ?25, ?26)
+                 ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)
          ON CONFLICT (file_path) DO UPDATE SET
              album_id = excluded.album_id, artist_id = excluded.artist_id, title = excluded.title,
              disc_number = excluded.disc_number, disc_subtitle = excluded.disc_subtitle,
@@ -232,7 +234,8 @@ fn write_track(tx: &Transaction, library_id: i64, r: &TrackRecord) -> rusqlite::
              channels = excluded.channels, genre = excluded.genre, composer = excluded.composer,
              conductor = excluded.conductor, lyricist = excluded.lyricist, grouping = excluded.grouping,
              work = excluded.work, comment = excluded.comment, publisher = excluded.publisher,
-             catalog_number = excluded.catalog_number, barcode = excluded.barcode, bpm = excluded.bpm",
+             catalog_number = excluded.catalog_number, barcode = excluded.barcode, bpm = excluded.bpm,
+             track_total = excluded.track_total, disc_total = excluded.disc_total",
         params![
             album_id,
             performer,
@@ -260,6 +263,8 @@ fn write_track(tx: &Transaction, library_id: i64, r: &TrackRecord) -> rusqlite::
             r.catalog_number,
             r.barcode,
             r.bpm,
+            r.track_total,
+            r.disc_total,
         ],
     )?;
     Ok(album_id)

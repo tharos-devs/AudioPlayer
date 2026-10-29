@@ -560,3 +560,12 @@ msgid "{n} file could not be written: “{0}”: {1}"
 msgid_plural "{n} files could not be written, including “{0}”: {1}"
 msgstr[0] "{n} fichier n'a pas pu être écrit : « {0} » : {1}"
 msgstr[1] "{n} fichiers n'ont pas pu être écrits, dont « {0} » : {1}"
+
+msgid "Technical Details"
+msgstr "Détails techniques"
+
+msgid "{0} of {1}"
+msgstr "{0} sur {1}"
+
+msgid "of"
+msgstr "sur"

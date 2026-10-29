@@ -8,9 +8,9 @@ import { ControlBar } from "controlbar.slint";
 import { StatusBar, StatusSource } from "statusbar.slint";
 import { EqualizerState } from "equalizer.slint";
 import { SetupWindow, DatabaseProblem, DatabaseProblems } from "setup.slint";
-import { TagsDrawer, TagRow } from "tags.slint";
+import { TagsDrawer, TagRow, TagChoice } from "tags.slint";
 
-export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind, TagRow }
+export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind, TagRow, TagChoice }
 
 export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed, tags-writing, tags-saved, tags-failed, tags-invalid, artwork-saved }
 
@@ -151,6 +151,7 @@ export component AppWindow inherits Window {
     in-out property <bool> tags-open;
     in-out property <length> tags-width: 320px;
     in property <[TagRow]> tag-rows;
+    in property <[TagChoice]> tag-choices;
     in property <int> tag-count;
     in property <bool> tags-editing;
     in property <bool> tags-saving;
@@ -158,7 +159,8 @@ export component AppWindow inherits Window {
     callback tags-edit();
     callback tags-save();
     callback tags-cancel();
-    callback tag-edited(int, string);
+    callback tag-edited(string, string);
+    callback tag-field-toggled(string);
 
     callback select-library(int);
     callback select-letter(string);
@@ -632,6 +634,7 @@ export component AppWindow inherits Window {
                     if root.tags-open: TagsDrawer {
                         width: root.tags-width;
                         rows: root.tag-rows;
+                        choices: root.tag-choices;
                         count: root.tag-count;
                         editing: root.tags-editing;
                         saving: root.tags-saving;
@@ -646,8 +649,11 @@ export component AppWindow inherits Window {
                             keys.focus();
                             root.tags-cancel();
                         }
-                        value-edited(index, value) => {
-                            root.tag-edited(index, value);
+                        value-edited(key, value) => {
+                            root.tag-edited(key, value);
+                        }
+                        toggle-field(key) => {
+                            root.tag-field-toggled(key);
                         }
                     }
                 }
