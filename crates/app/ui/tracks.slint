@@ -150,6 +150,9 @@ component TrackListRow inherits Rectangle {
                         root.select(false, false);
                     }
                 }
+                double-clicked => {
+                    root.play();
+                }
                 // Clic droit : menu au style de l'app, à l'endroit du clic.
                 pointer-event(event) => {
                     if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
@@ -390,6 +393,9 @@ component PlaylistTrackRow inherits Rectangle {
                 if !root.modified-press {
                     root.select(false, false);
                 }
+            }
+            double-clicked => {
+                root.play();
             }
             // Clic droit : menu au style de l'app, à l'endroit du clic.
             pointer-event(event) => {
