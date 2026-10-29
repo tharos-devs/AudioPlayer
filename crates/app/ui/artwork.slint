@@ -1,0 +1,325 @@
+import { Theme } from "theme.slint";
+import { ThemedButton } from "widgets.slint";
+import { TagField } from "tags.slint";
+
+// Ligne de séparation des sections, comme les traits de la v0.1.
+component Rule inherits Rectangle {
+    height: Theme.hairline;
+    background: Theme.border-base;
+}
+
+// « Set Album Artwork » de la v0.1 : aperçu, choix du fichier (clic ou dépôt depuis le
+// Finder) et dimensions de l'image écrite dans les fichiers, 150×150 par défaut.
+export component ArtworkDialog inherits Rectangle {
+    in property <string> album-title;
+    in property <string> album-artist;
+    in property <image> preview;
+    in property <bool> has-preview;
+    // Largeur / hauteur de l'image choisie, pour garder les proportions.
+    in property <float> ratio;
+    // Un fichier survole la fenêtre.
+    in property <bool> drag-over;
+    // Le dernier fichier choisi n'est pas une image lisible.
+    in property <bool> unreadable;
+    in-out property <string> width-text: "150";
+    in-out property <string> height-text: "150";
+    in-out property <bool> keep-ratio: true;
+    callback pick();
+    callback accepted(string, string);
+    callback cancelled();
+
+    background: #00000080;
+
+    public function focus-keys() {
+        keys.focus();
+    }
+
+    function from-width(text: string) {
+        if root.keep-ratio && root.ratio > 0 && text.to-float() > 0 {
+            root.height-text = round(text.to-float() / root.ratio);
+        }
+    }
+    function from-height(text: string) {
+        if root.keep-ratio && root.ratio > 0 && text.to-float() > 0 {
+            root.width-text = round(text.to-float() * root.ratio);
+        }
+    }
+
+    TouchArea { }
+
+    Rectangle {
+        width: 560px;
+        height: layout.preferred-height;
+        border-radius: 6px;
+        background: Theme.footer-bg;
+        border-width: Theme.hairline;
+        border-color: Theme.border-base;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #00000080;
+
+        keys := FocusScope {
+            key-pressed(event) => {
+                if event.text == Key.Escape {
+                    root.cancelled();
+                    return accept;
+                }
+                if event.text == Key.Return && root.has-preview {
+                    root.accepted(root.width-text, root.height-text);
+                    return accept;
+                }
+                return reject;
+            }
+
+            layout := VerticalLayout {
+                padding: 16px;
+                spacing: 14px;
+
+                HorizontalLayout {
+                    Text {
+                        horizontal-stretch: 1;
+                        text: @tr("Set Album Artwork");
+                        font-size: 16px;
+                        color: Theme.text-primary;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        width: 20px;
+                        height: 20px;
+                        Image {
+                            source: @image-url("icons/ep-close.svg");
+                            width: 13px;
+                            height: 13px;
+                            colorize: close.has-hover ? Theme.accent : Theme.text-secondary;
+                        }
+                        close := TouchArea {
+                            clicked => {
+                                root.cancelled();
+                            }
+                        }
+                    }
+                }
+                Rule { }
+
+                VerticalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: root.album-title;
+                        font-size: 16px;
+                        font-weight: 600;
+                        color: Theme.text-primary;
+                        horizontal-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.album-artist;
+                        font-size: 12px;
+                        color: Theme.text-secondary;
+                        horizontal-alignment: center;
+                        overflow: elide;
+                    }
+                }
+                Rule { }
+
+                HorizontalLayout {
+                    spacing: 18px;
+                    // Aperçu à 150px, la taille des pochettes de la bibliothèque.
+                    VerticalLayout {
+                        alignment: start;
+                        Rectangle {
+                            width: 150px;
+                            height: 150px;
+                            border-radius: 4px;
+                            border-width: root.has-preview ? 0px : Theme.hairline;
+                            border-color: Theme.border-base;
+                            clip: true;
+                            if root.has-preview: Image {
+                                width: 100%;
+                                height: 100%;
+                                source: root.preview;
+                                image-fit: contain;
+                            }
+                            if !root.has-preview: VerticalLayout {
+                                alignment: center;
+                                spacing: 10px;
+                                HorizontalLayout {
+                                    alignment: center;
+                                    Image {
+                                        source: @image-url("icons/ep-picture.svg");
+                                        width: 40px;
+                                        height: 40px;
+                                        colorize: Theme.text-secondary;
+                                    }
+                                }
+                                Text {
+                                    text: @tr("No image selected");
+                                    font-size: 12px;
+                                    color: Theme.text-secondary;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 14px;
+                        Rectangle {
+                            height: 120px;
+                            border-radius: 4px;
+                            border-width: Theme.hairline;
+                            border-color: root.drag-over || zone.has-hover ? Theme.accent : Theme.border-base;
+                            background: root.drag-over ? Theme.tint : zone.has-hover ? Theme.hover-tint : transparent;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 10px;
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                HorizontalLayout {
+                                    alignment: center;
+                                    Image {
+                                        source: @image-url("icons/ep-upload.svg");
+                                        width: 26px;
+                                        height: 26px;
+                                        colorize: root.drag-over || zone.has-hover ? Theme.accent : Theme.text-primary;
+                                    }
+                                }
+                                Text {
+                                    text: @tr("Click to select or drag & drop JPG or PNG files here");
+                                    font-size: 12px;
+                                    color: Theme.text-primary;
+                                    horizontal-alignment: center;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            zone := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.pick();
+                                }
+                            }
+                        }
+
+                        if root.unreadable: Text {
+                            text: @tr("This file is not a readable JPG or PNG image.");
+                            font-size: 12px;
+                            color: #f56c6c;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: @tr("Resize Options");
+                            font-size: 14px;
+                            font-weight: 600;
+                            color: Theme.text-primary;
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            Text {
+                                text: @tr("Width:");
+                                font-size: 12px;
+                                color: Theme.text-primary;
+                                vertical-alignment: center;
+                            }
+                            TagField {
+                                width: 80px;
+                                text <=> root.width-text;
+                                edited(text) => {
+                                    root.from-width(text);
+                                }
+                                accepted => {
+                                    if root.has-preview {
+                                        root.accepted(root.width-text, root.height-text);
+                                    }
+                                }
+                                cancelled => {
+                                    root.cancelled();
+                                }
+                            }
+                            Rectangle {
+                                width: 6px;
+                            }
+                            Text {
+                                text: @tr("Height:");
+                                font-size: 12px;
+                                color: Theme.text-primary;
+                                vertical-alignment: center;
+                            }
+                            TagField {
+                                width: 80px;
+                                text <=> root.height-text;
+                                edited(text) => {
+                                    root.from-height(text);
+                                }
+                                accepted => {
+                                    if root.has-preview {
+                                        root.accepted(root.width-text, root.height-text);
+                                    }
+                                }
+                                cancelled => {
+                                    root.cancelled();
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            alignment: start;
+                            Rectangle {
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                Rectangle {
+                                    width: 14px;
+                                    height: 14px;
+                                    border-radius: 2px;
+                                    border-width: Theme.hairline;
+                                    border-color: root.keep-ratio ? Theme.accent : Theme.border-base;
+                                    background: root.keep-ratio ? Theme.accent : Theme.bg-primary;
+                                    if root.keep-ratio: Image {
+                                        source: @image-url("icons/ep-check.svg");
+                                        width: 10px;
+                                        height: 10px;
+                                        colorize: Theme.text-inverse;
+                                    }
+                                }
+                                Text {
+                                    text: @tr("Keep aspect ratio");
+                                    font-size: 12px;
+                                    color: Theme.text-primary;
+                                    vertical-alignment: center;
+                                }
+                            }
+                                TouchArea {
+                                    clicked => {
+                                        root.keep-ratio = !root.keep-ratio;
+                                        root.from-width(root.width-text);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rule { }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    ThemedButton {
+                        text: @tr("Cancel");
+                        clicked => {
+                            root.cancelled();
+                        }
+                    }
+                    ThemedButton {
+                        text: @tr("Set Album Artwork");
+                        primary: true;
+                        enabled: root.has-preview;
+                        clicked => {
+                            if root.has-preview {
+                                root.accepted(root.width-text, root.height-text);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

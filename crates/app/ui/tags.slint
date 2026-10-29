@@ -64,7 +64,7 @@ global TagLabels {
 }
 
 // Champ de saisie au style de l'app (le LineEdit standard suit l'accent du système).
-component TagField inherits Rectangle {
+export component TagField inherits Rectangle {
     in-out property <string> text;
     in property <string> placeholder;
     out property <bool> focused: input.has-focus;

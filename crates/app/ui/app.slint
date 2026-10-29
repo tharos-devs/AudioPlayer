@@ -10,10 +10,11 @@ import { EqualizerState } from "equalizer.slint";
 import { SetupWindow, DatabaseProblem, DatabaseProblems } from "setup.slint";
 import { TagsDrawer, TagRow, TagChoice } from "tags.slint";
 import { MiniPlayerWindow } from "miniplayer.slint";
+import { ArtworkDialog } from "artwork.slint";
 
 export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind, TagRow, TagChoice, MiniPlayerWindow }
 
-export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed, tags-writing, tags-saved, tags-failed, tags-invalid, artwork-saved }
+export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed, tags-writing, tags-saved, tags-failed, tags-invalid, artwork-saved, busy }
 
 // Les messages d'état sont formatés ici (et non en Rust) pour passer par @tr.
 export struct Status {
@@ -138,6 +139,8 @@ export component AppWindow inherits Window {
         ? @tr("Artwork saved in {n} file" | "Artwork saved in {n} files" % root.status.count)
         : root.status.kind == StatusKind.tags-failed
         ? @tr("{n} file could not be written: “{0}”: {1}" | "{n} files could not be written, including “{0}”: {1}" % root.status.count, root.status.track, root.status.playlist)
+        : root.status.kind == StatusKind.busy
+        ? @tr("Please wait: a scan or a tag update is in progress.")
         : root.status.kind == StatusKind.tags-invalid
         ? @tr("“{0}” is not a valid number", root.status.track)
         : root.status.kind == StatusKind.database-problem
@@ -221,6 +224,29 @@ export component AppWindow inherits Window {
     in property <int> confirm-count;
     in property <bool> scanning;
     callback confirm-accepted();
+    // « Set Album Artwork… »
+    in-out property <bool> artwork-open;
+    in property <string> artwork-album;
+    in property <string> artwork-artist;
+    in property <image> artwork-preview;
+    in property <bool> artwork-has-preview;
+    in property <float> artwork-ratio;
+    in property <bool> artwork-drag-over;
+    in property <bool> artwork-unreadable;
+    in-out property <string> artwork-width: "150";
+    in-out property <string> artwork-height: "150";
+    in-out property <bool> artwork-keep-ratio: true;
+    callback artwork-pick();
+    callback artwork-accepted(string, string);
+    callback artwork-cancelled();
+    public function open-artwork() {
+        root.artwork-open = true;
+        artwork-dialog.focus-keys();
+    }
+    public function close-artwork() {
+        root.artwork-open = false;
+        keys.focus();
+    }
     public function open-confirm() {
         root.confirm-open = true;
         confirm-dialog.focus-keys();
@@ -725,6 +751,30 @@ export component AppWindow inherits Window {
         }
         cancelled => {
             root.close-confirm();
+        }
+    }
+
+    artwork-dialog := ArtworkDialog {
+        visible: root.artwork-open;
+        album-title: root.artwork-album;
+        album-artist: root.artwork-artist;
+        preview: root.artwork-preview;
+        has-preview: root.artwork-has-preview;
+        ratio: root.artwork-ratio;
+        drag-over: root.artwork-drag-over;
+        unreadable: root.artwork-unreadable;
+        width-text <=> root.artwork-width;
+        height-text <=> root.artwork-height;
+        keep-ratio <=> root.artwork-keep-ratio;
+        pick => {
+            root.artwork-pick();
+        }
+        accepted(width, height) => {
+            root.artwork-accepted(width, height);
+        }
+        cancelled => {
+            root.close-artwork();
+            root.artwork-cancelled();
         }
     }
 }

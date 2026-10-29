@@ -578,3 +578,30 @@ msgstr "Type de fichier"
 
 msgid "No track selected"
 msgstr "Aucun morceau sélectionné"
+
+msgid "Set Album Artwork"
+msgstr "Définir la pochette de l'album"
+
+msgid "No image selected"
+msgstr "Aucune image sélectionnée"
+
+msgid "Click to select or drag & drop JPG or PNG files here"
+msgstr "Cliquez pour choisir, ou déposez ici un fichier JPG ou PNG"
+
+msgid "Resize Options"
+msgstr "Redimensionnement"
+
+msgid "Width:"
+msgstr "Largeur :"
+
+msgid "Height:"
+msgstr "Hauteur :"
+
+msgid "Keep aspect ratio"
+msgstr "Conserver les proportions"
+
+msgid "This file is not a readable JPG or PNG image."
+msgstr "Ce fichier n'est pas une image JPG ou PNG lisible."
+
+msgid "Please wait: a scan or a tag update is in progress."
+msgstr "Patientez : un scan ou une mise à jour des tags est en cours."

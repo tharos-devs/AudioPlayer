@@ -171,6 +171,8 @@ struct App {
     tag_technical: bool,
     // Position du mini-lecteur, gardée dans les réglages.
     mini_position: Option<(i32, i32)>,
+    // Album de « Set Album Artwork… » et octets de l'image choisie.
+    artwork_request: Option<(usize, Vec<u8>)>,
     // Lecture suspendue pendant l'écriture : position et état à reprendre.
     tag_resume: Option<(Duration, bool)>,
 }
@@ -232,6 +234,7 @@ impl App {
             tag_fields: settings::TagsSettings::default().fields,
             tag_technical: true,
             mini_position: None,
+            artwork_request: None,
             tag_resume: None,
         };
         if !app.libraries.is_empty() {
@@ -1400,31 +1403,77 @@ impl App {
         }
     }
 
-    // « Set Album Artwork » : une image choisie devient la vignette de l'album (150px).
+    // « Set Album Artwork… » : l'écran de la v0.1, aperçu et dimensions (150×150 par défaut).
     fn set_album_artwork(&mut self, ui: &AppWindow, album: usize) {
         // Les fichiers reçoivent aussi l'image : pas pendant un scan.
         if self.scan.is_some() {
-            return;
+            return self.show_status(ui, Status { kind: StatusKind::Busy, ..Default::default() });
         }
-        let dialog = rfd::FileDialog::new().add_filter("Image", &["jpg", "jpeg", "png", "webp", "gif", "bmp"]);
-        let Some(path) = dialog.pick_file() else { return };
-        let Some(thumbnail) = std::fs::read(&path).ok().and_then(|data| audioplayer_scanner::artwork::thumbnail(&data)) else {
-            return eprintln!("{}: not a readable image", path.display());
+        let entry = &self.library.albums[album];
+        ui.set_artwork_album(entry.title.as_str().into());
+        ui.set_artwork_artist(self.library.artists[entry.artist].name.as_str().into());
+        ui.set_artwork_has_preview(false);
+        ui.set_artwork_preview(Image::default());
+        ui.set_artwork_ratio(0.0);
+        ui.set_artwork_width("150".into());
+        ui.set_artwork_height("150".into());
+        ui.set_artwork_drag_over(false);
+        ui.set_artwork_unreadable(false);
+        self.artwork_request = Some((album, Vec::new()));
+        ui.invoke_open_artwork();
+    }
+
+    fn pick_artwork(&mut self, ui: &AppWindow) {
+        let dialog = rfd::FileDialog::new().add_filter("Image", &["jpg", "jpeg", "png"]);
+        if let Some(path) = dialog.pick_file() {
+            self.load_artwork(ui, &path);
+        }
+    }
+
+    // Fichier choisi ou déposé : aperçu, et hauteur recalculée si les proportions sont gardées.
+    fn load_artwork(&mut self, ui: &AppWindow, path: &Path) {
+        let Some((_, data)) = self.artwork_request.as_mut() else { return };
+        let Some(pixels) = std::fs::read(path).ok().and_then(|bytes| {
+            let pixels = covers::decode(&bytes)?;
+            *data = bytes;
+            Some(pixels)
+        }) else {
+            return ui.set_artwork_unreadable(true);
         };
+        ui.set_artwork_unreadable(false);
+        let ratio = pixels.width() as f32 / pixels.height() as f32;
+        ui.set_artwork_ratio(ratio);
+        ui.set_artwork_preview(covers::to_image(pixels));
+        ui.set_artwork_has_preview(true);
+        if ui.get_artwork_keep_ratio() {
+            let width: f32 = ui.get_artwork_width().parse().unwrap_or(150.0);
+            ui.set_artwork_height(((width / ratio).round() as u32).to_string().into());
+        }
+    }
+
+    // L'image écrite dans les fichiers est à la taille demandée ; la base n'en garde
+    // qu'une vignette de 150px.
+    fn apply_artwork(&mut self, ui: &AppWindow, width: &str, height: &str) {
+        let Some((album, data)) = self.artwork_request.take().filter(|(_, data)| !data.is_empty()) else { return };
+        let size = |text: &str| text.trim().parse::<u32>().unwrap_or(150).clamp(50, 2000);
+        ui.invoke_close_artwork();
+        let Some(cover) = audioplayer_scanner::artwork::resized(&data, size(width), size(height)) else {
+            return eprintln!("artwork: cannot resize the image");
+        };
+        let Some(thumbnail) = audioplayer_scanner::artwork::thumbnail(&cover.1) else { return };
         let id = self.library.albums[album].id;
         if let Some(pixels) = covers::decode(&thumbnail.2) {
             self.add_covers(vec![(id, pixels)]);
         }
-        let cover = (thumbnail.1.clone(), thumbnail.2.clone());
         if let Err(error) = self.db.set_artwork(id, &[thumbnail]) {
             return eprintln!("artwork {id}: {error}");
         }
-        let paths = self.library.tracks.iter().filter(|t| t.album == album).map(|t| PathBuf::from(&t.path)).collect();
-        self.write_files(ui, paths, Vec::new(), Some(cover));
         self.refresh_albums(ui);
         self.refresh_tracks(ui);
         self.published_track = None;
         self.refresh_player(ui);
+        let paths = self.library.tracks.iter().filter(|t| t.album == album).map(|t| PathBuf::from(&t.path)).collect();
+        self.write_files(ui, paths, Vec::new(), Some(cover));
     }
 
     // Morceaux d'un élément glissé, dans l'ordre de la bibliothèque et limités à la vue
@@ -2036,7 +2085,10 @@ impl App {
     }
 
     fn edit_tags(&mut self, ui: &AppWindow) {
-        if self.scan.is_none() && !self.tag_tracks.is_empty() {
+        if self.scan.is_some() {
+            return self.show_status(ui, Status { kind: StatusKind::Busy, ..Default::default() });
+        }
+        if !self.tag_tracks.is_empty() {
             self.tag_edits.clear();
             ui.set_tags_editing(true);
             let genre = self.tag_values.get("genre").filter(|(_, multiple)| !multiple).map(|(v, _)| v.clone()).unwrap_or_default();
@@ -2664,6 +2716,34 @@ fn launch(path: &Path) -> Result<(), Problem> {
     ui.on_tags_cancel(move || c.update(|app, ui| app.cancel_tags(ui)));
     let c = ctx.clone();
     ui.on_tag_edited(move |key, value| c.update(|app, ui| app.tag_edited(ui, &key, &value)));
+    let c = ctx.clone();
+    ui.on_artwork_pick(move || c.update(|app, ui| app.pick_artwork(ui)));
+    let c = ctx.clone();
+    ui.on_artwork_accepted(move |width, height| c.update(|app, ui| app.apply_artwork(ui, &width, &height)));
+    let c = ctx.clone();
+    ui.on_artwork_cancelled(move || c.update(|app, _| app.artwork_request = None));
+    // Image déposée depuis le Finder : Slint ne transmet pas ces dépôts, winit si.
+    {
+        use slint::winit_030::{winit::event::WindowEvent as WinitEvent, EventResult, WinitWindowAccessor};
+        let c = ctx.clone();
+        ui.window().on_winit_window_event(move |_, event| {
+            match event {
+                WinitEvent::HoveredFile(_) => c.update(|_, ui| ui.set_artwork_drag_over(ui.get_artwork_open())),
+                WinitEvent::HoveredFileCancelled => c.update(|_, ui| ui.set_artwork_drag_over(false)),
+                WinitEvent::DroppedFile(path) => {
+                    let path = path.clone();
+                    c.update(|app, ui| {
+                        ui.set_artwork_drag_over(false);
+                        if ui.get_artwork_open() {
+                            app.load_artwork(ui, &path);
+                        }
+                    });
+                }
+                _ => {}
+            }
+            EventResult::Propagate
+        });
+    }
     let c = ctx.clone();
     ui.on_tag_field_toggled(move |key| c.update(|app, ui| app.toggle_tag_field(ui, &key)));
     let c = ctx.clone();

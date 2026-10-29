@@ -62,6 +62,26 @@ pub fn thumbnail(data: &[u8]) -> Option<Thumbnail> {
     Some((size, "image/jpeg".to_owned(), bytes))
 }
 
+/// Image à intégrer aux fichiers (« Set Album Artwork ») : `(type MIME, octets)`. Déjà à
+/// la taille demandée en JPEG ou PNG, elle est gardée telle quelle ; sinon elle est
+/// redimensionnée exactement (Lanczos3) et encodée en JPEG, comme la v0.1.
+pub fn resized(data: &[u8], width: u32, height: u32) -> Option<(String, Vec<u8>)> {
+    let format = image::guess_format(data).ok()?;
+    let source = image::load_from_memory_with_format(data, format).ok()?;
+    let mime = match format {
+        image::ImageFormat::Jpeg => Some("image/jpeg"),
+        image::ImageFormat::Png => Some("image/png"),
+        _ => None,
+    };
+    if let Some(mime) = mime.filter(|_| (source.width(), source.height()) == (width, height)) {
+        return Some((mime.to_owned(), data.to_vec()));
+    }
+    let image = source.resize_exact(width, height, FilterType::Lanczos3).to_rgb8();
+    let mut bytes = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, QUALITY).encode_image(&image).ok()?;
+    Some(("image/jpeg".to_owned(), bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,6 +91,15 @@ mod tests {
         let mut bytes = std::io::Cursor::new(Vec::new());
         image.write_to(&mut bytes, format).unwrap();
         bytes.into_inner()
+    }
+
+    #[test]
+    fn resized_keeps_an_image_already_at_size() {
+        let original = encode(150, 150, image::ImageFormat::Png);
+        assert_eq!(resized(&original, 150, 150), Some(("image/png".into(), original.clone())));
+        let (mime, bytes) = resized(&original, 100, 80).unwrap();
+        let out = image::load_from_memory(&bytes).unwrap();
+        assert_eq!((mime.as_str(), out.width(), out.height()), ("image/jpeg", 100, 80));
     }
 
     #[test]

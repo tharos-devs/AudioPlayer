@@ -9,7 +9,7 @@ use lofty::file::AudioFile as _;
 use lofty::picture::{MimeType, Picture, PictureType};
 use lofty::prelude::{Accessor, ItemKey, TaggedFileExt};
 use lofty::tag::items::Timestamp;
-use lofty::tag::Tag;
+use lofty::tag::{Tag, TagType};
 
 /// Champs modifiables depuis le tiroir d'informations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -186,7 +186,15 @@ pub fn write_tags(path: &Path, edits: &[Edit], cover: Option<(&str, &[u8])>) -> 
     }
     if let Some((mime, data)) = cover {
         let mime = if mime == "image/png" { MimeType::Png } else { MimeType::Jpeg };
-        tag.remove_picture_type(PictureType::CoverFront);
+        // Les images MP4 (« covr ») n'ont pas de type : toutes sont des pochettes, l'ancienne
+        // doit partir, sinon elle reste la première et la relecture la reprend.
+        if tag.tag_type() == TagType::Mp4Ilst {
+            while !tag.pictures().is_empty() {
+                tag.remove_picture(0);
+            }
+        } else {
+            tag.remove_picture_type(PictureType::CoverFront);
+        }
         tag.push_picture(Picture::unchecked(data.to_vec()).pic_type(PictureType::CoverFront).mime_type(mime).build());
     }
     tagged.save_to_path(path, WriteOptions::default()).map_err(|e| e.to_string())
