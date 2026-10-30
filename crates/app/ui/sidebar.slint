@@ -105,8 +105,15 @@ component SectionTitle inherits HorizontalLayout {
         SmallButton {
             icon: @image-url("icons/ep-plus.svg");
             active: false;
+            // Une seule création possible : pas de menu à une entrée, l'action est directe.
             clicked => {
-                popup.show();
+                if root.menu.length == 1 {
+                    if root.menu[0].enabled {
+                        root.selected(root.menu[0].action);
+                    }
+                } else {
+                    popup.show();
+                }
             }
         }
         popup := DropdownMenu {
@@ -189,7 +196,10 @@ component FolderRow inherits Rectangle {
     in property <string> count;
     in property <bool> selected;
     in property <length> label-size: 11px;
+    // Actions propres à cette ligne (bibliothèque, playlist) : bouton ⚙ et clic droit.
+    in property <[MenuEntry]> menu;
     callback clicked();
+    callback action(string);
     height: 24px;
     border-radius: 3px;
     background: touch.has-hover ? Theme.tree-hover : transparent;
@@ -197,6 +207,23 @@ component FolderRow inherits Rectangle {
     touch := TouchArea {
         clicked => {
             root.clicked();
+        }
+        pointer-event(event) => {
+            if event.button == PointerEventButton.right && event.kind == PointerEventKind.down && root.menu.length > 0 {
+                menu-anchor.x = self.mouse-x;
+                menu-anchor.y = self.mouse-y;
+                menu-popup.show();
+            }
+        }
+    }
+    menu-anchor := Rectangle {
+        width: 0px;
+        height: 0px;
+        menu-popup := DropdownMenu {
+            entries: root.menu;
+            selected(action) => {
+                root.action(action);
+            }
         }
     }
 
@@ -231,6 +258,40 @@ component FolderRow inherits Rectangle {
                     font-size: 11px;
                     color: root.selected ? Theme.accent-dark-2 : Theme.tree-text;
                     vertical-alignment: center;
+                }
+                // ⚙ au survol et sur la ligne sélectionnée seulement : avec beaucoup de playlists,
+                // une icône par ligne alourdirait le panneau. Toujours présent (le menu est un
+                // PopupWindow, qui ne peut pas être conditionnel), simplement masqué.
+                VerticalLayout {
+                    alignment: center;
+                    width: root.menu.length > 0 ? 18px : 0px;
+                    opacity: root.menu.length > 0 && (touch.has-hover || gear.has-hover || root.selected) ? 1 : 0;
+                    gear-box := Rectangle {
+                        width: 18px;
+                        height: 18px;
+                        border-radius: 3px;
+                        background: gear.has-hover ? Theme.hover-tint : transparent;
+                        Image {
+                            source: @image-url("icons/ep-setting.svg");
+                            width: 12px;
+                            height: 12px;
+                            colorize: root.selected ? Theme.accent-dark-2 : Theme.library-text;
+                        }
+                        gear := TouchArea {
+                            enabled: root.menu.length > 0;
+                            clicked => {
+                                gear-popup.show();
+                            }
+                        }
+                        gear-popup := DropdownMenu {
+                            x: gear-box.width - self.width;
+                            y: gear-box.height + 2px;
+                            entries: root.menu;
+                            selected(action) => {
+                                root.action(action);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -459,13 +520,9 @@ export component Sidebar inherits Rectangle {
                 // Une bibliothèque = un dossier : pas d'« Add Folder » comme dans la v0.1.
                 SectionTitle {
                     title: @tr("Libraries");
+                    // Le « + » crée ; les actions d'une bibliothèque sont dans le ⚙ de sa ligne.
                     menu: [
                         { action: "new-library", label: @tr("New Library…"), enabled: !root.scanning },
-                        { action: "rename-library", label: @tr("Rename Library…"), enabled: root.selected-library != -1 },
-                        { action: "scan", label: @tr("Scan for Changes"), enabled: root.selected-library != -1 && !root.scanning, separated: true },
-                        { action: "rescan", label: @tr("Rescan All Files"), enabled: root.selected-library != -1 && !root.scanning },
-                        { action: "health", label: @tr("Check Library Health"), enabled: root.selected-library != -1 && !root.scanning },
-                        { action: "delete-library", label: @tr("Delete Library…"), enabled: root.selected-library != -1, danger: true, separated: true },
                         { action: "new-database", label: @tr("New Database…"), enabled: true, separated: true },
                         { action: "open-database", label: @tr("Open Database…"), enabled: true },
                     ];
@@ -481,8 +538,19 @@ export component Sidebar inherits Rectangle {
                     FolderRow {
                         label: library.label;
                         selected: library.id == root.selected-library && root.view == View.library;
+                        // L'action porte la bibliothèque visée : « scan:2 ».
+                        menu: [
+                            { action: "rename-library:" + library.id, label: @tr("Rename Library…"), enabled: true },
+                            { action: "scan:" + library.id, label: @tr("Scan for Changes"), enabled: !root.scanning, separated: true },
+                            { action: "rescan:" + library.id, label: @tr("Rescan All Files"), enabled: !root.scanning },
+                            { action: "health:" + library.id, label: @tr("Check Library Health"), enabled: !root.scanning },
+                            { action: "delete-library:" + library.id, label: @tr("Delete Library…"), enabled: !root.scanning, danger: true, separated: true },
+                        ];
                         clicked => {
                             root.select-library(library.id);
+                        }
+                        action(action) => {
+                            root.library-menu(action);
                         }
                     }
                 }
@@ -528,8 +596,6 @@ export component Sidebar inherits Rectangle {
                     title: @tr("Playlists");
                     menu: [
                         { action: "new-playlist", label: @tr("New Playlist…"), enabled: root.selected-library != -1 },
-                        { action: "rename-playlist", label: @tr("Rename Playlist…"), enabled: root.playlist-selected },
-                        { action: "delete-playlist", label: @tr("Delete Playlist…"), enabled: root.playlist-selected, danger: true },
                     ];
                     selected(action) => {
                         root.playlist-menu(action);
@@ -557,8 +623,15 @@ export component Sidebar inherits Rectangle {
                                 count: playlist.count;
                                 label-size: 13px;
                                 selected: playlist.id == root.selected-playlist && root.view == View.playlist;
+                                menu: [
+                                    { action: "rename-playlist:" + playlist.id, label: @tr("Rename Playlist…"), enabled: true },
+                                    { action: "delete-playlist:" + playlist.id, label: @tr("Delete Playlist…"), enabled: true, danger: true },
+                                ];
                                 clicked => {
                                     root.select-playlist(playlist.id);
+                                }
+                                action(action) => {
+                                    root.playlist-menu(action);
                                 }
                             }
                         }

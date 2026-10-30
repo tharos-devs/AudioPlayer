@@ -1774,8 +1774,10 @@ impl App {
         self.refresh_all(ui);
     }
 
+    // « new-playlist », ou une action sur la playlist d'une ligne : « rename-playlist:<id> ».
     fn playlist_menu(&mut self, ui: &AppWindow, action: &str) {
-        let current = self.selected_playlist.and_then(|id| self.playlists.iter().find(|p| p.id == id)).cloned();
+        let (action, target) = action.split_once(':').map_or((action, None), |(a, id)| (a, id.parse::<i64>().ok()));
+        let current = target.and_then(|id| self.playlists.iter().find(|p| p.id == id)).cloned();
         match (action, current) {
             ("new-playlist", _) => self.ask_name(ui, NameDialogKind::NewPlaylist, "", NameRequest::NewPlaylist { tracks: Vec::new() }),
             ("rename-playlist", Some(playlist)) => {
@@ -1788,8 +1790,10 @@ impl App {
         }
     }
 
+    // Action sur la bibliothèque d'une ligne : « scan:<index> ».
     fn library_menu(&mut self, ui: &AppWindow, action: &str) {
-        let Some(index) = self.selected_library else { return };
+        let Some((action, index)) = action.split_once(':') else { return };
+        let Some(index) = index.parse::<usize>().ok().filter(|&i| i < self.libraries.len()) else { return };
         let name = self.libraries[index].name.clone();
         match action {
             "rename-library" => self.ask_name(ui, NameDialogKind::RenameLibrary, &name, NameRequest::RenameLibrary(index)),
@@ -1897,7 +1901,14 @@ impl App {
             return;
         }
         let library = self.libraries[index].clone();
-        let tracks: Vec<(i64, String)> = self.library.tracks.iter().map(|t| (t.id, t.path.clone())).collect();
+        // La bibliothèque visée n'est pas forcément celle affichée, ni déjà chargée.
+        let tracks: Vec<(i64, String)> = match self.library_at(index) {
+            Some(catalog) => catalog.tracks.iter().map(|t| (t.id, t.path.clone())).collect(),
+            None => match self.db.tracks(library.id) {
+                Ok(tracks) => tracks.into_iter().map(|t| (t.id, t.file_path)).collect(),
+                Err(error) => return eprintln!("library {}: {error}", library.id),
+            },
+        };
         let root = PathBuf::from(&library.root_path);
         // Une vérification ne change aucune pochette.
         self.spawn_job(ui, &library, Some(Vec::new()), move |sender, stop| {
