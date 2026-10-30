@@ -1,6 +1,6 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Artwork, PlayingIndicator, ListItem, TrackMenu, ThemedMenu, Menus } from "widgets.slint";
+import { Artwork, PlayingIndicator, TrackMenu, ThemedMenu, Menus } from "widgets.slint";
 
 export { TrackMenu }
 
@@ -112,7 +112,7 @@ component TrackListRow inherits Rectangle {
     property <bool> modified-press;
     callback play();
     callback action(string);
-    pure callback payload(int) -> data-transfer;
+    pure callback payload(int, int) -> data-transfer;
     height: Metrics.row;
 
     Rectangle {
@@ -130,7 +130,7 @@ component TrackListRow inherits Rectangle {
         x: Metrics.padding + Metrics.artwork-column;
         width: parent.width - self.x - Metrics.padding;
         allow-copy: true;
-        data: root.payload(root.item.id);
+        data: root.payload(root.item.id, TrackMenu.selection-serial);
 
         Rectangle {
             height: Metrics.cell;
@@ -336,7 +336,7 @@ export component TrackList inherits VerticalLayout {
                 action(name) => {
                     root.track-action(item.id, name);
                 }
-                payload(id) => {
+                payload(id, serial) => {
                     return root.track-payload(id);
                 }
             }
@@ -355,7 +355,7 @@ component PlaylistTrackRow inherits Rectangle {
     property <bool> modified-press;
     callback play();
     callback action(string);
-    pure callback payload(int) -> data-transfer;
+    pure callback payload(int, int) -> data-transfer;
     // Dépôt sur la ligne : les éléments glissés sont placés à sa position.
     pure callback accepts(data-transfer) -> bool;
     callback dropped(data-transfer);
@@ -384,7 +384,7 @@ component PlaylistTrackRow inherits Rectangle {
 
     DragArea {
         allow-copy: true;
-        data: root.payload(root.item.id);
+        data: root.payload(root.item.id, TrackMenu.selection-serial);
 
         touch := TouchArea {
             // Comme le Finder : un clic simple sur une piste déjà sélectionnée ne réduit la
@@ -532,7 +532,7 @@ export component PlaylistTrackList inherits ListView {
         action(name) => {
             root.track-action(item.id, name);
         }
-        payload(id) => {
+        payload(id, serial) => {
             return root.track-payload(id);
         }
         accepts(data) => {

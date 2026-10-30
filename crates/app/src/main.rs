@@ -54,7 +54,8 @@ const PLAYBACK_POLL: Duration = Duration::from_millis(200);
 struct NowPlaying {
     library: usize,
     track: usize,
-    // File figée au lancement : la liste affichée à ce moment-là.
+    // File de lecture : la liste affichée au lancement, complétée par « Add to Queue » et,
+    // en aléatoire, par l'historique des tirages.
     queue: Vec<usize>,
     index: Option<usize>,
     // Déjà ouvert par le moteur pour l'enchaînement sans blanc.
@@ -133,7 +134,7 @@ struct App {
     name_request: Option<NameRequest>,
     confirm_request: Option<ConfirmRequest>,
     recent: (u32, String),
-    // Morceaux affichés, dans l'ordre : sert aussi à précédent/suivant.
+    // Morceaux affichés, dans l'ordre : la file d'un morceau lancé depuis la liste.
     visible: Vec<usize>,
     // Ligne de chaque morceau affiché (les en-têtes d'album occupent aussi des lignes).
     rows: HashMap<usize, usize>,
@@ -149,7 +150,7 @@ struct App {
     engine: Engine,
     now: Option<NowPlaying>,
     is_playing: bool,
-    // Fin de file atteinte : « lecture » rejoue le morceau affiché.
+    // Fin de file atteinte : « lecture » rejoue le dernier morceau joué.
     stopped: bool,
     position: i32,
     random: bool,
@@ -165,7 +166,7 @@ struct App {
     published_state: Option<(bool, i32, std::time::Instant)>,
     status_timer: Timer,
     // Tiroir des tags : morceaux montrés (ids en base, stables d'un rechargement à
-    // l'autre), lignes d'origine et saisies par ligne.
+    // l'autre), valeurs d'origine et saisies par champ (`tag_values`, `tag_edits`).
     tag_tracks: Vec<i64>,
     // Valeur d'origine de chaque champ (et « valeurs multiples ») ; saisies par champ.
     tag_values: HashMap<String, (String, bool)>,
@@ -989,6 +990,9 @@ impl App {
             }
         }
         ui.set_selected_track(to_ui_id(current));
+        // Le contenu glissé des lignes dépend de la sélection (voir TrackMenu.selection-serial).
+        let menu = ui.global::<TrackMenu>();
+        menu.set_selection_serial(menu.get_selection_serial().wrapping_add(1));
         self.refresh_tags(ui);
     }
 
@@ -1440,19 +1444,16 @@ impl App {
                 None => return,
             },
         };
-        let reveal = matches!(item, Dragged::Track(_));
+        // Un morceau : son fichier est désigné dans le Finder ou l'Explorateur ; sinon le dossier s'ouvre.
+        if !matches!(item, Dragged::Track(_)) {
+            return open_externally(path.as_os_str());
+        }
         let result = if cfg!(target_os = "macos") {
-            let mut command = std::process::Command::new("open");
-            if reveal {
-                command.arg("-R");
-            }
-            command.arg(&path).spawn()
+            std::process::Command::new("open").arg("-R").arg(&path).spawn()
         } else if cfg!(target_os = "windows") {
-            let arg = if reveal { format!("/select,{}", path.display()) } else { path.display().to_string() };
-            std::process::Command::new("explorer").arg(arg).spawn()
+            std::process::Command::new("explorer").arg(format!("/select,{}", path.display())).spawn()
         } else {
-            let dir = if reveal { path.parent().map(Path::to_owned).unwrap_or(path) } else { path };
-            std::process::Command::new("xdg-open").arg(dir).spawn()
+            return open_externally(path.parent().unwrap_or(&path).as_os_str());
         };
         if let Err(error) = result {
             eprintln!("show on disk: {error}");
@@ -1477,13 +1478,6 @@ impl App {
         ui.set_artwork_unreadable(false);
         self.artwork_request = Some((self.library.albums[album].id, Vec::new()));
         ui.invoke_open_artwork();
-    }
-
-    fn pick_artwork(&mut self, ui: &AppWindow) {
-        let dialog = rfd::FileDialog::new().add_filter("Image", &["jpg", "jpeg", "png"]);
-        if let Some(path) = dialog.pick_file() {
-            self.load_artwork(ui, &path);
-        }
     }
 
     // Fichier choisi ou déposé : aperçu, et hauteur recalculée si les proportions sont gardées.
@@ -1795,9 +1789,6 @@ impl App {
     }
 
     fn library_menu(&mut self, ui: &AppWindow, action: &str) {
-        if action == "new-library" {
-            return self.new_library(ui);
-        }
         let Some(index) = self.selected_library else { return };
         let name = self.libraries[index].name.clone();
         match action {
@@ -1811,8 +1802,9 @@ impl App {
     }
 
     // Un dossier ne peut appartenir qu'à une bibliothèque : ni égal, ni contenu, ni contenant.
-    fn new_library(&mut self, ui: &AppWindow) {
-        let Some(folder) = rfd::FileDialog::new().pick_folder() else { return };
+    // Le dossier est choisi avant (voir `on_library_menu`) : un sélecteur modal ouvert pendant
+    // `Context::update` laisserait les minuteries de l'app réemprunter l'état et paniquer.
+    fn new_library(&mut self, ui: &AppWindow, folder: PathBuf) {
         let overlapping = self.libraries.iter().find(|l| {
             let root = Path::new(&l.root_path);
             folder.starts_with(root) || root.starts_with(&folder)
@@ -1864,19 +1856,15 @@ impl App {
             return;
         }
         let library = self.libraries[index].clone();
-        let (sender, messages) = std::sync::mpsc::channel();
-        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (db_path, stop) = (self.db_path.clone(), cancel.clone());
-        std::thread::spawn(move || {
+        let (db_path, root) = (self.db_path.clone(), PathBuf::from(&library.root_path));
+        self.spawn_job(ui, &library, None, move |sender, stop| {
             let progress = sender.clone();
-            let result = audioplayer_scanner::scan(&db_path, library.id, Path::new(&library.root_path), mode, &stop, &move |p| {
+            let result = audioplayer_scanner::scan(&db_path, library.id, &root, mode, stop, &move |p| {
                 let _ = progress.send(ScanMessage::Progress(p));
             });
             let _ = sender.send(ScanMessage::Scanned(result));
         });
-        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel, stale_albums: None });
-        ui.set_scanning(true);
-        ui.set_status(Status { kind: StatusKind::ScanListing, track: library.name.into(), ..Default::default() });
+        ui.set_status(Status { kind: StatusKind::ScanListing, track: self.libraries[index].name.as_str().into(), ..Default::default() });
     }
 
     // « Rescan Audio Tags » : relit les fichiers d'un artiste, d'un album ou d'un morceau.
@@ -1886,18 +1874,14 @@ impl App {
         let tracks = self.tracks_of(item);
         let paths: Vec<PathBuf> = tracks.iter().map(|&t| PathBuf::from(&self.library.tracks[t].path)).collect();
         let stale_albums = self.album_ids_of(&tracks);
-        let (sender, messages) = std::sync::mpsc::channel();
-        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (db_path, stop) = (self.db_path.clone(), cancel.clone());
-        std::thread::spawn(move || {
+        let (db_path, id) = (self.db_path.clone(), library.id);
+        self.spawn_job(ui, &library, Some(stale_albums), move |sender, stop| {
             let progress = sender.clone();
-            let result = audioplayer_scanner::rescan_files(&db_path, library.id, &paths, &stop, &move |p| {
+            let result = audioplayer_scanner::rescan_files(&db_path, id, &paths, stop, &move |p| {
                 let _ = progress.send(ScanMessage::Progress(p));
             });
             let _ = sender.send(ScanMessage::Scanned(result));
         });
-        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel, stale_albums: Some(stale_albums) });
-        ui.set_scanning(true);
     }
 
     // Bouton « Arrêter » de la barre d'état : le scan s'arrête au plus vite, sans rien retirer.
@@ -1914,20 +1898,33 @@ impl App {
         }
         let library = self.libraries[index].clone();
         let tracks: Vec<(i64, String)> = self.library.tracks.iter().map(|t| (t.id, t.path.clone())).collect();
-        let (sender, messages) = std::sync::mpsc::channel();
         let root = PathBuf::from(&library.root_path);
-        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let stop = cancel.clone();
-        std::thread::spawn(move || {
+        // Une vérification ne change aucune pochette.
+        self.spawn_job(ui, &library, Some(Vec::new()), move |sender, stop| {
             let stopped = || stop.load(std::sync::atomic::Ordering::Relaxed);
             let result = root.is_dir().then(|| {
                 tracks.into_iter().take_while(|_| !stopped()).filter(|(_, path)| !Path::new(path).exists()).map(|(id, _)| id).collect()
             });
             let _ = sender.send(if stopped() { ScanMessage::CheckStopped } else { ScanMessage::Checked(result) });
         });
-        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel, stale_albums: Some(Vec::new()) });
-        ui.set_scanning(true);
         ui.set_status(Status { kind: StatusKind::ScanListing, track: library.name.into(), ..Default::default() });
+    }
+
+    // Tâche de fond sur une bibliothèque (scan, relecture, vérification, écriture de tags) :
+    // `work` tourne sur son propre fil, envoie ses messages et surveille le drapeau d'arrêt.
+    fn spawn_job(
+        &mut self,
+        ui: &AppWindow,
+        library: &audioplayer_db::Library,
+        stale_albums: Option<Vec<i64>>,
+        work: impl FnOnce(std::sync::mpsc::Sender<ScanMessage>, &std::sync::atomic::AtomicBool) + Send + 'static,
+    ) {
+        let (sender, messages) = std::sync::mpsc::channel();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop = cancel.clone();
+        std::thread::spawn(move || work(sender, &stop));
+        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel, stale_albums });
+        ui.set_scanning(true);
     }
 
     // Ids en base des albums de ces morceaux, sans doublon.
@@ -2256,13 +2253,11 @@ impl App {
         let written: std::collections::HashSet<&str> = paths.iter().filter_map(|p| p.to_str()).collect();
         let tracks: Vec<usize> = (0..self.library.tracks.len()).filter(|&t| written.contains(self.library.tracks[t].path.as_str())).collect();
         let stale_albums = self.album_ids_of(&tracks);
-        let (sender, messages) = std::sync::mpsc::channel();
-        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (db_path, stop) = (self.db_path.clone(), cancel.clone());
+        let (db_path, id) = (self.db_path.clone(), library.id);
         let artwork = cover.is_some();
-        std::thread::spawn(move || {
+        let total = paths.len();
+        self.spawn_job(ui, &library, Some(stale_albums), move |sender, stop| {
             let mut failed = Vec::new();
-            let total = paths.len();
             for (done, path) in paths.iter().enumerate() {
                 let _ = sender.send(ScanMessage::Writing { done, total });
                 let cover = cover.as_ref().map(|(mime, data)| (mime.as_str(), data.as_slice()));
@@ -2271,14 +2266,12 @@ impl App {
                 }
             }
             let progress = sender.clone();
-            let result = audioplayer_scanner::rescan_files(&db_path, library.id, &paths, &stop, &move |p| {
+            let result = audioplayer_scanner::rescan_files(&db_path, id, &paths, stop, &move |p| {
                 let _ = progress.send(ScanMessage::Progress(p));
             });
             let _ = sender.send(ScanMessage::Written { written: total - failed.len(), failed, artwork, result });
         });
-        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel, stale_albums: Some(stale_albums) });
-        ui.set_scanning(true);
-        ui.set_status(Status { kind: StatusKind::TagsWriting, total: 0, ..Default::default() });
+        ui.set_status(Status { kind: StatusKind::TagsWriting, count: 1, total: total as i32, ..Default::default() });
     }
 
     // Un fichier ouvert par le moteur (en cours ou déjà en file) ne doit pas être réécrit
@@ -2381,6 +2374,7 @@ impl App {
             update::State::Available(_) => UpdateStage::Available,
             update::State::Downloading(..) => UpdateStage::Downloading,
             update::State::Installing => UpdateStage::Installing,
+            update::State::Installed(_) if self.updater.hidden() => UpdateStage::Hidden,
             update::State::Installed(_) => UpdateStage::Installed,
         };
         if ui.get_update_stage() != stage {
@@ -2415,16 +2409,7 @@ impl App {
             update::State::Available(available) => available.url,
             _ => format!("https://github.com/{}/releases/latest", update::REPO),
         };
-        let result = if cfg!(target_os = "macos") {
-            std::process::Command::new("open").arg(&url).spawn()
-        } else if cfg!(windows) {
-            std::process::Command::new("explorer").arg(&url).spawn()
-        } else {
-            std::process::Command::new("xdg-open").arg(&url).spawn()
-        };
-        if let Err(error) = result {
-            eprintln!("open {url}: {error}");
-        }
+        open_externally(std::ffi::OsStr::new(&url));
     }
 
     // « Added last n unités » ; SQLite ne connaît pas les semaines.
@@ -2456,9 +2441,13 @@ struct Context {
 }
 
 impl Context {
+    // Déjà en cours (rappel déclenché pendant un autre, par exemple une minuterie pendant
+    // une fenêtre modale du système) : ce passage est sauté plutôt que de paniquer.
     fn update(&self, f: impl FnOnce(&mut App, &AppWindow)) {
-        if let Some(ui) = self.ui.upgrade() {
-            f(&mut self.app.borrow_mut(), &ui);
+        let Some(ui) = self.ui.upgrade() else { return };
+        match self.app.try_borrow_mut() {
+            Ok(mut app) => f(&mut app, &ui),
+            Err(_) => eprintln!("re-entrant update skipped"),
         }
     }
 }
@@ -2531,6 +2520,20 @@ fn field_value(d: &TrackDetails, field: Field) -> String {
         Field::Barcode => text(&d.barcode),
         Field::DiscSubtitle => text(&d.disc_subtitle),
         Field::Compilation => u8::from(d.compilation).to_string(),
+    }
+}
+
+// Ouvre un dossier ou une adresse avec l'application du système.
+fn open_externally(target: &std::ffi::OsStr) {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    if let Err(error) = std::process::Command::new(program).arg(target).spawn() {
+        eprintln!("open {}: {error}", target.to_string_lossy());
     }
 }
 
@@ -2833,9 +2836,15 @@ fn launch(path: &Path) -> Result<(), Problem> {
 
     ui.set_database_path(path.display().to_string().into());
     let c = ctx.clone();
+    // Les sélecteurs de fichiers sont ouverts hors de `Context::update` (voir `new_library`).
     ui.on_library_menu(move |action| match action.as_str() {
         "new-database" => database_action(&c, choose_new_database),
         "open-database" => database_action(&c, choose_existing_database),
+        "new-library" => {
+            if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                c.update(|app, ui| app.new_library(ui, folder));
+            }
+        }
         action => c.update(|app, ui| app.library_menu(ui, action)),
     });
     let c = ctx.clone();
@@ -2862,6 +2871,14 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let c = ctx.clone();
     ui.on_update_check(move || c.update(|app, ui| app.check_for_updates(ui, true)));
     let c = ctx.clone();
+    ui.on_update_retry(move || {
+        c.update(|app, ui| {
+            app.update_manual = true;
+            app.updater.retry();
+            app.show_update(ui);
+        })
+    });
+    let c = ctx.clone();
     ui.on_update_install(move || c.update(|app, ui| app.install_update(ui)));
     let c = ctx.clone();
     ui.on_update_dismiss(move || {
@@ -2875,7 +2892,11 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let c = ctx.clone();
     ui.on_genres_opened(move || c.update(|app, ui| app.suggest_genres(ui, "")));
     let c = ctx.clone();
-    ui.on_artwork_pick(move || c.update(|app, ui| app.pick_artwork(ui)));
+    ui.on_artwork_pick(move || {
+        if let Some(path) = rfd::FileDialog::new().add_filter("Image", &["jpg", "jpeg", "png"]).pick_file() {
+            c.update(|app, ui| app.load_artwork(ui, &path));
+        }
+    });
     let c = ctx.clone();
     ui.on_artwork_accepted(move |width, height| c.update(|app, ui| app.apply_artwork(ui, &width, &height)));
     let c = ctx.clone();
@@ -2952,9 +2973,11 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let (c, s) = (ctx.clone(), saved.clone());
     ui.on_update_restart(move || {
         if let Err(error) = update::relaunch() {
-            c.update(|_, ui| {
-                ui.set_update_message(error.as_str().into());
-                ui.set_update_stage(UpdateStage::Failed);
+            // Par l'état de la mise à jour : la fenêtre, redessinée à chaque passage, le garde.
+            c.update(|app, ui| {
+                app.update_manual = true;
+                app.updater.fail(error);
+                app.show_update(ui);
             });
             return;
         }

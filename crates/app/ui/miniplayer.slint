@@ -6,6 +6,13 @@ component WindowButton inherits Rectangle {
     in property <image> icon;
     in property <color> hover-color;
     callback clicked();
+    // Bouton à icône seule : rôle et libellé pour VoiceOver et les autres lecteurs d'écran.
+    in property <string> label;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => {
+        root.clicked();
+    }
     // Couleur de l'icône survolée (accent pour le retour, blanc sur rouge pour fermer).
     in property <color> hover-icon;
     background: touch.has-hover ? root.hover-color : Theme.mini-overlay-bg;
@@ -105,6 +112,7 @@ export component MiniPlayerWindow inherits Window {
                     alignment: center;
                     RoundButton {
                         icon: @image-url("icons/ep-arrow-left.svg");
+                        label: @tr("Previous");
                         enabled: root.has-track;
                         clicked => {
                             root.previous();
@@ -182,6 +190,7 @@ export component MiniPlayerWindow inherits Window {
                     alignment: center;
                     RoundButton {
                         icon: @image-url("icons/ep-arrow-right.svg");
+                        label: @tr("Next");
                         enabled: root.has-track;
                         clicked => {
                             root.next();
@@ -193,6 +202,7 @@ export component MiniPlayerWindow inherits Window {
                     RoundButton {
                         primary: true;
                         icon: root.playing ? @image-url("icons/ep-video-pause.svg") : @image-url("icons/ep-caret-right.svg");
+                        label: root.playing ? @tr("Pause") : @tr("Play");
                         clicked => {
                             root.toggle-play();
                         }
@@ -212,7 +222,7 @@ export component MiniPlayerWindow inherits Window {
                                 source: root.muted ? @image-url("icons/speaker.svg") : @image-url("icons/volume.svg");
                                 width: 16px;
                                 height: 16px;
-                                colorize: Theme.dark ? #ffffff : #444444;
+                                colorize: Theme.volume-icon;
                             }
                             if root.muted: Image {
                                 source: @image-url("icons/mute-cross.svg");
@@ -257,6 +267,7 @@ export component MiniPlayerWindow inherits Window {
                 width: 30px;
                 WindowButton {
                     icon: @image-url("icons/mini-up.svg");
+                    label: @tr("Show the main window");
                     hover-color: Theme.mini-overlay-hover;
                     hover-icon: Theme.accent;
                     clicked => {
@@ -265,6 +276,7 @@ export component MiniPlayerWindow inherits Window {
                 }
                 WindowButton {
                     icon: @image-url("icons/mini-close.svg");
+                    label: @tr("Quit AudioPlayer");
                     hover-color: Theme.mini-close-bg;
                     hover-icon: #ffffff;
                     clicked => {

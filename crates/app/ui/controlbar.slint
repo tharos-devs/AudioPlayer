@@ -1,6 +1,5 @@
 import { Theme } from "theme.slint";
 
-// Bouton rond Element Plus `circle size="small"` : 24px.
 // Titre qui défile en boucle pendant la lecture quand il ne tient pas, centré sinon
 // (barre de contrôle et mini-lecteur).
 export component ScrollingTitle inherits Rectangle {
@@ -46,11 +45,19 @@ export component ScrollingTitle inherits Rectangle {
     }
 }
 
+// Bouton rond Element Plus `circle size="small"` : 24px.
 export component RoundButton inherits Rectangle {
     in property <image> icon;
     in property <bool> primary;
     in property <bool> enabled: true;
     callback clicked();
+    // Bouton à icône seule : rôle et libellé pour VoiceOver et les autres lecteurs d'écran.
+    in property <string> label;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => {
+        root.clicked();
+    }
     width: 24px;
     height: 24px;
     border-radius: 12px;
@@ -233,6 +240,7 @@ component PlayerControls inherits Rectangle {
                 alignment: center;
                 RoundButton {
                     icon: @image-url("icons/ep-arrow-left.svg");
+                    label: @tr("Previous");
                     enabled: root.has-track;
                     clicked => {
                         root.previous();
@@ -319,6 +327,7 @@ component PlayerControls inherits Rectangle {
                 alignment: center;
                 RoundButton {
                     icon: @image-url("icons/ep-arrow-right.svg");
+                    label: @tr("Next");
                     enabled: root.has-track;
                     clicked => {
                         root.next();
@@ -330,6 +339,7 @@ component PlayerControls inherits Rectangle {
                 RoundButton {
                     primary: true;
                     icon: root.playing ? @image-url("icons/ep-video-pause.svg") : @image-url("icons/ep-caret-right.svg");
+                    label: root.playing ? @tr("Pause") : @tr("Play");
                     clicked => {
                         root.toggle-play();
                     }
@@ -350,7 +360,7 @@ component PlayerControls inherits Rectangle {
                             source: root.muted ? @image-url("icons/speaker.svg") : @image-url("icons/volume.svg");
                             width: 16px;
                             height: 16px;
-                            colorize: Theme.dark ? #ffffff : #444444;
+                            colorize: Theme.volume-icon;
                         }
                         if root.muted: Image {
                             source: @image-url("icons/mute-cross.svg");
@@ -394,14 +404,14 @@ component PlayerControls inherits Rectangle {
                 alignment: center;
                 spacing: 3px;
                 TextToggle {
-                    text: "rand";
+                    text: @tr("rand");
                     active: root.random-mode;
                     toggled => {
                         root.random-mode = !root.random-mode;
                     }
                 }
                 TextToggle {
-                    text: "loop";
+                    text: @tr("loop");
                     active: root.loop-mode;
                     toggled => {
                         root.loop-mode = !root.loop-mode;

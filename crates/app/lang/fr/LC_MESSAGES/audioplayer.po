@@ -15,9 +15,6 @@ msgstr "Ajouter à la file d'attente"
 msgid "Albums"
 msgstr "Albums"
 
-msgid "All Tracks"
-msgstr "Tous les morceaux"
-
 msgid "Amber"
 msgstr "Ambre"
 
@@ -42,19 +39,11 @@ msgstr "Langue"
 msgid "Libraries"
 msgstr "Bibliothèques"
 
-msgid "Library"
-msgstr "Bibliothèque"
-
 msgid "Light Theme"
 msgstr "Thème clair"
 
-msgid "Nothing playing"
-msgstr "Aucune lecture"
-
 msgid "Peach"
 msgstr "Pêche"
-
-
 
 msgid "Playlists"
 msgstr "Playlists"
@@ -64,9 +53,6 @@ msgstr "Violet"
 
 msgid "Rose"
 msgstr "Rose"
-
-msgid "Search title, artist, album…"
-msgstr "Rechercher titre, artiste, album…"
 
 msgid "Show Album"
 msgstr "Afficher l'album"
@@ -86,13 +72,11 @@ msgstr "Affichage"
 msgid "{0} h {1} min"
 msgstr "{0} h {1} min"
 
-
 msgid "“{0}” added to “{1}”"
 msgstr "« {0} » ajouté à « {1} »"
 
 msgid "“{0}” is already in “{1}”"
 msgstr "« {0} » est déjà dans « {1} »"
-
 
 msgid "{n} track"
 msgid_plural "{n} tracks"
@@ -175,9 +159,6 @@ msgstr "Aucune bibliothèque sélectionnée"
 msgid "Zoom"
 msgstr "Zoom"
 
-msgid "File"
-msgstr "Fichier"
-
 msgid "New Database…"
 msgstr "Nouvelle base…"
 
@@ -202,17 +183,8 @@ msgstr "Réessayer"
 msgid "Create Database…"
 msgstr "Créer une base…"
 
-msgid "Import a v0.1 Database…"
-msgstr "Importer une base v0.1…"
-
 msgid "“{0}” already exists. Choose a new file name."
 msgstr "« {0} » existe déjà. Choisissez un nouveau nom de fichier."
-
-msgid "“{0}” is a v0.1 database: use “Import a v0.1 Database…”."
-msgstr "« {0} » est une base v0.1 : utilisez « Importer une base v0.1… »."
-
-msgid "“{0}” is not a v0.1 database."
-msgstr "« {0} » n'est pas une base v0.1."
 
 msgid "“{0}” was created by a newer version of AudioPlayer."
 msgstr "« {0} » a été créée par une version plus récente d'AudioPlayer."
@@ -246,12 +218,6 @@ msgstr "Nouvelle bibliothèque…"
 
 msgid "Rename Library…"
 msgstr "Renommer la bibliothèque…"
-
-msgid "Add Folder…"
-msgstr "Ajouter un dossier…"
-
-msgid "Scan New Additions"
-msgstr "Rechercher les nouveautés"
 
 msgid "Check Library Health"
 msgstr "Vérifier la bibliothèque"
@@ -389,8 +355,6 @@ msgstr "Supprimer de la bibliothèque…"
 msgid "Reset Play Count"
 msgstr "Remettre les écoutes à zéro"
 
-
-
 msgid "“{0}” added to the queue"
 msgstr "« {0} » ajouté à la file"
 
@@ -490,9 +454,6 @@ msgstr "Sous-titre du disque"
 msgid "Part of a Compilation"
 msgstr "Fait partie d'une compilation"
 
-msgid "Format"
-msgstr "Format"
-
 msgid "Bitrate"
 msgstr "Débit"
 
@@ -501,12 +462,6 @@ msgstr "Fréquence d'échantillonnage"
 
 msgid "Bit Depth"
 msgstr "Résolution"
-
-msgid "Channels"
-msgstr "Canaux"
-
-msgid "Duration"
-msgstr "Durée"
 
 msgid "File Size"
 msgstr "Taille du fichier"
@@ -680,3 +635,66 @@ msgstr "« {0} » est une base de la v0.1. Convertissez-la d'abord avec la comma
 
 msgid "Scan of “{0}” incomplete: {1} files or folders could not be read (disk disconnected?). Nothing was removed."
 msgstr "Scan de « {0} » incomplet : {1} fichiers ou dossiers illisibles (disque débranché ?). Rien n'a été retiré."
+
+msgid "Custom"
+msgstr "Personnalisé"
+
+msgid "Flat"
+msgstr "Plat"
+
+msgid "Rock"
+msgstr "Rock"
+
+msgid "Pop"
+msgstr "Pop"
+
+msgid "Jazz"
+msgstr "Jazz"
+
+msgid "Classical"
+msgstr "Classique"
+
+msgid "Electronic"
+msgstr "Électronique"
+
+msgid "Hip Hop"
+msgstr "Hip-hop"
+
+msgid "Acoustic"
+msgstr "Acoustique"
+
+msgid "rand"
+msgstr "aléa"
+
+msgid "loop"
+msgstr "boucle"
+
+msgid "File"
+msgstr "Fichier"
+
+msgid "Previous"
+msgstr "Précédent"
+
+msgid "Next"
+msgstr "Suivant"
+
+msgid "Pause"
+msgstr "Pause"
+
+msgid "Play"
+msgstr "Lecture"
+
+msgid "Show the main window"
+msgstr "Afficher la fenêtre principale"
+
+msgid "Quit AudioPlayer"
+msgstr "Quitter AudioPlayer"
+
+msgid "Equalizer"
+msgstr "Égaliseur"
+
+msgid "Mini Player"
+msgstr "Mini-lecteur"
+
+msgid "Visible Fields"
+msgstr "Champs visibles"

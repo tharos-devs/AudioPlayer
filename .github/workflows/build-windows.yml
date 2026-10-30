@@ -21,7 +21,7 @@ jobs:
         run: echo "version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
       - name: Build AudioPlayer.exe
         run: |
-          cargo build --release -p audioplayer
+          cargo build --release --locked -p audioplayer
           mkdir -p dist
           cp target/release/audioplayer.exe dist/AudioPlayer.exe
       - uses: actions/upload-artifact@v4

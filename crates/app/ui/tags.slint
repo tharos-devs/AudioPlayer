@@ -204,6 +204,13 @@ component HeaderButton inherits Rectangle {
     in property <image> icon;
     in property <bool> active;
     callback clicked();
+    // Bouton à icône seule : rôle et libellé pour VoiceOver et les autres lecteurs d'écran.
+    in property <string> label;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => {
+        root.clicked();
+    }
     width: 24px;
     height: 24px;
     border-radius: 3px;
@@ -289,6 +296,7 @@ export component TagsDrawer inherits Rectangle {
                     alignment: center;
                     HeaderButton {
                         icon: @image-url("icons/ep-edit-pen.svg");
+                        label: @tr("Edit Tags");
                         clicked => {
                             root.edit();
                         }
@@ -298,6 +306,7 @@ export component TagsDrawer inherits Rectangle {
                     alignment: center;
                     HeaderButton {
                         icon: @image-url("icons/ep-setting.svg");
+                        label: @tr("Visible Fields");
                         clicked => {
                             fields-menu.show();
                         }

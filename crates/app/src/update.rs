@@ -63,6 +63,12 @@ pub enum State {
 #[derive(Clone, Default)]
 pub struct Updater {
     state: Arc<Mutex<State>>,
+    // Dernière version proposée : « Retry » après un échec de téléchargement ou
+    // d'installation la réinstalle au lieu de revérifier.
+    offered: Arc<Mutex<Option<Available>>>,
+    // Mise à jour installée mais fenêtre fermée (« Later ») : elle reste installée et
+    // réapparaît à la prochaine vérification demandée.
+    hidden: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Updater {
@@ -75,14 +81,29 @@ impl Updater {
     }
 
     pub fn dismiss(&self) {
-        if !matches!(self.state(), State::Checking | State::Downloading(..) | State::Installing) {
-            self.set(State::Idle);
+        match self.state() {
+            State::Checking | State::Downloading(..) | State::Installing => {}
+            State::Installed(_) => self.hidden.store(true, std::sync::atomic::Ordering::Relaxed),
+            _ => self.set(State::Idle),
         }
     }
 
-    /// Cherche une version plus récente en arrière-plan.
+    pub fn hidden(&self) -> bool {
+        self.hidden.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Erreur venue d'ailleurs (redémarrage impossible…), affichée par la fenêtre.
+    pub fn fail(&self, message: String) {
+        self.set(State::Failed(message));
+    }
+
+    /// Cherche une version plus récente en arrière-plan. Déjà installée : elle est remontrée.
     pub fn check(&self) {
-        if matches!(self.state(), State::Checking | State::Downloading(..) | State::Installing | State::Installed(_)) {
+        if matches!(self.state(), State::Installed(_)) {
+            self.hidden.store(false, std::sync::atomic::Ordering::Relaxed);
+            return;
+        }
+        if matches!(self.state(), State::Checking | State::Downloading(..) | State::Installing) {
             return;
         }
         self.set(State::Checking);
@@ -96,9 +117,24 @@ impl Updater {
         });
     }
 
+    /// Après un échec : réinstalle la version proposée, sinon revérifie.
+    pub fn retry(&self) {
+        let offered = self.offered.lock().unwrap().clone();
+        match offered {
+            Some(available) => self.install(available),
+            None => {
+                self.set(State::Idle);
+                self.check();
+            }
+        }
+    }
+
     /// Télécharge et installe `available` en arrière-plan.
     pub fn install(&self, available: Available) {
-        let Some(asset) = available.asset.clone() else { return };
+        let Some(asset) = available.asset.clone() else {
+            return self.set(State::Failed("no file to install for this system".into()));
+        };
+        *self.offered.lock().unwrap() = Some(available.clone());
         self.set(State::Downloading(0, 0));
         let updater = self.clone();
         std::thread::spawn(move || {
@@ -106,6 +142,9 @@ impl Updater {
                 updater.set(State::Installing);
                 install(&asset, &bytes)
             });
+            if result.is_ok() {
+                *updater.offered.lock().unwrap() = None;
+            }
             updater.set(match result {
                 Ok(()) => State::Installed(available.version),
                 Err(error) => State::Failed(error),
@@ -150,9 +189,7 @@ fn latest() -> Result<Option<Available>, String> {
         return Ok(None);
     }
     let asset = platform_suffix().and_then(|suffix| release.assets.into_iter().find(|a| a.name.ends_with(suffix)));
-    if asset.is_none() && platform_suffix().is_some() {
-        return Err(format!("version {version} has no file for this system"));
-    }
+    // Sans fichier pour ce système (publication incomplète), la page de la version reste proposée.
     Ok(Some(Available { version, url: release.html_url, asset }))
 }
 
@@ -321,7 +358,10 @@ fn start_after_exit(program: &Path, _: &[&str]) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let script = format!(
-        "Wait-Process -Id {} -Timeout 10 -ErrorAction SilentlyContinue; Start-Process -FilePath '{}'",
+        // Relancée seulement une fois l'instance actuelle fermée (60 s au plus), jamais à côté
+        // d'elle : deux instances ouvriraient la même base.
+        "$p = {0}; Wait-Process -Id $p -Timeout 60 -ErrorAction SilentlyContinue; \
+         if (-not (Get-Process -Id $p -ErrorAction SilentlyContinue)) {{ Start-Process -FilePath '{1}' }}",
         std::process::id(),
         program.display().to_string().replace('\'', "''")
     );

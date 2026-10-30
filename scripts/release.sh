@@ -27,7 +27,9 @@ git tag -a "v$version" -m "AudioPlayer $version"
 
 read -r -p "Pousser $branch et v$version vers origin (lance la publication) ? [o/N] " answer
 if [[ $answer =~ ^[oOyY] ]]; then
-    git push origin "$branch" "v$version"
+    # Atomique : si la branche est refusée, le tag ne part pas (il publierait une Release
+    # depuis un commit absent de la branche distante).
+    git push --atomic origin "$branch" "v$version"
     echo "v$version poussée : suis la compilation dans l'onglet Actions du dépôt."
 else
     echo "Rien n'est poussé. Plus tard : git push origin $branch v$version"

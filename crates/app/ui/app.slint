@@ -238,6 +238,7 @@ export component AppWindow inherits Window {
     in property <string> update-message;
     in property <bool> update-installable;
     callback update-check();
+    callback update-retry();
     callback update-install();
     callback update-dismiss();
     callback update-restart();
@@ -331,15 +332,6 @@ export component AppWindow inherits Window {
             }
         }
         Menu {
-            title: @tr("Help");
-            MenuItem {
-                title: @tr("Check for Updates…");
-                activated => {
-                    root.update-check();
-                }
-            }
-        }
-        Menu {
             title: @tr("View");
             MenuItem {
                 title: Theme.dark ? @tr("Light Theme") : @tr("Dark Theme");
@@ -364,6 +356,15 @@ export component AppWindow inherits Window {
                     activated => {
                         root.select-language("fr");
                     }
+                }
+            }
+        }
+        Menu {
+            title: @tr("Help");
+            MenuItem {
+                title: @tr("Check for Updates…");
+                activated => {
+                    root.update-check();
                 }
             }
         }
@@ -440,6 +441,13 @@ export component AppWindow inherits Window {
                     return accept;
                 }
                 return reject;
+            }
+            // Fenêtre quittée (ou autre champ focalisé) avec une flèche enfoncée : le relâchement
+            // n'arrivera pas ici, l'avance rapide s'arrête tout de suite.
+            focus-lost(reason) => {
+                hold.running = false;
+                repeat.running = false;
+                self.held = 0;
             }
             key-released(event) => {
                 if (event.text == Key.LeftArrow || event.text == Key.RightArrow) && self.held != 0 {
@@ -566,6 +574,7 @@ export component AppWindow inherits Window {
                                 reveal-row: root.artist-reveal-row;
                                 reveal-serial: root.artist-reveal-serial;
                                 clicked(id) => {
+                                    keys.focus();
                                     root.select-artist(id);
                                 }
                                 action(id, name) => {
@@ -599,6 +608,7 @@ export component AppWindow inherits Window {
                                 reveal-row: root.album-reveal-row;
                                 reveal-serial: root.album-reveal-serial;
                                 clicked(id) => {
+                                    keys.focus();
                                     root.select-album(id);
                                 }
                                 action(id, name) => {
@@ -633,6 +643,8 @@ export component AppWindow inherits Window {
                                 running: root.playing;
                                 selected-track <=> root.selected-track;
                                 select-track(id, toggle, extend) => {
+                                    // Après une recherche, les flèches reviennent à la navigation.
+                                    keys.focus();
                                     root.track-clicked(id, toggle, extend);
                                 }
                                 play-track(id) => {
@@ -661,6 +673,8 @@ export component AppWindow inherits Window {
                                 running: root.playing;
                                 selected-track <=> root.selected-track;
                                 select-track(id, toggle, extend) => {
+                                    // Après une recherche, les flèches reviennent à la navigation.
+                                    keys.focus();
                                     root.track-clicked(id, toggle, extend);
                                 }
                                 play-track(id) => {
@@ -780,59 +794,60 @@ export component AppWindow inherits Window {
                 root.update-notes();
             }
             retry => {
-                root.update-check();
+                root.update-retry();
             }
         }
-    }
 
-    name-dialog := NameDialog {
-        visible: root.dialog-open;
-        kind: root.dialog-kind;
-        text <=> root.dialog-text;
-        taken: root.dialog-taken;
-        accepted(value) => {
-            root.dialog-accepted(value);
+        // Dans la zone zoomée : les dialogues suivent le zoom comme le reste (v0.1).
+        name-dialog := NameDialog {
+            visible: root.dialog-open;
+            kind: root.dialog-kind;
+            text <=> root.dialog-text;
+            taken: root.dialog-taken;
+            accepted(value) => {
+                root.dialog-accepted(value);
+            }
+            cancelled => {
+                root.close-dialog();
+            }
         }
-        cancelled => {
-            root.close-dialog();
-        }
-    }
 
-    confirm-dialog := ConfirmDialog {
-        visible: root.confirm-open;
-        kind: root.confirm-kind;
-        subject: root.confirm-subject;
-        count: root.confirm-count;
-        confirmed => {
-            root.close-confirm();
-            root.confirm-accepted();
+        confirm-dialog := ConfirmDialog {
+            visible: root.confirm-open;
+            kind: root.confirm-kind;
+            subject: root.confirm-subject;
+            count: root.confirm-count;
+            confirmed => {
+                root.close-confirm();
+                root.confirm-accepted();
+            }
+            cancelled => {
+                root.close-confirm();
+            }
         }
-        cancelled => {
-            root.close-confirm();
-        }
-    }
 
-    artwork-dialog := ArtworkDialog {
-        visible: root.artwork-open;
-        album-title: root.artwork-album;
-        album-artist: root.artwork-artist;
-        preview: root.artwork-preview;
-        has-preview: root.artwork-has-preview;
-        ratio: root.artwork-ratio;
-        drag-over: root.artwork-drag-over;
-        unreadable: root.artwork-unreadable;
-        width-text <=> root.artwork-width;
-        height-text <=> root.artwork-height;
-        keep-ratio <=> root.artwork-keep-ratio;
-        pick => {
-            root.artwork-pick();
-        }
-        accepted(width, height) => {
-            root.artwork-accepted(width, height);
-        }
-        cancelled => {
-            root.close-artwork();
-            root.artwork-cancelled();
+        artwork-dialog := ArtworkDialog {
+            visible: root.artwork-open;
+            album-title: root.artwork-album;
+            album-artist: root.artwork-artist;
+            preview: root.artwork-preview;
+            has-preview: root.artwork-has-preview;
+            ratio: root.artwork-ratio;
+            drag-over: root.artwork-drag-over;
+            unreadable: root.artwork-unreadable;
+            width-text <=> root.artwork-width;
+            height-text <=> root.artwork-height;
+            keep-ratio <=> root.artwork-keep-ratio;
+            pick => {
+                root.artwork-pick();
+            }
+            accepted(width, height) => {
+                root.artwork-accepted(width, height);
+            }
+            cancelled => {
+                root.close-artwork();
+                root.artwork-cancelled();
+            }
         }
     }
 }

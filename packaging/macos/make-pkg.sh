@@ -29,6 +29,7 @@ fi
 if [ "$version" != "$current" ]; then
     # La première ligne `version =` est celle de [workspace.package], partagée par tous les crates.
     perl -0pi -e 's/(\[workspace\.package\]\nversion = ")[^"]*"/${1}'"$version"'"/' Cargo.toml
+    cargo check --quiet -p audioplayer   # met Cargo.lock à jour (les builds sont en --locked)
     echo "Cargo.toml : $current -> $version"
 fi
 
@@ -37,16 +38,17 @@ packaging/macos/bundle.sh --universal
 mkdir -p dist
 pkg=dist/AudioPlayer-$version.pkg
 root=$(mktemp -d)
-trap 'rm -rf "$root"' EXIT
+trap 'rm -rf "$root" "$root.plist"' EXIT
 cp -R target/release/bundle/AudioPlayer.app "$root/"
 # Sans cela, l'installeur mettrait à jour une autre copie de l'app trouvée ailleurs sur
 # le disque (target/…) au lieu de l'installer dans /Applications.
 pkgbuild --analyze --root "$root" "$root.plist" >/dev/null
 plutil -replace 0.BundleIsRelocatable -bool NO "$root.plist"
+# Toujours installer, même par-dessus une app de numéro plus élevé (l'ancienne v0.1 en 0.1.5).
+plutil -replace 0.BundleIsVersionChecked -bool NO "$root.plist"
 # postinstall : retire la quarantaine et vérifie la signature de l'app installée (comme la v0.1).
 pkgbuild --root "$root" --component-plist "$root.plist" --install-location /Applications \
     --scripts packaging/macos/scripts \
     --identifier com.audioplayer.player --version "$version" "$pkg"
-rm -f "$root.plist"
 
 echo "$pkg"

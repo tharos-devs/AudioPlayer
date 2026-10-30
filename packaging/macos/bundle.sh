@@ -11,7 +11,7 @@ if [ "${1:-}" = "--universal" ]; then
     PATH="$(dirname "$(rustup which cargo)"):$PATH"
     rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
     for target in aarch64-apple-darwin x86_64-apple-darwin; do
-        cargo build --release -p audioplayer --target "$target"
+        cargo build --release --locked -p audioplayer --target "$target"
     done
     BINARY=target/universal/audioplayer
     mkdir -p target/universal
@@ -19,7 +19,7 @@ if [ "${1:-}" = "--universal" ]; then
         target/aarch64-apple-darwin/release/audioplayer \
         target/x86_64-apple-darwin/release/audioplayer
 else
-    cargo build --release -p audioplayer
+    cargo build --release --locked -p audioplayer
     BINARY=target/release/audioplayer
 fi
 

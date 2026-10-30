@@ -5,7 +5,17 @@ export struct EqualizerPreset {
     gains: [float],
 }
 
-// Réglages de l'égaliseur ; Rust les lira pour la chaîne audio.
+// Nom affiché d'un préréglage ; le nom anglais reste l'identifiant enregistré.
+global PresetNames {
+    pure public function label(name: string) -> string {
+        return name == "Custom" ? @tr("Custom") : name == "Flat" ? @tr("Flat") : name == "Rock" ? @tr("Rock")
+            : name == "Pop" ? @tr("Pop") : name == "Jazz" ? @tr("Jazz") : name == "Classical" ? @tr("Classical")
+            : name == "Electronic" ? @tr("Electronic") : name == "Hip Hop" ? @tr("Hip Hop")
+            : name == "Acoustic" ? @tr("Acoustic") : name;
+    }
+}
+
+// Réglages de l'égaliseur, lus par Rust pour la chaîne audio et enregistrés dans les réglages.
 export global EqualizerState {
     in-out property <bool> enabled: false;
     in-out property <string> preset: "Custom";
@@ -147,7 +157,7 @@ export component Equalizer inherits Rectangle {
                     padding-left: 8px * Theme.zoom;
                     padding-right: 8px * Theme.zoom;
                     Text {
-                        text: EqualizerState.preset;
+                        text: PresetNames.label(EqualizerState.preset);
                         font-size: 11px * Theme.zoom;
                         color: Theme.eq-text;
                         vertical-alignment: center;
@@ -185,7 +195,7 @@ export component Equalizer inherits Rectangle {
                                 HorizontalLayout {
                                     padding-left: 8px;
                                     Text {
-                                        text: preset.name;
+                                        text: PresetNames.label(preset.name);
                                         font-size: 11px;
                                         font-weight: option.current ? 500 : 400;
                                         color: option.current || item.has-hover ? Theme.accent : Theme.eq-text;
