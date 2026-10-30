@@ -450,9 +450,18 @@ export component AlbumRow inherits Rectangle {
 
 // Trois barres animées, affichées à la place du numéro du morceau en cours.
 export component PlayingIndicator inherits HorizontalLayout {
-    in property <bool> animated: true;
+    // Pas d'animation : une minuterie à ~12 images/s suffit pour des barres de 3px, alors
+    // qu'animation-tick() fait redessiner toute la fenêtre à chaque image de l'écran.
+    property <int> phase;
     spacing: 2px;
     alignment: end;
+
+    Timer {
+        interval: 80ms;
+        triggered => {
+            root.phase += 1;
+        }
+    }
 
     for bar in 3: VerticalLayout {
         alignment: center;
@@ -460,7 +469,7 @@ export component PlayingIndicator inherits HorizontalLayout {
             width: 3px;
             border-radius: 1px;
             background: Theme.accent;
-            height: root.animated ? 4px + 10px * abs(sin(animation-tick() / 500ms * 180deg + bar * 70deg)) : 6px;
+            height: 4px + 10px * abs(sin(root.phase * 29deg + bar * 70deg));
         }
     }
 }

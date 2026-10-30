@@ -487,3 +487,14 @@ fn nested_library_folders_are_refused() {
     // Même début de nom, autre dossier : accepté.
     assert!(db.create_library("Music 2", "/Volumes/Disk/Music 2").unwrap().is_some());
 }
+
+#[test]
+fn tracks_are_favorited_together() {
+    let mut db = Database::open_in_memory().unwrap();
+    sample(&db);
+    db.set_tracks_favorite(&[100, 102], true).unwrap();
+    let favorite = |db: &Database| -> Vec<i64> { db.tracks(1).unwrap().into_iter().filter(|t| t.is_favorite).map(|t| t.id).collect() };
+    assert_eq!(favorite(&db), [100, 102]);
+    db.set_tracks_favorite(&[100], false).unwrap();
+    assert_eq!(favorite(&db), [102]);
+}

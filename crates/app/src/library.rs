@@ -1,6 +1,7 @@
 //! Catalogue d'une bibliothèque chargé en mémoire depuis la base. Dans l'app, les
 //! artistes, albums et morceaux sont désignés par leur index dans ces vecteurs.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use audioplayer_db::Database;
@@ -46,6 +47,9 @@ pub struct Library {
     pub albums: Vec<Album>,
     pub tracks: Vec<Track>,
     track_index: HashMap<i64, usize>,
+    // Rang de chaque morceau dans l'ordre d'affichage (artiste, album, disque, piste),
+    // calculé une fois au chargement : trier revient ensuite à comparer des entiers.
+    rank: Vec<u32>,
 }
 
 impl Library {
@@ -99,14 +103,43 @@ impl Library {
                 added_at: track.added_at,
             });
         }
+        let mut order: Vec<usize> = (0..library.tracks.len()).collect();
+        order.sort_by(|&a, &b| library.compare_names(a, b));
+        library.rank = vec![0; order.len()];
+        for (rank, &track) in order.iter().enumerate() {
+            library.rank[track] = rank as u32;
+        }
         Ok(library)
     }
 
-    /// Catalogue et pochettes décodées ; utilisable hors du fil de l'interface.
-    pub fn load_with_covers(db: &Database, library_id: i64, cover_size: u32) -> audioplayer_db::Result<(Self, Vec<(i64, Pixels)>)> {
+    fn compare_names(&self, a: usize, b: usize) -> Ordering {
+        let (ta, tb) = (&self.tracks[a], &self.tracks[b]);
+        let (album_a, album_b) = (&self.albums[ta.album], &self.albums[tb.album]);
+        self.artists[album_a.artist]
+            .sort_key
+            .cmp(&self.artists[album_b.artist].sort_key)
+            .then(album_a.sort_key.cmp(&album_b.sort_key))
+            .then(ta.album.cmp(&tb.album))
+            .then(ta.disc.cmp(&tb.disc))
+            .then(ta.number.cmp(&tb.number))
+    }
+
+    /// Ordre d'affichage des morceaux.
+    pub fn compare(&self, a: usize, b: usize) -> Ordering {
+        self.rank[a].cmp(&self.rank[b])
+    }
+
+    /// Catalogue et pochettes décodées ; utilisable hors du fil de l'interface. Les albums
+    /// pour lesquels `cached` répond vrai ne sont pas redécodés (pochette déjà en mémoire).
+    pub fn load_with_covers(
+        db: &Database,
+        library_id: i64,
+        cover_size: u32,
+        cached: impl Fn(i64) -> bool,
+    ) -> audioplayer_db::Result<(Self, Vec<(i64, Pixels)>)> {
         let library = Library::load(db, library_id)?;
         let artworks = db.library_artworks(library_id, cover_size)?;
-        let encoded = artworks.into_iter().map(|(album, artwork)| (album, artwork.data)).collect();
+        let encoded = artworks.into_iter().filter(|(album, _)| !cached(*album)).map(|(album, artwork)| (album, artwork.data)).collect();
         Ok((library, covers::decode_all(encoded)))
     }
 

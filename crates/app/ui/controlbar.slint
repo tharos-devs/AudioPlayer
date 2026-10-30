@@ -10,10 +10,20 @@ export component ScrollingTitle inherits Rectangle {
     property <length> gap: 40px;
     property <length> text-width: label.preferred-width;
     property <bool> scrolling: root.running && root.text-width > root.width;
-    // 30px par seconde.
-    property <length> offset: root.scrolling
-        ? Math.mod(animation-tick() / 1ms * 0.03, (root.text-width + root.gap) / 1px) * 1px : 0px;
+    // 30px par seconde, par une minuterie (animation-tick() redessinerait toute la fenêtre à
+    // chaque image de l'écran) ; le défilement repart du début à chaque reprise.
+    property <length> offset;
     clip: true;
+    changed scrolling => {
+        root.offset = 0px;
+    }
+    Timer {
+        interval: 33ms;
+        running: root.scrolling;
+        triggered => {
+            root.offset = Math.mod((root.offset + 1px) / 1px, (root.text-width + root.gap) / 1px) * 1px;
+        }
+    }
     label := Text {
         x: root.scrolling ? -root.offset : max(0px, (root.width - self.width) / 2);
         width: root.scrolling ? root.text-width : min(root.text-width, root.width);

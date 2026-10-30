@@ -147,19 +147,35 @@ impl Database {
     /// Pochettes de tous les albums d'une bibliothèque, une par album, choisies
     /// comme [`Database::artwork`].
     pub fn library_artworks(&self, library_id: i64, min_size: u32) -> Result<Vec<(i64, Artwork)>> {
+        // Jointure simple, le choix de la taille se fait ici : une fonction de fenêtre triait
+        // toutes les images (blobs compris) dans un arbre temporaire, 7 fois plus lent.
+        // En pratique, un album n'a qu'une vignette.
         let mut stmt = self.conn.prepare(
-            "SELECT album_id, size, mime, data FROM (
-                 SELECT w.album_id, w.size, w.mime, w.data,
-                        row_number() OVER (PARTITION BY w.album_id
-                                           ORDER BY w.size < ?2, CASE WHEN w.size >= ?2 THEN w.size ELSE -w.size END) AS rank
-                 FROM artworks w JOIN albums al ON al.id = w.album_id
-                 WHERE al.library_id = ?1)
-             WHERE rank = 1",
+            "SELECT w.album_id, w.size, w.mime, w.data FROM artworks w JOIN albums al ON al.id = w.album_id
+             WHERE al.library_id = ?1 ORDER BY w.album_id",
         )?;
-        let rows = stmt.query_map(params![library_id, min_size], |row| {
-            Ok((row.get(0)?, Artwork { size: row.get(1)?, mime: row.get(2)?, data: row.get(3)? }))
+        let rows = stmt.query_map([library_id], |row| {
+            Ok((row.get::<_, i64>(0)?, Artwork { size: row.get(1)?, mime: row.get(2)?, data: row.get(3)? }))
         })?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+        // La plus petite d'au moins `min_size`, sinon la plus grande.
+        let better = |new: &Artwork, old: &Artwork| match (new.size >= min_size, old.size >= min_size) {
+            (true, true) => new.size < old.size,
+            (false, false) => new.size > old.size,
+            (fits, _) => fits,
+        };
+        let mut chosen: Vec<(i64, Artwork)> = Vec::new();
+        for row in rows {
+            let (album, artwork) = row?;
+            match chosen.last_mut() {
+                Some((last, current)) if *last == album => {
+                    if better(&artwork, current) {
+                        *current = artwork;
+                    }
+                }
+                _ => chosen.push((album, artwork)),
+            }
+        }
+        Ok(chosen)
     }
 
     /// La plus petite pochette d'au moins `min_size` pixels, sinon la plus grande disponible.

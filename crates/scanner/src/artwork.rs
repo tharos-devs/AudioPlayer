@@ -56,6 +56,9 @@ pub fn thumbnail(data: &[u8]) -> Option<Thumbnail> {
         return Some((width, mime.to_owned(), data.to_vec()));
     }
     let size = SIZE.min(width.min(height));
+    // Une grande image (1500–3000px) est d'abord réduite vite (filtre simple) à deux fois la
+    // taille visée : Lanczos3 sur l'original coûtait l'essentiel du temps de pochette.
+    let source = if width.min(height) > size * 4 { source.thumbnail(size * 2 * width / width.min(height), size * 2 * height / width.min(height)) } else { source };
     let square = source.resize_to_fill(size, size, FilterType::Lanczos3).to_rgb8();
     let mut bytes = Vec::new();
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, QUALITY).encode_image(&square).ok()?;

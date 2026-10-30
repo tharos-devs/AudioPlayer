@@ -90,7 +90,16 @@ pub fn minimal(file: &AudioFile) -> TrackRecord {
 }
 
 pub fn read(file: &AudioFile) -> Result<Read, String> {
-    let tagged = lofty::read_from_path(&file.path).map_err(|e| e.to_string())?;
+    read_with(file, true)
+}
+
+/// `picture` faux : l'image intégrée n'est pas lue (le dossier a déjà sa pochette) ; elle
+/// pèse parfois plusieurs Mo dans un FLAC.
+pub fn read_with(file: &AudioFile, picture: bool) -> Result<Read, String> {
+    let options = lofty::config::ParseOptions::new().read_cover_art(picture);
+    let tagged = lofty::probe::Probe::open(&file.path)
+        .and_then(|probe| probe.options(options).read())
+        .map_err(|e| e.to_string())?;
     let properties = tagged.properties();
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
 

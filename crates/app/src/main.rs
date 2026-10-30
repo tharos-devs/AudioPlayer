@@ -99,6 +99,8 @@ enum ScanMessage {
 struct ScanJob {
     library: i64,
     name: String,
+    // Albums dont la pochette peut avoir changé (redécodée au rechargement) ; `None` : tous.
+    stale_albums: Option<Vec<i64>>,
     messages: std::sync::mpsc::Receiver<ScanMessage>,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
@@ -176,6 +178,8 @@ struct App {
     // Album de « Set Album Artwork… » et octets de l'image choisie.
     // Id en base de l'album : un rechargement pendant le choix de l'image change les index.
     artwork_request: Option<(i64, Vec<u8>)>,
+    // Genres proposés pendant l'édition des tags (minuscules, genre), triés.
+    genre_list: Vec<(String, String)>,
     updater: update::Updater,
     // Vérification demandée par le menu : « à jour » et les erreurs s'affichent aussi.
     update_manual: bool,
@@ -241,6 +245,7 @@ impl App {
             tag_technical: true,
             mini_position: None,
             artwork_request: None,
+            genre_list: Vec::new(),
             updater: update::Updater::default(),
             update_manual: false,
             tag_resume: None,
@@ -257,7 +262,7 @@ impl App {
         let library = match self.catalogs.remove(&index) {
             Some(library) => library,
             None => {
-                let (library, pixels) = Library::load_with_covers(&self.db, self.libraries[index].id, COVER_SIZE)?;
+                let (library, pixels) = Library::load_with_covers(&self.db, self.libraries[index].id, COVER_SIZE, |album| self.covers.contains_key(&album))?;
                 self.add_covers(pixels);
                 library
             }
@@ -651,15 +656,7 @@ impl App {
 
     // Ordre de la bibliothèque : artiste, puis albums par titre, puis disque et numéro.
     fn compare(&self, a: usize, b: usize) -> Ordering {
-        let (lib, ta, tb) = (&self.library, &self.library.tracks[a], &self.library.tracks[b]);
-        let (album_a, album_b) = (&lib.albums[ta.album], &lib.albums[tb.album]);
-        lib.artists[album_a.artist]
-            .sort_key
-            .cmp(&lib.artists[album_b.artist].sort_key)
-            .then(album_a.sort_key.cmp(&album_b.sort_key))
-            .then(ta.album.cmp(&tb.album))
-            .then(ta.disc.cmp(&tb.disc))
-            .then(ta.number.cmp(&tb.number))
+        self.library.compare(a, b)
     }
 
     fn select_library(&mut self, ui: &AppWindow, id: i32) {
@@ -1322,6 +1319,8 @@ impl App {
 
     // Favori d'un morceau, d'un album ou d'un artiste.
     fn toggle_favorite(&mut self, ui: &AppWindow, item: Dragged) {
+        // Avant le rafraîchissement, qui retire les morceaux de la vue des favoris.
+        let (count, label) = (self.tracks_of(item).len() as i32, self.label_of(item));
         let (favorite, view) = match item {
             Dragged::Album(a) => match self.db.toggle_album_favorite(self.library.albums[a].id) {
                 Ok(favorite) => {
@@ -1342,11 +1341,12 @@ impl App {
                 let tracks = self.tracks_of(item);
                 let target = !tracks.iter().all(|&t| self.library.tracks[t].is_favorite);
                 let to_change: Vec<usize> = tracks.into_iter().filter(|&t| self.library.tracks[t].is_favorite != target).collect();
+                let ids: Vec<i64> = to_change.iter().map(|&t| self.library.tracks[t].id).collect();
+                if let Err(error) = self.db.set_tracks_favorite(&ids, target) {
+                    return eprintln!("favorite: {error}");
+                }
                 for t in to_change {
-                    match self.db.toggle_track_favorite(self.library.tracks[t].id) {
-                        Ok(favorite) => self.library.tracks[t].is_favorite = favorite,
-                        Err(error) => return eprintln!("favorite: {error}"),
-                    }
+                    self.library.tracks[t].is_favorite = target;
                 }
                 (target, View::FavoriteTracks)
             }
@@ -1363,14 +1363,13 @@ impl App {
             self.refresh_albums(ui);
             self.refresh_tracks(ui);
         }
-        let count = self.tracks_of(item).len() as i32;
         let kind = match (favorite, item) {
             (true, Dragged::Selection) => StatusKind::SelectionFavorited,
             (false, Dragged::Selection) => StatusKind::SelectionUnfavorited,
             (true, _) => StatusKind::FavoriteAdded,
             (false, _) => StatusKind::FavoriteRemoved,
         };
-        self.show_status(ui, Status { kind, track: self.label_of(item).into(), count, ..Default::default() });
+        self.show_status(ui, Status { kind, track: label.into(), count, ..Default::default() });
     }
 
     fn reset_plays(&mut self, ui: &AppWindow, item: Dragged) {
@@ -1875,7 +1874,7 @@ impl App {
             });
             let _ = sender.send(ScanMessage::Scanned(result));
         });
-        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel });
+        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel, stale_albums: None });
         ui.set_scanning(true);
         ui.set_status(Status { kind: StatusKind::ScanListing, track: library.name.into(), ..Default::default() });
     }
@@ -1884,7 +1883,9 @@ impl App {
     fn start_rescan(&mut self, ui: &AppWindow, item: Dragged) {
         let Some(index) = self.selected_library.filter(|_| self.scan.is_none()) else { return };
         let library = self.libraries[index].clone();
-        let paths: Vec<PathBuf> = self.tracks_of(item).into_iter().map(|t| PathBuf::from(&self.library.tracks[t].path)).collect();
+        let tracks = self.tracks_of(item);
+        let paths: Vec<PathBuf> = tracks.iter().map(|&t| PathBuf::from(&self.library.tracks[t].path)).collect();
+        let stale_albums = self.album_ids_of(&tracks);
         let (sender, messages) = std::sync::mpsc::channel();
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (db_path, stop) = (self.db_path.clone(), cancel.clone());
@@ -1895,7 +1896,7 @@ impl App {
             });
             let _ = sender.send(ScanMessage::Scanned(result));
         });
-        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel });
+        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel, stale_albums: Some(stale_albums) });
         ui.set_scanning(true);
     }
 
@@ -1924,9 +1925,32 @@ impl App {
             });
             let _ = sender.send(if stopped() { ScanMessage::CheckStopped } else { ScanMessage::Checked(result) });
         });
-        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel });
+        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel, stale_albums: Some(Vec::new()) });
         ui.set_scanning(true);
         ui.set_status(Status { kind: StatusKind::ScanListing, track: library.name.into(), ..Default::default() });
+    }
+
+    // Ids en base des albums de ces morceaux, sans doublon.
+    fn album_ids_of(&self, tracks: &[usize]) -> Vec<i64> {
+        let mut ids: Vec<i64> = tracks.iter().map(|&t| self.library.albums[self.library.tracks[t].album].id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
+
+    // Pochettes à redécoder au prochain chargement de la bibliothèque `library_id`.
+    fn forget_covers(&mut self, library_id: i64, albums: Option<Vec<i64>>) {
+        let ids = match albums {
+            Some(ids) => ids,
+            None => {
+                let index = self.libraries.iter().position(|l| l.id == library_id);
+                let catalog = index.and_then(|i| self.library_at(i));
+                catalog.map(|lib| lib.albums.iter().map(|a| a.id).collect()).unwrap_or_default()
+            }
+        };
+        for id in ids {
+            self.covers.remove(&id);
+        }
     }
 
     fn poll_scan(&mut self, ui: &AppWindow) {
@@ -1956,7 +1980,9 @@ impl App {
             }
         }
         let Some(message) = finished else { return };
-        self.scan = None;
+        if let Some(job) = self.scan.take() {
+            self.forget_covers(job.library, job.stale_albums);
+        }
         ui.set_scanning(false);
         let root = self.libraries.iter().find(|l| l.id == library).map(|l| l.root_path.clone()).unwrap_or_default();
         let status = |kind| Status { kind, track: name.as_str().into(), playlist: root.as_str().into(), ..Default::default() };
@@ -2029,7 +2055,7 @@ impl App {
             self.selected_album = album.and_then(|id| self.library.albums.iter().position(|a| a.id == id));
             ui.set_selected_track(-1);
             self.refresh_all(ui);
-        } else if let Ok((library, pixels)) = Library::load_with_covers(&self.db, library_id, COVER_SIZE) {
+        } else if let Ok((library, pixels)) = Library::load_with_covers(&self.db, library_id, COVER_SIZE, |album| self.covers.contains_key(&album)) {
             self.add_covers(pixels);
             self.catalogs.insert(index, library);
         }
@@ -2094,6 +2120,7 @@ impl App {
 
         self.tag_tracks = details.iter().map(|d| d.id).collect();
         self.tag_values = values;
+        self.genre_list.clear();
         self.tag_edits.clear();
         ui.set_tag_count(self.tag_tracks.len() as i32);
         self.refresh_tag_rows(ui);
@@ -2149,6 +2176,7 @@ impl App {
     }
 
     fn edit_tags(&mut self, ui: &AppWindow) {
+        self.genre_list.clear();
         if self.scan.is_some() {
             return self.show_status(ui, Status { kind: StatusKind::Busy, ..Default::default() });
         }
@@ -2166,18 +2194,20 @@ impl App {
     }
 
     // Genres de la v0.1 et ceux de la bibliothèque contenant le texte saisi ; tous si rien n'est tapé.
-    fn suggest_genres(&self, ui: &AppWindow, typed: &str) {
-        let library = self.selected_library.map(|i| self.libraries[i].id);
-        let mut genres: Vec<String> = library.and_then(|id| self.db.genres(id).ok()).unwrap_or_default();
-        genres.extend(GENRES.iter().map(|g| g.to_string()));
-        genres.sort_by_key(|g| g.to_lowercase());
-        genres.dedup_by_key(|g| g.to_lowercase());
+    fn suggest_genres(&mut self, ui: &AppWindow, typed: &str) {
+        // Liste calculée une fois par édition, pas à chaque frappe : (minuscules, genre).
+        if self.genre_list.is_empty() {
+            let library = self.selected_library.map(|i| self.libraries[i].id);
+            let mut genres: Vec<String> = library.and_then(|id| self.db.genres(id).ok()).unwrap_or_default();
+            genres.extend(GENRES.iter().map(|g| g.to_string()));
+            let mut list: Vec<(String, String)> = genres.into_iter().map(|g| (g.to_lowercase(), g)).collect();
+            list.sort();
+            list.dedup_by(|a, b| a.0 == b.0);
+            self.genre_list = list;
+        }
         let typed = typed.trim().to_lowercase();
-        let shown: Vec<SharedString> = genres
-            .into_iter()
-            .filter(|g| g.to_lowercase().contains(&typed))
-            .map(SharedString::from)
-            .collect();
+        let shown: Vec<SharedString> =
+            self.genre_list.iter().filter(|(lower, _)| lower.contains(&typed)).map(|(_, genre)| genre.as_str().into()).collect();
         ui.set_genre_suggestions(model(shown));
     }
 
@@ -2223,6 +2253,9 @@ impl App {
         };
         self.tag_resume = self.suspend_playback(&mut paths);
         let library = self.libraries[index].clone();
+        let written: std::collections::HashSet<&str> = paths.iter().filter_map(|p| p.to_str()).collect();
+        let tracks: Vec<usize> = (0..self.library.tracks.len()).filter(|&t| written.contains(self.library.tracks[t].path.as_str())).collect();
+        let stale_albums = self.album_ids_of(&tracks);
         let (sender, messages) = std::sync::mpsc::channel();
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (db_path, stop) = (self.db_path.clone(), cancel.clone());
@@ -2243,7 +2276,7 @@ impl App {
             });
             let _ = sender.send(ScanMessage::Written { written: total - failed.len(), failed, artwork, result });
         });
-        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel });
+        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel, stale_albums: Some(stale_albums) });
         ui.set_scanning(true);
         ui.set_status(Status { kind: StatusKind::TagsWriting, total: 0, ..Default::default() });
     }
@@ -2299,9 +2332,11 @@ impl App {
         let selected: Vec<i64> = self.tracks_of(Dragged::Selection).into_iter().map(|t| self.library.tracks[t].id).collect();
         self.reload_library(ui, library);
         self.resume_playback();
+        // Position de chaque morceau affiché : pas de recherche dans `visible` par morceau.
+        let shown: HashMap<usize, usize> = self.visible.iter().enumerate().map(|(i, &t)| (t, i)).collect();
         let selection: std::collections::HashSet<usize> =
-            selected.iter().filter_map(|&id| self.library.track_by_id(id)).filter(|t| self.visible.contains(t)).collect();
-        let current = selection.iter().copied().min_by_key(|t| self.visible.iter().position(|v| v == t));
+            selected.iter().filter_map(|&id| self.library.track_by_id(id)).filter(|t| shown.contains_key(t)).collect();
+        let current = selection.iter().copied().min_by_key(|t| shown[t]);
         ui.set_tags_saving(false);
         ui.set_tags_editing(false);
         self.set_selection(ui, selection, current);
@@ -2892,7 +2927,7 @@ fn launch(path: &Path) -> Result<(), Problem> {
     std::thread::spawn(move || {
         let Ok(db) = Database::open(&preload_path) else { return };
         for id in pending {
-            match Library::load_with_covers(&db, id, COVER_SIZE) {
+            match Library::load_with_covers(&db, id, COVER_SIZE, |_| false) {
                 Ok(loaded) => {
                     if sender.send((id, loaded)).is_err() {
                         return;

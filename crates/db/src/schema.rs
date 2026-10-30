@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::{Error, Result};
 
-pub const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
+pub const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
 
 // Les dates sont du texte UTC « AAAA-MM-JJ HH:MM:SS », comme `datetime('now')`.
 const V1: &str = "
@@ -194,6 +194,16 @@ END;
 const V4: &str = "
 ALTER TABLE tracks ADD COLUMN track_total INTEGER;
 ALTER TABLE tracks ADD COLUMN disc_total INTEGER;
+";
+
+// Index jamais utilisés : l'app filtre récents, écoutes et favoris en mémoire. Ils ne
+// coûtaient qu'à l'écriture (scans, chaque lecture comptée) et en taille de base.
+const V5: &str = "
+DROP INDEX tracks_by_added;
+DROP INDEX tracks_by_play_count;
+DROP INDEX artists_favorited;
+DROP INDEX albums_favorited;
+DROP INDEX tracks_favorited;
 ";
 
 pub fn version(conn: &Connection) -> Result<usize> {

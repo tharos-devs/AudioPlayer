@@ -160,6 +160,25 @@ impl Database {
         self.toggle_favorite("tracks", track_id)
     }
 
+    /// Met ou retire ces morceaux des favoris, en une seule transaction (une écriture disque
+    /// au lieu d'une par morceau).
+    pub fn set_tracks_favorite(&mut self, track_ids: &[i64], favorite: bool) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        {
+            let sql = if favorite {
+                "UPDATE tracks SET favorited_at = coalesce(favorited_at, datetime('now')) WHERE id = ?1"
+            } else {
+                "UPDATE tracks SET favorited_at = NULL WHERE id = ?1"
+            };
+            let mut update = tx.prepare(sql)?;
+            for id in track_ids {
+                update.execute([id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn toggle_album_favorite(&self, album_id: i64) -> Result<bool> {
         self.toggle_favorite("albums", album_id)
     }

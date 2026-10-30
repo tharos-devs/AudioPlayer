@@ -311,7 +311,11 @@ fn read_file(file: &files::AudioFile, known: bool, art: &Mutex<HashMap<PathBuf, 
     let folder = file.path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
     let skip = |unreadable, inaccessible| Read { record: None, thumbnail: None, folder: folder.clone(), unreadable, inaccessible };
     // Une erreur de lofty ou d'image (fichier corrompu) ne doit pas arrêter tout le scan.
-    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tags::read(file))).unwrap_or_else(|_| Err("panic".into()));
+    let dir = file.path.parent().map(Path::to_path_buf).unwrap_or_default();
+    // Dossier déjà pourvu d'une pochette : inutile de lire l'image intégrée.
+    let picture_wanted = !art.lock().unwrap().get(&dir).is_some_and(|state| state.done);
+    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tags::read_with(file, picture_wanted)))
+        .unwrap_or_else(|_| Err("panic".into()));
     let (record, picture, readable) = match read {
         Ok(read) => (read.record, read.picture, true),
         // Fichier devenu inaccessible (disque débranché…) : surtout ne rien écrire.
@@ -320,7 +324,6 @@ fn read_file(file: &files::AudioFile, known: bool, art: &Mutex<HashMap<PathBuf, 
         Err(_) if known => return skip(true, false),
         Err(_) => (tags::minimal(file), None, false),
     };
-    let dir = file.path.parent().map(Path::to_path_buf).unwrap_or_default();
     let wanted = {
         let mut art = art.lock().unwrap();
         let state = art.entry(dir.clone()).or_default();
