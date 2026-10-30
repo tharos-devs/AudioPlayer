@@ -54,7 +54,6 @@ export component AppWindow inherits Window {
     in property <int> library-albums;
     in property <string> version;
     in-out property <bool> show-equalizer: true;
-    in-out property <bool> search-visible;
     in-out property <bool> random-mode;
     in-out property <bool> loop-mode;
     in-out property <float> volume: 70;
@@ -380,7 +379,7 @@ export component AppWindow inherits Window {
         transform-scale: Theme.zoom;
         transform-origin: { x: 0px, y: 0px };
 
-        // Cmd/Ctrl+F affiche la recherche, comme la v0.1. Minuscule exprès : à chaque
+        // Cmd/Ctrl+F place le curseur dans la recherche. Minuscule exprès : à chaque
         // redimensionnement, Slint fait défiler les listes pour montrer l'élément focalisé,
         // et un FocusScope couvrant tout le contenu zoomé décalait la liste des morceaux.
         //
@@ -414,7 +413,6 @@ export component AppWindow inherits Window {
 
             key-pressed(event) => {
                 if (event.modifiers.meta || event.modifiers.control) && (event.text == "f" || event.text == "F") {
-                    root.search-visible = true;
                     control-bar.focus-search();
                     return accept;
                 }
@@ -480,7 +478,6 @@ export component AppWindow inherits Window {
                     position-text: root.position-text;
                     duration-text: root.duration-text;
                     remaining-text: root.remaining-text;
-                    search-visible <=> root.search-visible;
                     search-text <=> root.search-text;
                     random-mode <=> root.random-mode;
                     loop-mode <=> root.loop-mode;

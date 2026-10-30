@@ -512,7 +512,6 @@ export component ControlBar inherits Rectangle {
     in property <string> position-text;
     in property <string> duration-text;
     in property <string> remaining-text;
-    in-out property <bool> search-visible;
     in-out property <string> search-text;
     in-out property <bool> random-mode;
     in-out property <bool> loop-mode;
@@ -592,14 +591,17 @@ export component ControlBar inherits Rectangle {
             alignment: end;
             VerticalLayout {
                 alignment: center;
+                // Toujours visible ; Échap vide la recherche et rend le clavier à la navigation.
                 search := SearchField {
-                    visible: root.search-visible;
                     text <=> root.search-text;
                     accepted(text) => {
                         root.search(text);
                     }
                     cancelled => {
-                        root.search-visible = false;
+                        if root.search-text != "" {
+                            root.search-text = "";
+                            root.search("");
+                        }
                         root.search-closed();
                     }
                 }
