@@ -52,6 +52,8 @@ pub struct PanelSettings {
     pub albums_width: f32,
     pub tags_width: f32,
     pub tags_visible: bool,
+    /// Onglet du tiroir de droite : 0 = infos du morceau, 1 = « Up Next ».
+    pub drawer_tab: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -116,7 +118,7 @@ impl Default for WindowSettings {
 
 impl Default for PanelSettings {
     fn default() -> Self {
-        PanelSettings { artists_width: 255.0, albums_width: 300.0, tags_width: 320.0, tags_visible: false }
+        PanelSettings { artists_width: 255.0, albums_width: 300.0, tags_width: 320.0, tags_visible: false, drawer_tab: 0 }
     }
 }
 

@@ -129,13 +129,13 @@ msgstr "Ajoutés depuis {0} ans"
 msgid "Most Played"
 msgstr "Les plus écoutés"
 
-msgid "Artists favorites"
+msgid "Favorite Artists"
 msgstr "Artistes favoris"
 
-msgid "Albums favorites"
+msgid "Favorite Albums"
 msgstr "Albums favoris"
 
-msgid "Tracks favorites"
+msgid "Favorite Tracks"
 msgstr "Morceaux favoris"
 
 msgid "reset"
@@ -698,3 +698,21 @@ msgstr "Mini-lecteur"
 
 msgid "Visible Fields"
 msgstr "Champs visibles"
+
+msgid "Up Next"
+msgstr "À suivre"
+
+msgid "Up Next ({0})"
+msgstr "À suivre ({0})"
+
+msgid "Clear"
+msgstr "Vider"
+
+msgid "Remove from Queue"
+msgstr "Retirer de la file"
+
+msgid "Nothing is playing. Play a track, or use “Add to Queue” on tracks, albums or artists."
+msgstr "Rien en lecture. Lancez un morceau, ou utilisez « Ajouter à la file d'attente » sur des morceaux, albums ou artistes."
+
+msgid "Then random tracks from the library"
+msgstr "Puis des morceaux tirés au hasard dans la bibliothèque"

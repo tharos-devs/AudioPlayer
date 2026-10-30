@@ -1,0 +1,216 @@
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { ThemedButton } from "widgets.slint";
+
+// Un morceau de la file de lecture ; `position` est sa place dans la file.
+export struct QueueItem {
+    position: int,
+    title: string,
+    subtitle: string,
+    duration: string,
+    current: bool,
+}
+
+component QueueRow inherits Rectangle {
+    in property <QueueItem> item;
+    pure callback payload(int) -> data-transfer;
+    pure callback accepts(data-transfer) -> bool;
+    callback play();
+    callback remove();
+    callback dropped(data-transfer);
+    height: 44px;
+    background: root.item.current ? Theme.playing-bg : touch.has-hover ? Theme.item-hover : transparent;
+
+    // Glisser une ligne la déplace ; le morceau en cours reste en tête.
+    DragArea {
+        enabled: !root.item.current;
+        allow-copy: true;
+        data: root.payload(root.item.position);
+        touch := TouchArea {
+            double-clicked => {
+                root.play();
+            }
+        }
+    }
+    drop := DropArea {
+        can-drop(event) => {
+            return root.accepts(event.data) ? DragAction.copy : DragAction.none;
+        }
+        dropped(event) => {
+            root.dropped(event.data);
+            return event.proposed-action;
+        }
+    }
+
+    Rectangle {
+        x: 0;
+        width: 3px;
+        background: root.item.current ? Theme.accent : transparent;
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 8px;
+        spacing: 8px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.item.title;
+                font-size: 12px;
+                color: root.item.current ? Theme.accent : Theme.text-primary;
+                overflow: elide;
+            }
+            Text {
+                text: root.item.subtitle;
+                font-size: 10px;
+                color: Theme.text-tertiary;
+                overflow: elide;
+            }
+        }
+        Text {
+            text: root.item.duration;
+            font-size: 11px;
+            color: Theme.text-tertiary;
+            vertical-alignment: center;
+        }
+        // Retirer de la file (pas le morceau en cours).
+        VerticalLayout {
+            alignment: center;
+            width: 18px;
+            opacity: !root.item.current && (touch.has-hover || cross.has-hover) ? 1 : 0;
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                border-radius: 3px;
+                background: cross.has-hover ? Theme.hover-tint : transparent;
+                accessible-role: button;
+                accessible-label: @tr("Remove from Queue");
+                Image {
+                    source: @image-url("icons/ep-close.svg");
+                    width: 10px;
+                    height: 10px;
+                    colorize: cross.has-hover ? Theme.accent : Theme.text-tertiary;
+                }
+                cross := TouchArea {
+                    enabled: !root.item.current;
+                    clicked => {
+                        root.remove();
+                    }
+                }
+            }
+        }
+    }
+    Rectangle {
+        y: parent.height - Theme.hairline;
+        height: Theme.hairline;
+        background: Theme.item-border;
+    }
+    // Repère d'insertion pendant un glisser.
+    if drop.has-drag: Rectangle {
+        y: 0;
+        height: 2px;
+        background: Theme.accent;
+    }
+}
+
+// « Up Next » : le morceau en cours, puis la suite de la file de lecture.
+export component QueueView inherits Rectangle {
+    in property <[QueueItem]> items;
+    // Aléatoire : après les morceaux ajoutés, la lecture continue par tirage.
+    in property <bool> random;
+    pure callback payload(int) -> data-transfer;
+    pure callback accepts(data-transfer) -> bool;
+    callback play(int);
+    callback remove(int);
+    callback clear();
+    // Morceaux ou ligne glissés sur la ligne de cette position (-1 : à la fin).
+    callback dropped(data-transfer, int);
+    background: Theme.panel-bg;
+
+    VerticalLayout {
+        Rectangle {
+            height: 36px;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 8px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.items.length <= 1 ? @tr("Up Next") : @tr("Up Next ({0})", root.items.length - 1);
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: Theme.text-secondary;
+                    vertical-alignment: center;
+                }
+                if root.items.length > 1: VerticalLayout {
+                    alignment: center;
+                    ThemedButton {
+                        height: 24px;
+                        text: @tr("Clear");
+                        clicked => {
+                            root.clear();
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                y: parent.height - Theme.hairline;
+                height: Theme.hairline;
+                background: Theme.border-base;
+            }
+        }
+        if root.items.length == 0: VerticalLayout {
+            vertical-stretch: 1;
+            alignment: center;
+            padding: 20px;
+            Text {
+                text: @tr("Nothing is playing. Play a track, or use “Add to Queue” on tracks, albums or artists.");
+                font-size: 12px;
+                color: Theme.text-tertiary;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+        if root.items.length > 0: ListView {
+            vertical-stretch: 1;
+            for item in root.items: QueueRow {
+                item: item;
+                payload(position) => {
+                    return root.payload(position);
+                }
+                accepts(data) => {
+                    return root.accepts(data);
+                }
+                play => {
+                    root.play(item.position);
+                }
+                remove => {
+                    root.remove(item.position);
+                }
+                dropped(data) => {
+                    root.dropped(data, item.position);
+                }
+            }
+        }
+        // Zone de dépôt en fin de file, et rappel du tirage aléatoire.
+        if root.items.length > 0: end := DropArea {
+            height: root.random ? 40px : 24px;
+            can-drop(event) => {
+                return root.accepts(event.data) ? DragAction.copy : DragAction.none;
+            }
+            dropped(event) => {
+                root.dropped(event.data, -1);
+                return event.proposed-action;
+            }
+            Rectangle {
+                background: end.has-drag ? Theme.hover-tint : transparent;
+                if root.random: Text {
+                    text: @tr("Then random tracks from the library");
+                    font-size: 11px;
+                    font-italic: true;
+                    color: Theme.text-tertiary;
+                }
+            }
+        }
+    }
+}

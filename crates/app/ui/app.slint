@@ -12,8 +12,9 @@ import { TagsDrawer, TagRow, TagChoice } from "tags.slint";
 import { MiniPlayerWindow } from "miniplayer.slint";
 import { ArtworkDialog } from "artwork.slint";
 import { UpdateCard, UpdateStage } from "update.slint";
+import { QueueView, QueueItem } from "queue.slint";
 
-export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind, TagRow, TagChoice, MiniPlayerWindow, UpdateStage }
+export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind, TagRow, TagChoice, MiniPlayerWindow, UpdateStage, QueueItem }
 
 export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-incomplete, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed, tags-writing, tags-saved, tags-failed, tags-invalid, artwork-saved, busy }
 
@@ -166,6 +167,17 @@ export component AppWindow inherits Window {
     in property <bool> tags-editing;
     in property <bool> tags-saving;
     callback tags-toggled();
+    // Onglet du tiroir de droite : 0 = infos du morceau, 1 = « Up Next ».
+    in-out property <int> drawer-tab;
+    callback drawer-tab-changed();
+    in property <[QueueItem]> queue-items;
+    in property <bool> queue-random;
+    callback queue-play(int);
+    callback queue-remove(int);
+    callback queue-clear();
+    callback queue-dropped(data-transfer, int);
+    pure callback queue-payload(int) -> data-transfer;
+    pure callback queue-accepts(data-transfer) -> bool;
     callback tags-edit();
     callback tags-save();
     callback tags-cancel();
@@ -699,34 +711,94 @@ export component AppWindow inherits Window {
                         reversed: true;
                     }
 
-                    if root.tags-open: TagsDrawer {
+                    if root.tags-open: VerticalLayout {
                         width: root.tags-width;
-                        rows: root.tag-rows;
-                        choices: root.tag-choices;
-                        genre-suggestions: root.genre-suggestions;
-                        technical: root.tag-technical;
-                        count: root.tag-count;
-                        editing: root.tags-editing;
-                        saving: root.tags-saving;
-                        edit => {
-                            root.tags-edit();
+                        // Onglets : infos et tags du morceau, ou file de lecture.
+                        Rectangle {
+                            height: 30px;
+                            background: Theme.panel-bg;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                spacing: 4px;
+                                for tab[index] in [@tr("Track Info"), @tr("Up Next")]: Rectangle {
+                                    width: label.preferred-width + 20px;
+                                    label := Text {
+                                        text: tab;
+                                        font-size: 11px;
+                                        font-weight: 600;
+                                        color: root.drawer-tab == index ? Theme.accent : tab-touch.has-hover ? Theme.text-primary : Theme.text-tertiary;
+                                    }
+                                    Rectangle {
+                                        y: parent.height - 2px;
+                                        height: 2px;
+                                        background: root.drawer-tab == index ? Theme.accent : transparent;
+                                    }
+                                    tab-touch := TouchArea {
+                                        clicked => {
+                                            root.drawer-tab = index;
+                                            root.drawer-tab-changed();
+                                        }
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                y: parent.height - Theme.hairline;
+                                height: Theme.hairline;
+                                background: Theme.border-base;
+                            }
                         }
-                        save => {
-                            keys.focus();
-                            root.tags-save();
+                        if root.drawer-tab == 0: TagsDrawer {
+                            vertical-stretch: 1;
+                            rows: root.tag-rows;
+                            choices: root.tag-choices;
+                            genre-suggestions: root.genre-suggestions;
+                            technical: root.tag-technical;
+                            count: root.tag-count;
+                            editing: root.tags-editing;
+                            saving: root.tags-saving;
+                            edit => {
+                                root.tags-edit();
+                            }
+                            save => {
+                                keys.focus();
+                                root.tags-save();
+                            }
+                            cancel => {
+                                keys.focus();
+                                root.tags-cancel();
+                            }
+                            value-edited(key, value) => {
+                                root.tag-edited(key, value);
+                            }
+                            toggle-field(key) => {
+                                root.tag-field-toggled(key);
+                            }
+                            genres-opened => {
+                                root.genres-opened();
+                            }
                         }
-                        cancel => {
-                            keys.focus();
-                            root.tags-cancel();
-                        }
-                        value-edited(key, value) => {
-                            root.tag-edited(key, value);
-                        }
-                        toggle-field(key) => {
-                            root.tag-field-toggled(key);
-                        }
-                        genres-opened => {
-                            root.genres-opened();
+                        if root.drawer-tab == 1: QueueView {
+                            vertical-stretch: 1;
+                            items: root.queue-items;
+                            random: root.queue-random;
+                            payload(position) => {
+                                return root.queue-payload(position);
+                            }
+                            accepts(data) => {
+                                return root.queue-accepts(data);
+                            }
+                            play(position) => {
+                                root.queue-play(position);
+                            }
+                            remove(position) => {
+                                root.queue-remove(position);
+                            }
+                            clear => {
+                                root.queue-clear();
+                            }
+                            dropped(data, position) => {
+                                root.queue-dropped(data, position);
+                            }
                         }
                     }
                 }

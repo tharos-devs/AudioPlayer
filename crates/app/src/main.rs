@@ -29,6 +29,8 @@ const TRACK_PAYLOAD_PREFIX: &str = "audioplayer/track:";
 const ARTIST_PAYLOAD_PREFIX: &str = "audioplayer/artist:";
 const ALBUM_PAYLOAD_PREFIX: &str = "audioplayer/album:";
 const SELECTION_PAYLOAD: &str = "audioplayer/selection";
+// Ligne de la vue « Up Next » : « audioplayer/queue:<position dans la file> ».
+const QUEUE_PAYLOAD_PREFIX: &str = "audioplayer/queue:";
 
 /// Ce qui peut être glissé sur une playlist.
 #[derive(Clone, Copy)]
@@ -636,6 +638,7 @@ impl App {
         ui.set_now_artwork(artwork.cloned().unwrap_or_default());
         ui.set_now_has_artwork(artwork.is_some());
         self.refresh_position(ui);
+        self.refresh_queue(ui);
     }
 
     fn refresh_position(&self, ui: &AppWindow) {
@@ -1433,6 +1436,7 @@ impl App {
         let kind = if matches!(item, Dragged::Selection) { StatusKind::SelectionEnqueued } else { StatusKind::Enqueued };
         let count = self.tracks_of(item).len() as i32;
         self.show_status(ui, Status { kind, track: self.label_of(item).into(), count, ..Default::default() });
+        self.refresh_queue(ui);
     }
 
     // Révèle le fichier (morceau) ou ouvre le dossier (album) dans le gestionnaire de fichiers.
@@ -2423,6 +2427,108 @@ impl App {
         open_externally(std::ffi::OsStr::new(&url));
     }
 
+    // Vue « Up Next » : le morceau en cours puis la suite de la file, si elle est affichée.
+    fn refresh_queue(&self, ui: &AppWindow) {
+        if !ui.get_tags_open() || ui.get_drawer_tab() != 1 {
+            return;
+        }
+        ui.set_queue_random(self.random);
+        let Some((now, lib)) = self.now.as_ref().and_then(|now| Some((now, self.library_at(now.library)?))) else {
+            return ui.set_queue_items(model(Vec::new()));
+        };
+        let start = now.index.unwrap_or(0);
+        let items: Vec<QueueItem> = now.queue[start.min(now.queue.len())..]
+            .iter()
+            .enumerate()
+            .map(|(offset, &t)| {
+                let track = &lib.tracks[t];
+                let album = &lib.albums[track.album];
+                QueueItem {
+                    position: (start + offset) as i32,
+                    title: track.title.as_str().into(),
+                    subtitle: format!("{} · {}", lib.artists[track.artist].name, album.title).into(),
+                    duration: format_duration(track.duration).into(),
+                    current: now.index == Some(start + offset),
+                }
+            })
+            .collect();
+        ui.set_queue_items(model(items));
+    }
+
+    // Le morceau en cours a toujours sa place dans la file (en tête si elle l'avait perdu).
+    fn queue_index(&mut self) -> Option<usize> {
+        let now = self.now.as_mut()?;
+        if now.index.is_none() {
+            now.queue.insert(0, now.track);
+            now.index = Some(0);
+        }
+        now.index
+    }
+
+    // Double-clic dans « Up Next » : la lecture saute à ce morceau.
+    fn queue_play(&mut self, ui: &AppWindow, position: usize) {
+        let Some(now) = self.now.as_mut().filter(|now| position < now.queue.len()) else { return };
+        (now.track, now.index) = (now.queue[position], Some(position));
+        self.failures = 0;
+        self.start(ui);
+    }
+
+    fn queue_remove(&mut self, ui: &AppWindow, position: usize) {
+        let Some(index) = self.queue_index() else { return };
+        let Some(now) = self.now.as_mut().filter(|now| position > index && position < now.queue.len()) else { return };
+        now.queue.remove(position);
+        self.queue_next();
+        self.refresh_queue(ui);
+    }
+
+    // « Clear » : plus rien après le morceau en cours.
+    fn queue_clear(&mut self, ui: &AppWindow) {
+        let Some(index) = self.queue_index() else { return };
+        if let Some(now) = self.now.as_mut() {
+            now.queue.truncate(index + 1);
+        }
+        self.queue_next();
+        self.refresh_queue(ui);
+    }
+
+    // Une ligne de « Up Next » déplacée, ou des morceaux glissés depuis les listes, posés
+    // avant la ligne `row` (`None` : en fin de file). Jamais avant le morceau en cours.
+    fn queue_drop(&mut self, ui: &AppWindow, data: &DataTransfer, row: Option<usize>) {
+        let moved = data.plain_text().ok().and_then(|text| text.strip_prefix(QUEUE_PAYLOAD_PREFIX)?.parse::<usize>().ok());
+        let dragged = dragged(data);
+        if moved.is_none() && dragged.is_none() {
+            return;
+        }
+        // Rien ne joue (ou une autre bibliothèque) : comme « Add to Queue », la lecture commence.
+        let same_library = self.now.as_ref().is_some_and(|now| Some(now.library) == self.selected_library);
+        if let (Some(item), false) = (dragged, same_library && !self.stopped) {
+            return self.enqueue(ui, item);
+        }
+        let Some(index) = self.queue_index() else { return };
+        let tracks: Vec<usize> = match (moved, dragged) {
+            (Some(_), _) => Vec::new(),
+            (None, Some(item)) => self.tracks_of(item),
+            (None, None) => return,
+        };
+        let Some(now) = self.now.as_mut() else { return };
+        let mut at = row.unwrap_or(now.queue.len()).clamp(index + 1, now.queue.len());
+        match moved {
+            Some(from) if from > index && from < now.queue.len() => {
+                let track = now.queue.remove(from);
+                if from < at {
+                    at -= 1;
+                }
+                now.queue.insert(at.max(index + 1), track);
+            }
+            Some(_) => return,
+            None => {
+                now.queue.splice(at..at, tracks);
+            }
+        }
+        self.queue_next();
+        self.refresh_queue(ui);
+    }
+
     // « Added last n unités » ; SQLite ne connaît pas les semaines.
     fn set_recent(&mut self, ui: &AppWindow, amount: u32, unit: &str) {
         let amount = amount.clamp(1, 99);
@@ -2635,6 +2741,7 @@ fn apply_settings(ui: &AppWindow, settings: &Settings) {
     ui.set_albums_width(settings.panels.albums_width);
     ui.set_tags_width(settings.panels.tags_width.clamp(220.0, 600.0));
     ui.set_tags_open(settings.panels.tags_visible);
+    ui.set_drawer_tab(settings.panels.drawer_tab.min(1) as i32);
     ui.set_volume(settings.player.volume.clamp(0.0, 100.0));
     ui.set_muted(settings.player.muted);
     ui.set_random_mode(settings.player.random);
@@ -2677,6 +2784,7 @@ fn capture_settings(ui: &AppWindow, app: &App, previous: &Settings) -> Settings 
             albums_width: ui.get_albums_width(),
             tags_width: ui.get_tags_width(),
             tags_visible: ui.get_tags_open(),
+            drawer_tab: ui.get_drawer_tab().max(0) as u32,
         },
         player: settings::PlayerSettings {
             volume: ui.get_volume(),
@@ -2865,6 +2973,7 @@ fn launch(path: &Path) -> Result<(), Problem> {
         c.update(|app, ui| {
             if ui.get_tags_open() {
                 app.refresh_tags(ui);
+                app.refresh_queue(ui);
             } else if !ui.get_tags_saving() {
                 // Fermé en pleine édition : les saisies sont abandonnées.
                 ui.set_tags_editing(false);
@@ -2879,6 +2988,18 @@ fn launch(path: &Path) -> Result<(), Problem> {
     ui.on_tags_cancel(move || c.update(|app, ui| app.cancel_tags(ui)));
     let c = ctx.clone();
     ui.on_tag_edited(move |key, value| c.update(|app, ui| app.tag_edited(ui, &key, &value)));
+    let c = ctx.clone();
+    ui.on_drawer_tab_changed(move || c.update(|app, ui| app.refresh_queue(ui)));
+    let c = ctx.clone();
+    ui.on_queue_play(move |position| c.update(|app, ui| app.queue_play(ui, position.max(0) as usize)));
+    let c = ctx.clone();
+    ui.on_queue_remove(move |position| c.update(|app, ui| app.queue_remove(ui, position.max(0) as usize)));
+    let c = ctx.clone();
+    ui.on_queue_clear(move || c.update(|app, ui| app.queue_clear(ui)));
+    let c = ctx.clone();
+    ui.on_queue_dropped(move |data, row| c.update(|app, ui| app.queue_drop(ui, &data, usize::try_from(row).ok())));
+    ui.on_queue_payload(|position| payload(QUEUE_PAYLOAD_PREFIX, position));
+    ui.on_queue_accepts(|data| dragged(&data).is_some() || data.plain_text().is_ok_and(|t| t.starts_with(QUEUE_PAYLOAD_PREFIX)));
     let c = ctx.clone();
     ui.on_update_check(move || c.update(|app, ui| app.check_for_updates(ui, true)));
     let c = ctx.clone();
