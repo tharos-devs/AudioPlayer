@@ -9,7 +9,12 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macos-14 retirée le 2 novembre 2026.
+    runs-on: macos-15
+    env:
+      # Le minimum annoncé par Info.plist (LSMinimumSystemVersion) : sans lui, le code C/C++
+      # compilé suivrait la version du SDK de l'image.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
