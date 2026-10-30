@@ -332,8 +332,14 @@ msgstr "Échec du scan de « {0} » : {1}"
 msgid "“{0}” is healthy: every file is present."
 msgstr "« {0} » est en bon état : tous les fichiers sont présents."
 
-msgid "{0} overlaps the folder of the library “{1}”."
-msgstr "{0} recoupe le dossier de la bibliothèque « {1} »."
+msgid "This folder overlaps the folder of the library “{0}”."
+msgstr "Ce dossier recoupe celui de la bibliothèque « {0} »."
+
+msgid "No folder chosen"
+msgstr "Aucun dossier choisi"
+
+msgid "Choose…"
+msgstr "Choisir…"
 
 msgid "{n} track of “{0}” has a missing file"
 msgid_plural "{n} tracks of “{0}” have missing files"

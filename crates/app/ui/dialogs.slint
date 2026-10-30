@@ -4,14 +4,21 @@ import { TagField } from "tags.slint";
 
 export enum NameDialogKind { new-playlist, rename-playlist, rename-library, new-library }
 
-// Saisie d'un nom par-dessus la fenêtre : Entrée valide, Échap annule.
+// Saisie d'un nom par-dessus la fenêtre : Entrée valide, Échap annule. Une nouvelle
+// bibliothèque demande aussi son dossier racine, choisi par le bouton « Choose… ».
 export component NameDialog inherits Rectangle {
     in property <NameDialogKind> kind;
     in-out property <string> text;
     // Le nom proposé est déjà utilisé : la fenêtre reste ouverte.
     in property <bool> taken;
+    in property <string> folder;
+    // Bibliothèque dont le dossier recoupe celui choisi (vide si aucune).
+    in property <string> folder-overlaps;
     callback accepted(string);
     callback cancelled();
+    callback choose-folder();
+    property <bool> needs-folder: root.kind == NameDialogKind.new-library;
+    property <bool> complete: root.text != "" && (!root.needs-folder || (root.folder != "" && root.folder-overlaps == ""));
 
     background: #00000080;
 
@@ -23,7 +30,7 @@ export component NameDialog inherits Rectangle {
     TouchArea { }
 
     Rectangle {
-        width: 360px;
+        width: root.needs-folder ? 440px : 360px;
         height: layout.preferred-height;
         border-radius: 6px;
         background: Theme.popup-bg;
@@ -64,7 +71,9 @@ export component NameDialog inherits Rectangle {
                     text <=> root.text;
                     placeholder: @tr("Name");
                     accepted => {
-                        root.accepted(root.text);
+                        if root.complete {
+                            root.accepted(root.text);
+                        }
                     }
                     cancelled => {
                         root.cancelled();
@@ -74,6 +83,29 @@ export component NameDialog inherits Rectangle {
                     text: @tr("This name is already used.");
                     font-size: 11px;
                     color: Theme.danger;
+                }
+                if root.needs-folder: HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.folder != "" ? root.folder : @tr("No folder chosen");
+                        font-size: 12px;
+                        color: root.folder != "" ? Theme.text-primary : Theme.text-secondary;
+                        overflow: elide;
+                        vertical-alignment: center;
+                    }
+                    ThemedButton {
+                        text: @tr("Choose…");
+                        clicked => {
+                            root.choose-folder();
+                        }
+                    }
+                }
+                if root.needs-folder && root.folder-overlaps != "": Text {
+                    text: @tr("This folder overlaps the folder of the library “{0}”.", root.folder-overlaps);
+                    font-size: 11px;
+                    color: Theme.danger;
+                    wrap: word-wrap;
                 }
                 HorizontalLayout {
                     alignment: end;
@@ -87,7 +119,7 @@ export component NameDialog inherits Rectangle {
                     ThemedButton {
                         text: @tr("OK");
                         primary: true;
-                        enabled: root.text != "";
+                        enabled: root.complete;
                         clicked => {
                             root.accepted(root.text);
                         }

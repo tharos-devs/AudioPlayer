@@ -39,6 +39,13 @@ pub fn saved() -> Option<PathBuf> {
     (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
+/// Dernière panique, à côté du fichier de chemin (`AudioPlayer/crash.log`).
+pub fn write_crash_log(text: &str) {
+    let dir = config_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(dir.join("crash.log"), text);
+}
+
 pub fn remember(path: &Path) -> std::io::Result<()> {
     if std::env::var_os("AUDIOPLAYER_DB").is_some() {
         return Ok(());

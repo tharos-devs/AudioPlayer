@@ -1,5 +1,5 @@
 import { Theme } from "theme.slint";
-import { RoundButton, Slider, ScrollingTitle } from "controlbar.slint";
+import { RoundButton, Slider, ScrollingTitle, SeekBar } from "controlbar.slint";
 
 // Bouton de la colonne de droite : retour à la fenêtre principale, fermeture.
 component WindowButton inherits Rectangle {
@@ -144,34 +144,21 @@ export component MiniPlayerWindow inherits Window {
                     HorizontalLayout {
                         spacing: 6px;
                         Text {
-                            text: root.position-text;
+                            text: seek-bar.dragging ? seek-bar.drag-text : root.position-text;
                             min-width: 32px;
                             font-size: 10px;
                             font-weight: 500;
                             color: Theme.player-title;
                             vertical-alignment: center;
                         }
-                        Rectangle {
+                        seek-bar := SeekBar {
                             horizontal-stretch: 1;
                             height: 12px;
-                            Rectangle {
-                                height: 6px;
-                                border-radius: 3px;
-                                border-width: 1px / root.zoom;
-                                border-color: Theme.player-box-border;
-                                background: progress.has-hover ? Theme.progress-hover : Theme.progress-bg;
-                            }
-                            Rectangle {
-                                x: 0;
-                                height: 6px;
-                                border-radius: 3px;
-                                width: root.duration > 0 ? parent.width * root.position / root.duration : 0px;
-                                background: Theme.accent;
-                            }
-                            progress := TouchArea {
-                                clicked => {
-                                    root.seek(self.mouse-x / self.width);
-                                }
+                            border: 1px / root.zoom;
+                            position: root.position;
+                            duration: root.duration;
+                            seek(ratio) => {
+                                root.seek(ratio);
                             }
                         }
                         Text {

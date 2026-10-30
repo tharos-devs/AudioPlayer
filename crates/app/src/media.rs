@@ -2,6 +2,7 @@
 //! MPRIS sous Linux, SMTC sous Windows), via souvlaki. Les touches marchent même
 //! quand la fenêtre n'a pas le focus, comme dans la v0.1.
 
+use std::ffi::c_void;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
@@ -26,10 +27,15 @@ pub struct SystemMedia {
 }
 
 impl SystemMedia {
-    pub fn new() -> Self {
+    /// `hwnd` : fenêtre native, exigée sous Windows (souvlaki panique sans elle). Elle
+    /// n'existe qu'une fois la fenêtre affichée : d'ici là, pas d'intégration système.
+    pub fn new(hwnd: Option<*mut c_void>) -> Self {
         remove_stale_covers();
         let (sender, events) = mpsc::channel();
-        let config = PlatformConfig { display_name: "AudioPlayer", dbus_name: "audioplayer", hwnd: None };
+        if cfg!(windows) && hwnd.is_none() {
+            return SystemMedia { controls: None, events, cover: None };
+        }
+        let config = PlatformConfig { display_name: "AudioPlayer", dbus_name: "audioplayer", hwnd };
         // Sans intégration système (Windows sans fenêtre native, Linux sans D-Bus…), l'app marche quand même.
         let controls = MediaControls::new(config).and_then(|mut controls| {
             controls.attach(move |event| {

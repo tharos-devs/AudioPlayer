@@ -163,6 +163,66 @@ component TextToggle inherits VerticalLayout {
     }
 }
 
+// Barre de progression : un clic ou un glissé place la tête de lecture. Pendant le
+// glissé, la barre et les temps suivent le pointeur ; la lecture ne saute qu'au relâché.
+export component SeekBar inherits Rectangle {
+    in property <int> position;
+    in property <int> duration;
+    in property <length> border: Theme.hairline;
+    out property <bool> dragging;
+    out property <int> shown-position: root.dragging ? round(root.drag-ratio * root.duration) : root.position;
+    // Temps visés pendant le glissé, en m:ss comme format_duration côté Rust.
+    out property <string> drag-text: root.format(root.shown-position);
+    out property <string> drag-remaining-text: "-" + root.format(root.duration - root.shown-position);
+    callback seek(float);
+    property <float> drag-ratio;
+
+    // Morceau changé pendant le glissé : le relâché ne doit pas le déplacer.
+    changed duration => {
+        root.dragging = false;
+    }
+
+    pure function format(seconds: int) -> string {
+        floor(seconds / 60) + ":" + (mod(seconds, 60) < 10 ? "0" : "") + mod(seconds, 60)
+    }
+
+    Rectangle {
+        height: 6px;
+        border-radius: 3px;
+        border-width: root.border;
+        border-color: Theme.player-box-border;
+        background: progress.has-hover || root.dragging ? Theme.progress-hover : Theme.progress-bg;
+    }
+    Rectangle {
+        x: 0;
+        height: 6px;
+        border-radius: 3px;
+        width: root.duration > 0 ? parent.width * root.shown-position / root.duration : 0px;
+        background: Theme.accent;
+    }
+    progress := TouchArea {
+        pointer-event(event) => {
+            if event.button == PointerEventButton.left {
+                if event.kind == PointerEventKind.down && root.duration > 0 {
+                    root.drag-ratio = clamp(self.mouse-x / self.width, 0, 1);
+                    root.dragging = true;
+                } else if event.kind == PointerEventKind.up && root.dragging {
+                    root.dragging = false;
+                    root.seek(root.drag-ratio);
+                }
+            }
+            if event.kind == PointerEventKind.cancel {
+                root.dragging = false;
+            }
+        }
+        moved => {
+            if root.dragging {
+                root.drag-ratio = clamp(self.mouse-x / self.width, 0, 1);
+            }
+        }
+    }
+}
+
 component PlayerControls inherits Rectangle {
     in property <string> title;
     in property <image> artwork;
@@ -274,7 +334,7 @@ component PlayerControls inherits Rectangle {
                         width: 250px;
                         spacing: 6px;
                         Text {
-                            text: root.position-text;
+                            text: seek-bar.dragging ? seek-bar.drag-text : root.position-text;
                             min-width: 32px;
                             font-size: 10px;
                             font-weight: 500;
@@ -282,31 +342,18 @@ component PlayerControls inherits Rectangle {
                             horizontal-alignment: center;
                             vertical-alignment: center;
                         }
-                        Rectangle {
+                        seek-bar := SeekBar {
                             horizontal-stretch: 1;
                             height: 14px;
-                            Rectangle {
-                                height: 6px;
-                                border-radius: 3px;
-                                border-width: Theme.hairline;
-                                border-color: Theme.player-box-border;
-                                background: progress.has-hover ? Theme.progress-hover : Theme.progress-bg;
-                            }
-                            Rectangle {
-                                x: 0;
-                                height: 6px;
-                                border-radius: 3px;
-                                width: root.duration > 0 ? parent.width * root.position / root.duration : 0px;
-                                background: Theme.accent;
-                            }
-                            progress := TouchArea {
-                                clicked => {
-                                    root.seek(self.mouse-x / self.width);
-                                }
+                            position: root.position;
+                            duration: root.duration;
+                            seek(ratio) => {
+                                root.seek(ratio);
                             }
                         }
                         Text {
-                            text: root.show-remaining && root.has-track ? root.remaining-text : root.duration-text;
+                            text: !root.show-remaining || !root.has-track ? root.duration-text
+                                : seek-bar.dragging ? seek-bar.drag-remaining-text : root.remaining-text;
                             min-width: 32px;
                             font-size: 10px;
                             font-weight: 500;

@@ -72,7 +72,8 @@ enum NameRequest {
     // Avec un morceau à y ajouter aussitôt (menu « Ajouter à la playlist → Nouvelle playlist… »).
     // Ids en base : un rechargement du catalogue pendant la saisie change les index.
     NewPlaylist { tracks: Vec<i64> },
-    NewLibrary(PathBuf),
+    // Dossier racine choisi dans le dialogue (`None` tant qu'il ne l'est pas).
+    NewLibrary(Option<PathBuf>),
     RenamePlaylist(i64),
     RenameLibrary(usize),
 }
@@ -242,7 +243,7 @@ impl App {
             sent_volume: None,
             sent_equalizer: None,
             failures: 0,
-            media: media::SystemMedia::new(),
+            media: media::SystemMedia::new(None),
             published_track: None,
             published_state: None,
             rng: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0x5eed, |d| d.as_nanos() as u64) | 1,
@@ -1666,6 +1667,8 @@ impl App {
         ui.set_dialog_kind(kind);
         ui.set_dialog_text(text.into());
         ui.set_dialog_taken(false);
+        ui.set_dialog_folder("".into());
+        ui.set_dialog_folder_overlaps("".into());
         ui.invoke_open_dialog();
     }
 
@@ -1692,6 +1695,7 @@ impl App {
             }
             NameRequest::RenamePlaylist(playlist) => self.db.rename_playlist(playlist, name),
             NameRequest::NewLibrary(ref folder) => {
+                let Some(folder) = folder else { return };
                 let root = folder.to_string_lossy().into_owned();
                 match self.db.create_library(name, &root) {
                     Ok(Some(id)) => {
@@ -1706,7 +1710,12 @@ impl App {
                         }
                         return;
                     }
-                    other => other.map(|created| created.is_some()),
+                    // Refus : nom pris, ou dossier pris entre-temps par une autre bibliothèque.
+                    Ok(None) => match self.db.overlapping_library(&root) {
+                        Ok(Some(library)) => return ui.set_dialog_folder_overlaps(library.into()),
+                        _ => Ok(false),
+                    },
+                    Err(error) => Err(error),
                 }
             }
             NameRequest::RenameLibrary(index) => {
@@ -1828,25 +1837,23 @@ impl App {
         }
     }
 
-    // Un dossier ne peut appartenir qu'à une bibliothèque : ni égal, ni contenu, ni contenant.
-    // Le dossier est choisi avant (voir `on_library_menu`) : un sélecteur modal ouvert pendant
-    // `Context::update` laisserait les minuteries de l'app réemprunter l'état et paniquer.
-    fn new_library(&mut self, ui: &AppWindow, folder: PathBuf) {
-        let overlapping = self.libraries.iter().find(|l| {
-            let root = Path::new(&l.root_path);
-            folder.starts_with(root) || root.starts_with(&folder)
-        });
-        if let Some(library) = overlapping {
-            let status = Status {
-                kind: StatusKind::FolderInLibrary,
-                track: folder.display().to_string().into(),
-                playlist: library.name.as_str().into(),
-                ..Default::default()
-            };
-            return self.show_status(ui, status);
+    // Dossier racine choisi dans le dialogue « New Library ». Un dossier ne peut appartenir
+    // qu'à une bibliothèque : ni égal, ni contenu, ni contenant. Le nom reprend celui du
+    // dossier, sauf s'il a été saisi. Le sélecteur est ouvert avant (voir `on_dialog_choose_folder`) :
+    // un sélecteur modal ouvert pendant `Context::update` laisserait les minuteries de l'app
+    // réemprunter l'état et paniquer.
+    fn library_folder_chosen(&mut self, ui: &AppWindow, folder: PathBuf) {
+        // La règle de la base (sans tenir compte des majuscules), pour que OK ne soit jamais refusé.
+        let overlapping = self.db.overlapping_library(&folder.to_string_lossy()).ok().flatten();
+        let Some(NameRequest::NewLibrary(chosen)) = self.name_request.as_mut() else { return };
+        let folder_name = |folder: &Path| folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let typed = ui.get_dialog_text();
+        if typed.trim().is_empty() || chosen.as_deref().is_some_and(|previous| folder_name(previous) == typed.as_str()) {
+            ui.set_dialog_text(folder_name(&folder).into());
         }
-        let name = folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        self.ask_name(ui, NameDialogKind::NewLibrary, &name, NameRequest::NewLibrary(folder));
+        ui.set_dialog_folder(shortened_path(&folder).into());
+        ui.set_dialog_folder_overlaps(overlapping.unwrap_or_default().into());
+        *chosen = Some(folder);
     }
 
     // Après un changement de la liste des bibliothèques : catalogues gardés et lecture
@@ -2904,6 +2911,24 @@ fn save_settings(ctx: &Context, saved: &RefCell<Settings>) {
     }
 }
 
+// Chemin affiché sur une ligne : le dossier de départ « ~ », et le milieu coupé plutôt que
+// la fin, qui porte le nom du dossier.
+fn shortened_path(path: &Path) -> String {
+    const MAX: usize = 42;
+    let text = match dirs::home_dir().as_deref().and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+        Some(rest) => Path::new("~").join(rest).display().to_string(),
+        None => path.display().to_string(),
+    };
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= MAX {
+        return text;
+    }
+    let head: String = chars[..MAX / 3].iter().collect();
+    let tail: String = chars[chars.len() - (MAX - MAX / 3 - 1)..].iter().collect();
+    format!("{head}…{tail}")
+}
+
 thread_local! {
     static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
     static SETUP: RefCell<Option<SetupWindow>> = const { RefCell::new(None) };
@@ -3029,15 +3054,13 @@ fn launch(path: &Path) -> Result<(), Problem> {
 
     ui.set_database_path(path.display().to_string().into());
     let c = ctx.clone();
-    // Les sélecteurs de fichiers sont ouverts hors de `Context::update` (voir `new_library`).
+    // Les sélecteurs de fichiers sont ouverts hors de `Context::update` (voir `library_folder_chosen`).
     ui.on_library_menu(move |action| match action.as_str() {
         "new-database" => database_action(&c, choose_new_database),
         "open-database" => database_action(&c, choose_existing_database),
-        "new-library" => {
-            if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                c.update(|app, ui| app.new_library(ui, folder));
-            }
-        }
+        "new-library" => c.update(|app, ui| {
+            app.ask_name(ui, NameDialogKind::NewLibrary, "", NameRequest::NewLibrary(None));
+        }),
         action => c.update(|app, ui| app.library_menu(ui, action)),
     });
     let c = ctx.clone();
@@ -3142,6 +3165,12 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let c = ctx.clone();
     ui.on_dialog_accepted(move |name| c.update(|app, ui| app.name_accepted(ui, &name)));
     let c = ctx.clone();
+    ui.on_dialog_choose_folder(move || {
+        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+            c.update(|app, ui| app.library_folder_chosen(ui, folder));
+        }
+    });
+    let c = ctx.clone();
     ui.on_confirm_accepted(move || c.update(|app, ui| app.confirmed(ui)));
     let c = ctx.clone();
     ui.on_recent_changed(move |amount, unit| c.update(|app, ui| app.set_recent(ui, amount.max(1) as u32, &unit)));
@@ -3219,8 +3248,13 @@ fn launch(path: &Path) -> Result<(), Problem> {
     mini.on_next(move || main.upgrade().into_iter().for_each(|ui| ui.invoke_next()));
     let main = ui.as_weak();
     mini.on_toggle_play(move || main.upgrade().into_iter().for_each(|ui| ui.invoke_toggle_play()));
-    let main = ui.as_weak();
-    mini.on_seek(move |ratio| main.upgrade().into_iter().for_each(|ui| ui.invoke_seek(ratio)));
+    let (main, m) = (ui.as_weak(), mini.as_weak());
+    mini.on_seek(move |ratio| {
+        let (Some(ui), Some(mini)) = (main.upgrade(), m.upgrade()) else { return };
+        ui.invoke_seek(ratio);
+        // Sans attendre la synchro périodique : la barre reviendrait un instant en arrière.
+        sync_mini(&ui, &mini);
+    });
     let (main, m) = (ui.as_weak(), mini.as_weak());
     mini.on_volume_edited(move || {
         if let (Some(ui), Some(mini)) = (main.upgrade(), m.upgrade()) {
@@ -3281,6 +3315,18 @@ fn launch(path: &Path) -> Result<(), Problem> {
     });
 
     ui.show().map_err(|e| Problem::failed(path, e))?;
+    // Windows rattache les touches multimédia à la fenêtre native, créée par `show`.
+    if cfg!(windows) {
+        use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use slint::winit_030::WinitWindowAccessor;
+        let hwnd = ui.window().with_winit_window(|window| match window.window_handle().map(|h| h.as_raw()) {
+            Ok(RawWindowHandle::Win32(handle)) => Some(handle.hwnd.get() as *mut std::ffi::c_void),
+            _ => None,
+        });
+        if let Some(hwnd) = hwnd.flatten() {
+            ctx.app.borrow_mut().media = media::SystemMedia::new(Some(hwnd));
+        }
+    }
     // L'agrandissement ne s'applique qu'à une fenêtre affichée.
     let w = ui.as_weak();
     let maximized = initial.window.maximized;
@@ -3384,6 +3430,15 @@ fn set_problem(setup: &SetupWindow, problem: &Problem) {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Sous Windows l'app n'a pas de console : une panique la fermerait sans laisser de trace.
+    // Seules celles du fil principal la ferment (le scanner rattrape celles des fichiers abîmés).
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if std::thread::current().name() == Some("main") {
+            location::write_crash_log(&format!("{info}\n\n{}", std::backtrace::Backtrace::force_capture()));
+        }
+        default_hook(info);
+    }));
     match location::saved() {
         Some(path) if path.exists() => {
             if let Err(problem) = launch(&path) {

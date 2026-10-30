@@ -16,7 +16,7 @@ import { QueueView, QueueItem } from "queue.slint";
 
 export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind, TagRow, TagChoice, MiniPlayerWindow, UpdateStage, QueueItem }
 
-export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-incomplete, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed, tags-writing, tags-saved, tags-failed, tags-invalid, artwork-saved, busy }
+export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-incomplete, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, database-problem, playback-failed, no-output, favorite-added, favorite-removed, tags-writing, tags-saved, tags-failed, tags-invalid, artwork-saved, busy }
 
 // Les messages d'état sont formatés ici (et non en Rust) pour passer par @tr.
 export struct Status {
@@ -114,8 +114,6 @@ export component AppWindow inherits Window {
         ? @tr("Scan of “{0}” failed: {1}", root.status.track, root.status.playlist)
         : root.status.kind == StatusKind.library-healthy
         ? @tr("“{0}” is healthy: every file is present.", root.status.track)
-        : root.status.kind == StatusKind.folder-in-library
-        ? @tr("{0} overlaps the folder of the library “{1}”.", root.status.track, root.status.playlist)
         : root.status.kind == StatusKind.tracks-added
         ? @tr("{n} track of “{0}” added to “{1}”" | "{n} tracks of “{0}” added to “{1}”" % root.status.count, root.status.track, root.status.playlist)
         : root.status.kind == StatusKind.selection-added
@@ -225,7 +223,10 @@ export component AppWindow inherits Window {
     in property <NameDialogKind> dialog-kind;
     in-out property <string> dialog-text;
     in property <bool> dialog-taken;
+    in property <string> dialog-folder;
+    in property <string> dialog-folder-overlaps;
     callback dialog-accepted(string);
+    callback dialog-choose-folder();
     public function open-dialog() {
         root.dialog-open = true;
         name-dialog.focus-input();
@@ -841,8 +842,13 @@ export component AppWindow inherits Window {
             kind: root.dialog-kind;
             text <=> root.dialog-text;
             taken: root.dialog-taken;
+            folder: root.dialog-folder;
+            folder-overlaps: root.dialog-folder-overlaps;
             accepted(value) => {
                 root.dialog-accepted(value);
+            }
+            choose-folder => {
+                root.dialog-choose-folder();
             }
             cancelled => {
                 root.close-dialog();
