@@ -205,3 +205,88 @@ fn writes_only_the_edited_tags_and_the_cover() {
     assert!(write_tags(&path, &[(Field::Title, Some("X".into())), (Field::Year, Some("19x9".into()))], None).is_err());
     assert_eq!(tags::read(&file(&path)).unwrap().record.title, "New Title");
 }
+
+// Disque qui flanche : un fichier connu devenu illisible garde ce que la base en sait, et
+// un dossier illisible empêche tout retrait (la liste est incomplète).
+#[cfg(unix)]
+#[test]
+fn unreadable_files_and_folders_never_lose_data() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("Music");
+    let db_path = dir.path().join("library.db");
+    let (one, two) = (root.join("A/One/01.wav"), root.join("B/Two/01.wav"));
+    tagged(&one, "First", "Artist A", None, "One", 1, None);
+    tagged(&two, "Second", "Artist B", None, "Two", 1, None);
+    let library = Database::open(&db_path).unwrap().create_library("L", &root.to_string_lossy()).unwrap().unwrap();
+    run(&db_path, library, &root, Mode::Changes).unwrap();
+
+    std::fs::write(&one, b"not audio any more").unwrap();
+    let locked = root.join("B");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let report = run(&db_path, library, &root, Mode::Full);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let report = report.unwrap();
+    assert_eq!((report.unreadable, report.removed), (1, 0), "{report:?}");
+    assert!(report.inaccessible > 0, "{report:?}");
+
+    let db = Database::open(&db_path).unwrap();
+    let mut titles: Vec<_> = db.tracks(library).unwrap().into_iter().map(|t| t.title).collect();
+    titles.sort();
+    assert_eq!(titles, ["First", "Second"]);
+}
+
+// Un scan complet reprend l'année des fichiers, même si l'album en avait déjà une.
+#[test]
+fn full_scan_refreshes_the_album_year() {
+    use audioplayer_scanner::write::{write_tags, Field};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("Music");
+    let db_path = dir.path().join("library.db");
+    let path = root.join("A/One/01.wav");
+    tagged(&path, "First", "Artist", None, "One", 1, None);
+    write_tags(&path, &[(Field::Year, Some("1990".into()))], None).unwrap();
+    let library = Database::open(&db_path).unwrap().create_library("L", &root.to_string_lossy()).unwrap().unwrap();
+    run(&db_path, library, &root, Mode::Changes).unwrap();
+    write_tags(&path, &[(Field::Year, Some("2004".into()))], None).unwrap();
+    run(&db_path, library, &root, Mode::Full).unwrap();
+    let years: Vec<_> = Database::open(&db_path).unwrap().albums(library).unwrap().into_iter().map(|a| a.year).collect();
+    assert_eq!(years, [Some(2004)]);
+}
+
+// Fichier aux seuls tags RIFF (pas de tag principal ID3v2) : modifier un champ garde les autres.
+#[test]
+fn editing_a_file_without_primary_tag_keeps_its_other_tags() {
+    use audioplayer_scanner::files::AudioFile;
+    use audioplayer_scanner::tags;
+    use audioplayer_scanner::write::{write_tags, Field};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a/01.wav");
+    wav(&path);
+    let mut riff = Tag::new(TagType::RiffInfo);
+    riff.set_title("Riff Title".into());
+    riff.set_artist("Riff Artist".into());
+    riff.save_to_path(&path, WriteOptions::default()).unwrap();
+
+    write_tags(&path, &[(Field::Genre, Some("Soundtrack".into()))], None).unwrap();
+    let read = tags::read(&AudioFile { path: path.clone(), size: 0, mtime: 0 }).unwrap();
+    let r = &read.record;
+    assert_eq!((r.title.as_str(), r.artist.as_str(), r.genre.as_deref()), ("Riff Title", "Riff Artist", Some("Soundtrack")));
+}
+
+// Relecture ciblée avec le dossier d'un album introuvable (disque débranché) : rien n'est retiré.
+#[test]
+fn rescan_with_an_unreachable_folder_removes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("Music");
+    let db_path = dir.path().join("library.db");
+    let one = root.join("A/One/01.wav");
+    tagged(&one, "First", "A", None, "One", 1, None);
+    let library = Database::open(&db_path).unwrap().create_library("L", &root.to_string_lossy()).unwrap().unwrap();
+    run(&db_path, library, &root, Mode::Changes).unwrap();
+
+    std::fs::rename(root.join("A"), dir.path().join("elsewhere")).unwrap();
+    let report = audioplayer_scanner::rescan_files(&db_path, library, &[one], &AtomicBool::new(false), &|_| {}).unwrap();
+    assert_eq!((report.removed, report.inaccessible), (0, 1), "{report:?}");
+    assert_eq!(Database::open(&db_path).unwrap().tracks(library).unwrap().len(), 1);
+}

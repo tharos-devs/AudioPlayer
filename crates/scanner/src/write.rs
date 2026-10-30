@@ -176,9 +176,20 @@ fn apply(tag: &mut Tag, field: Field, value: Option<&str>) -> Result<(), String>
 /// Écrit `edits` (et, s'il y en a une, la pochette en couverture avant) dans le fichier.
 pub fn write_tags(path: &Path, edits: &[Edit], cover: Option<(&str, &[u8])>) -> Result<(), String> {
     let mut tagged = lofty::read_from_path(path).map_err(|e| e.to_string())?;
+    // Sans tag principal (WAV aux seuls tags RIFF, MP3 au seul ID3v1…), le nouveau reprend
+    // tout ce que l'autre tag contient : sinon la lecture, qui préfère le tag principal,
+    // ne verrait plus que le champ modifié.
     if tagged.primary_tag().is_none() {
-        let tag_type = tagged.primary_tag_type();
-        tagged.insert_tag(Tag::new(tag_type));
+        let mut tag = Tag::new(tagged.primary_tag_type());
+        if let Some(existing) = tagged.first_tag() {
+            for item in existing.items() {
+                tag.insert(item.clone());
+            }
+            for picture in existing.pictures() {
+                tag.push_picture(picture.clone());
+            }
+        }
+        tagged.insert_tag(tag);
     }
     let tag = tagged.primary_tag_mut().expect("primary tag inserted above");
     for (field, value) in edits {

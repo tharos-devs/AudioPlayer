@@ -24,33 +24,55 @@ fn hidden(path: &Path) -> bool {
     path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('.'))
 }
 
+/// Résultat d'un parcours.
+#[derive(Debug, Default)]
+pub struct Listing {
+    pub files: Vec<AudioFile>,
+    /// Dossiers ou entrées illisibles (disque débranché en cours de route, droits…) : la
+    /// liste est alors incomplète et ne doit pas servir à retirer des morceaux.
+    pub errors: usize,
+}
+
 /// Parcourt `root` récursivement, sans suivre les liens symboliques (pas de boucle possible).
-/// Un dossier illisible est ignoré ; `on_folder` est appelé pour chaque dossier visité et
-/// arrête le parcours en renvoyant `false`.
-pub fn find(root: &Path, mut on_folder: impl FnMut(&Path) -> bool) -> Vec<AudioFile> {
-    let mut files = Vec::new();
+/// Un dossier illisible est sauté et compté ; `on_folder` est appelé pour chaque dossier
+/// visité et arrête le parcours en renvoyant `false`.
+pub fn find(root: &Path, mut on_folder: impl FnMut(&Path) -> bool) -> Listing {
+    let mut listing = Listing::default();
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
         if !on_folder(&dir) {
             break;
         }
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-        for entry in entries.flatten() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            listing.errors += 1;
+            continue;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                listing.errors += 1;
+                continue;
+            };
             let path = entry.path();
             if hidden(&path) {
                 continue;
             }
-            let Ok(kind) = entry.file_type() else { continue };
+            let Ok(kind) = entry.file_type() else {
+                listing.errors += 1;
+                continue;
+            };
             if kind.is_dir() {
                 pending.push(path);
             } else if kind.is_file() && is_audio(&path) {
-                if let Ok(meta) = entry.metadata() {
-                    let mtime = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64);
-                    files.push(AudioFile { path, size: meta.len(), mtime });
+                match entry.metadata() {
+                    Ok(meta) => {
+                        let mtime = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64);
+                        listing.files.push(AudioFile { path, size: meta.len(), mtime });
+                    }
+                    Err(_) => listing.errors += 1,
                 }
             }
         }
     }
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    files
+    listing.files.sort_by(|a, b| a.path.cmp(&b.path));
+    listing
 }

@@ -64,7 +64,8 @@ struct NowPlaying {
 /// Action en attente de la saisie d'un nom.
 enum NameRequest {
     // Avec un morceau à y ajouter aussitôt (menu « Ajouter à la playlist → Nouvelle playlist… »).
-    NewPlaylist { tracks: Vec<usize> },
+    // Ids en base : un rechargement du catalogue pendant la saisie change les index.
+    NewPlaylist { tracks: Vec<i64> },
     NewLibrary(PathBuf),
     RenamePlaylist(i64),
     RenameLibrary(usize),
@@ -173,7 +174,8 @@ struct App {
     // Position du mini-lecteur, gardée dans les réglages.
     mini_position: Option<(i32, i32)>,
     // Album de « Set Album Artwork… » et octets de l'image choisie.
-    artwork_request: Option<(usize, Vec<u8>)>,
+    // Id en base de l'album : un rechargement pendant le choix de l'image change les index.
+    artwork_request: Option<(i64, Vec<u8>)>,
     updater: update::Updater,
     // Vérification demandée par le menu : « à jour » et les erreurs s'affichent aussi.
     update_manual: bool,
@@ -280,8 +282,11 @@ impl App {
         self.covers.extend(pixels.into_iter().map(|(album, pixels)| (album, covers::to_image(pixels))));
     }
 
-    // Catalogue préchargé en arrière-plan ; ignoré si l'utilisateur l'a déjà ouvert.
-    fn add_preloaded(&mut self, index: usize, library: Library, pixels: Vec<(i64, covers::Pixels)>) {
+    // Catalogue préchargé en arrière-plan, repéré par l'id de sa bibliothèque : les index
+    // changent si une bibliothèque est créée ou supprimée entre-temps. Ignoré si
+    // l'utilisateur l'a déjà ouvert ou si la bibliothèque n'existe plus.
+    fn add_preloaded(&mut self, library_id: i64, library: Library, pixels: Vec<(i64, covers::Pixels)>) {
+        let Some(index) = self.libraries.iter().position(|l| l.id == library_id) else { return };
         if self.selected_library != Some(index) && !self.catalogs.contains_key(&index) {
             self.catalogs.insert(index, library);
             self.add_covers(pixels);
@@ -1426,7 +1431,7 @@ impl App {
         ui.set_artwork_height("150".into());
         ui.set_artwork_drag_over(false);
         ui.set_artwork_unreadable(false);
-        self.artwork_request = Some((album, Vec::new()));
+        self.artwork_request = Some((self.library.albums[album].id, Vec::new()));
         ui.invoke_open_artwork();
     }
 
@@ -1461,14 +1466,14 @@ impl App {
     // L'image écrite dans les fichiers est à la taille demandée ; la base n'en garde
     // qu'une vignette de 150px.
     fn apply_artwork(&mut self, ui: &AppWindow, width: &str, height: &str) {
-        let Some((album, data)) = self.artwork_request.take().filter(|(_, data)| !data.is_empty()) else { return };
+        let Some((id, data)) = self.artwork_request.take().filter(|(_, data)| !data.is_empty()) else { return };
+        let Some(album) = self.library.albums.iter().position(|a| a.id == id) else { return ui.invoke_close_artwork() };
         let size = |text: &str| text.trim().parse::<u32>().unwrap_or(150).clamp(50, 2000);
         ui.invoke_close_artwork();
         let Some(cover) = audioplayer_scanner::artwork::resized(&data, size(width), size(height)) else {
             return eprintln!("artwork: cannot resize the image");
         };
         let Some(thumbnail) = audioplayer_scanner::artwork::thumbnail(&cover.1) else { return };
-        let id = self.library.albums[album].id;
         if let Some(pixels) = covers::decode(&thumbnail.2) {
             self.add_covers(vec![(id, pixels)]);
         }
@@ -1573,7 +1578,7 @@ impl App {
                 self.ask_confirmation(ui, kind, &label, ConfirmRequest::DeleteTracks { library, tracks });
             }
             "add-to-new-playlist" => {
-                let tracks = self.tracks_of(item);
+                let tracks = self.tracks_of(item).into_iter().map(|t| self.library.tracks[t].id).collect();
                 let name = if matches!(item, Dragged::Track(_)) { String::new() } else { self.label_of(item) };
                 self.ask_name(ui, NameDialogKind::NewPlaylist, &name, NameRequest::NewPlaylist { tracks });
             }
@@ -1612,7 +1617,7 @@ impl App {
         let result = match *request {
             NameRequest::NewPlaylist { ref tracks } => {
                 let Some(library) = self.selected_library.map(|i| self.libraries[i].id) else { return };
-                let ids: Vec<i64> = tracks.iter().map(|&t| self.library.tracks[t].id).collect();
+                let ids = tracks.clone();
                 match self.db.create_playlist(library, name) {
                     Ok(Some(playlist)) => {
                         if let Err(error) = self.db.add_to_playlist(playlist, &ids) {
@@ -1914,11 +1919,18 @@ impl App {
             ScanMessage::Scanned(Ok(report)) => {
                 self.reload_library(ui, library);
                 self.show_status_for(ui, Status {
-                    kind: if report.cancelled { StatusKind::ScanStopped } else { StatusKind::ScanFinished },
+                    kind: if report.cancelled {
+                        StatusKind::ScanStopped
+                    } else if report.inaccessible > 0 {
+                        StatusKind::ScanIncomplete
+                    } else {
+                        StatusKind::ScanFinished
+                    },
                     track: name.as_str().into(),
                     count: report.added as i32,
                     total: report.updated as i32,
-                    removed: report.removed as i32,
+                    // Scan incomplet : le nombre d'éléments illisibles (rien n'a été retiré).
+                    removed: if report.inaccessible > 0 { report.inaccessible } else { report.removed } as i32,
                     ..Default::default()
                 }, Duration::from_secs(10));
             }
@@ -2827,17 +2839,17 @@ fn launch(path: &Path) -> Result<(), Problem> {
 
     // Préchargement des autres bibliothèques, sur une connexion dédiée.
     let (sender, receiver) = std::sync::mpsc::channel();
-    let pending: Vec<(usize, i64)> = ctx.app.borrow().libraries.iter().enumerate()
+    let pending: Vec<i64> = ctx.app.borrow().libraries.iter().enumerate()
         .filter(|&(i, _)| Some(i) != first)
-        .map(|(i, l)| (i, l.id))
+        .map(|(_, l)| l.id)
         .collect();
     let preload_path = path.to_owned();
     std::thread::spawn(move || {
         let Ok(db) = Database::open(&preload_path) else { return };
-        for (index, id) in pending {
+        for id in pending {
             match Library::load_with_covers(&db, id, COVER_SIZE) {
                 Ok(loaded) => {
-                    if sender.send((index, loaded)).is_err() {
+                    if sender.send((id, loaded)).is_err() {
                         return;
                     }
                 }
@@ -2848,8 +2860,8 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let c = ctx.clone();
     let preload = Timer::default();
     preload.start(TimerMode::Repeated, Duration::from_millis(100), move || {
-        while let Ok((index, (library, pixels))) = receiver.try_recv() {
-            c.app.borrow_mut().add_preloaded(index, library, pixels);
+        while let Ok((id, (library, pixels))) = receiver.try_recv() {
+            c.app.borrow_mut().add_preloaded(id, library, pixels);
         }
     });
 

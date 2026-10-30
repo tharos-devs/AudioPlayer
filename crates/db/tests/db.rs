@@ -381,7 +381,7 @@ fn scan_writes_update_in_place_and_clean_orphans() {
     a.year = Some(2001);
     a.genre = Some("Soundtrack".into());
     let b = record("/ost/b.flac", "Finale", "Composer", "Score");
-    let albums = db.write_tracks(lib, &[a.clone(), b]).unwrap();
+    let albums = db.write_tracks(lib, &[a.clone(), b], None).unwrap();
     assert_eq!(albums[0], albums[1], "same album artist and title: one album");
     let names: Vec<_> = db.artists(lib).unwrap().into_iter().map(|a| (a.name, a.album_count)).collect();
     assert_eq!(names, [("Composer".to_string(), 1), ("Orchestra".to_string(), 0)]);
@@ -395,7 +395,7 @@ fn scan_writes_update_in_place_and_clean_orphans() {
     a.title = "Main Theme".into();
     a.genre = None;
     a.mtime = 2;
-    db.write_tracks(lib, &[a]).unwrap();
+    db.write_tracks(lib, &[a], None).unwrap();
     let track = db.tracks(lib).unwrap().into_iter().find(|t| t.id == id).unwrap();
     assert_eq!((track.title.as_str(), track.play_count, track.is_favorite), ("Main Theme", 1, true));
     let genre: Option<String> = db.connection().query_row("SELECT genre FROM tracks WHERE id = ?1", [id], |r| r.get(0)).unwrap();
@@ -405,7 +405,7 @@ fn scan_writes_update_in_place_and_clean_orphans() {
 
     // Un morceau qui change d'album laisse l'ancien vide : il disparaît, l'artiste aussi.
     let moved = record("/ost/b.flac", "Finale", "Someone", "Other Album");
-    db.write_tracks(lib, &[moved]).unwrap();
+    db.write_tracks(lib, &[moved], None).unwrap();
     db.remove_orphans(lib).unwrap();
     let albums: Vec<_> = db.albums(lib).unwrap().into_iter().map(|a| a.title).collect();
     assert_eq!(albums, ["Other Album", "Score"]);
@@ -453,4 +453,37 @@ fn track_details_join_album_and_artists() {
     assert_eq!((main.id, main.title.as_str(), main.album.as_str(), main.year), (100, "Main Title", "Jaws", Some(1975)));
     assert_eq!((main.artist.as_str(), main.album_artist.as_str()), ("john Williams", "john Williams"));
     assert_eq!((main.genre.as_deref(), main.composer.as_deref(), main.duration_ms), (Some("Score"), Some("J. Williams"), 135000));
+}
+
+// Retirer un morceau d'une playlist réordonnée garde l'ordre affiché, positions 0..n.
+#[test]
+fn removing_from_a_reordered_playlist_keeps_its_order() {
+    let mut db = Database::open_in_memory().unwrap();
+    sample(&db);
+    let mix = db.create_playlist(1, "Mix").unwrap().unwrap();
+    db.add_to_playlist(mix, &[100, 101, 102, 103]).unwrap();
+    db.place_in_playlist(mix, 0, &[103]).unwrap();
+    db.place_in_playlist(mix, 0, &[102]).unwrap();
+    assert_eq!(db.playlist_tracks(mix).unwrap(), [102, 103, 100, 101]);
+    db.remove_from_playlist(mix, &[100]).unwrap();
+    let rows: Vec<(i64, i64)> = db
+        .connection()
+        .prepare("SELECT track_id, position FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position")
+        .unwrap()
+        .query_map([mix], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(rows, [(102, 0), (103, 1), (101, 2)]);
+}
+
+// Une bibliothèque ne peut pas contenir le dossier d'une autre, ni être contenue dedans.
+#[test]
+fn nested_library_folders_are_refused() {
+    let db = Database::open_in_memory().unwrap();
+    assert!(db.create_library("Music", "/Volumes/Disk/Music").unwrap().is_some());
+    assert_eq!(db.create_library("OST", "/Volumes/Disk/Music/OST").unwrap(), None);
+    assert_eq!(db.create_library("All", "/Volumes/Disk").unwrap(), None);
+    // Même début de nom, autre dossier : accepté.
+    assert!(db.create_library("Music 2", "/Volumes/Disk/Music 2").unwrap().is_some());
 }

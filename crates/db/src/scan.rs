@@ -1,7 +1,7 @@
 //! Écriture des résultats d'un scan : morceaux mis à jour en place (id, écoutes, favoris
 //! et playlists conservés), artistes et albums créés à la demande, orphelins retirés.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::{params, OptionalExtension, Transaction};
 
@@ -56,12 +56,30 @@ pub struct KnownFile {
 }
 
 impl Database {
-    /// `None` si le nom ou le dossier est déjà celui d'une autre bibliothèque.
+    /// `None` si le nom ou le dossier est déjà celui d'une autre bibliothèque, ou si le
+    /// dossier contient le dossier d'une autre ou est contenu dans l'un d'eux : les
+    /// bibliothèques restent étanches (un scan prendrait sinon les morceaux de l'autre).
     pub fn create_library(&self, name: &str, root: &str) -> Result<Option<i64>> {
+        if self.overlapping_library(root)?.is_some() {
+            return Ok(None);
+        }
         let inserted = self
             .conn
             .execute("INSERT OR IGNORE INTO libraries (name, root_path) VALUES (?1, ?2)", params![name, root])?;
         Ok((inserted == 1).then(|| self.conn.last_insert_rowid()))
+    }
+
+    /// Bibliothèque dont le dossier est `root`, le contient ou est contenu dans `root`.
+    pub fn overlapping_library(&self, root: &str) -> Result<Option<String>> {
+        let inside = |outer: &str, inner: &str| {
+            let outer = outer.trim_end_matches(['/', '\\']);
+            inner == outer || inner.strip_prefix(outer).is_some_and(|rest| rest.starts_with(['/', '\\']))
+        };
+        Ok(self
+            .libraries()?
+            .into_iter()
+            .find(|l| inside(&l.root_path, root) || inside(root, &l.root_path))
+            .map(|l| l.name))
     }
 
     pub fn library_files(&self, library_id: i64) -> Result<HashMap<String, KnownFile>> {
@@ -98,11 +116,21 @@ impl Database {
     }
 
     /// Écrit un lot dans une transaction ; renvoie l'album de chaque morceau, dans l'ordre.
-    pub fn write_tracks(&mut self, library_id: i64, records: &[TrackRecord]) -> Result<Vec<i64>> {
+    ///
+    /// `refreshed` : albums dont l'année et le drapeau compilation sont repris des fichiers
+    /// relus (scan complet, relecture ciblée). Le premier morceau relu d'un album les
+    /// remplace, les suivants complètent ; l'album est alors noté dans l'ensemble, partagé
+    /// entre les lots d'un même scan. `None` : une année déjà connue est gardée.
+    pub fn write_tracks(
+        &mut self,
+        library_id: i64,
+        records: &[TrackRecord],
+        mut refreshed: Option<&mut HashSet<i64>>,
+    ) -> Result<Vec<i64>> {
         let tx = self.conn.transaction()?;
         let mut albums = Vec::with_capacity(records.len());
         for record in records {
-            albums.push(write_track(&tx, library_id, record)?);
+            albums.push(write_track(&tx, library_id, record, refreshed.as_deref_mut())?);
         }
         tx.commit()?;
         Ok(albums)
@@ -145,23 +173,6 @@ impl Database {
         Ok(())
     }
 
-    /// Avant une relecture ciblée : l'année et le drapeau compilation des albums de ces
-    /// morceaux seront repris des fichiers relus, au lieu de garder ce qui était connu
-    /// (valeurs modifiées à la main).
-    pub fn reset_album_fields(&mut self, track_ids: &[i64]) -> Result<()> {
-        let tx = self.conn.transaction()?;
-        {
-            let mut reset = tx.prepare(
-                "UPDATE albums SET year = NULL, is_compilation = 0 WHERE id = (SELECT album_id FROM tracks WHERE id = ?1)",
-            )?;
-            for id in track_ids {
-                reset.execute([id])?;
-            }
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
     pub fn mark_scanned(&self, library_id: i64) -> Result<()> {
         self.conn.execute("UPDATE libraries SET last_scan_at = datetime('now') WHERE id = ?1", [library_id])?;
         Ok(())
@@ -187,7 +198,7 @@ fn artist_id(tx: &Transaction, library_id: i64, name: &str) -> rusqlite::Result<
     tx.query_row("SELECT id FROM artists WHERE library_id = ?1 AND name = ?2", params![library_id, name], |row| row.get(0))
 }
 
-fn write_track(tx: &Transaction, library_id: i64, r: &TrackRecord) -> rusqlite::Result<i64> {
+fn write_track(tx: &Transaction, library_id: i64, r: &TrackRecord, refreshed: Option<&mut HashSet<i64>>) -> rusqlite::Result<i64> {
     let album_artist = artist_id(tx, library_id, r.album_artist.as_deref().unwrap_or(&r.artist))?;
     let performer = artist_id(tx, library_id, &r.artist)?;
 
@@ -198,15 +209,19 @@ fn write_track(tx: &Transaction, library_id: i64, r: &TrackRecord) -> rusqlite::
             |row| row.get(0),
         )
         .optional()?;
-    // L'année manquante se complète ; une année déjà connue n'est pas écrasée par une autre plage.
+    // L'année manquante se complète ; une année déjà connue n'est pas écrasée par une autre
+    // plage, sauf par la première plage relue d'un album rafraîchi (voir `write_tracks`).
     let album_id = match existing {
         Some(id) => {
-            tx.execute(
+            let first = refreshed.is_some_and(|set| set.insert(id));
+            let sql = if first {
+                "UPDATE albums SET year = ?2, is_compilation = ?3, folder_path = coalesce(?4, folder_path) WHERE id = ?1"
+            } else {
                 "UPDATE albums SET year = coalesce(year, ?2), is_compilation = max(is_compilation, ?3),
                                    folder_path = coalesce(?4, folder_path)
-                 WHERE id = ?1",
-                params![id, r.year, r.compilation, r.folder],
-            )?;
+                 WHERE id = ?1"
+            };
+            tx.prepare_cached(sql)?.execute(params![id, r.year, r.compilation, r.folder])?;
             id
         }
         None => {
@@ -215,7 +230,11 @@ fn write_track(tx: &Transaction, library_id: i64, r: &TrackRecord) -> rusqlite::
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![library_id, album_artist, r.album, r.year, r.compilation, r.folder],
             )?;
-            tx.last_insert_rowid()
+            let id = tx.last_insert_rowid();
+            if let Some(set) = refreshed {
+                set.insert(id);
+            }
+            id
         }
     };
 

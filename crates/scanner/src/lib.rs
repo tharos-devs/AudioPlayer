@@ -37,8 +37,11 @@ pub struct Report {
     pub updated: usize,
     pub removed: usize,
     pub unchanged: usize,
-    /// Tags illisibles : enregistrés avec le nom du fichier et du dossier.
+    /// Tags illisibles : un nouveau fichier est enregistré avec le nom du fichier et du
+    /// dossier ; un fichier déjà connu garde ce que la base en sait.
     pub unreadable: usize,
+    /// Fichiers ou dossiers inaccessibles (disque débranché…) : rien n'a été retiré.
+    pub inaccessible: usize,
     pub artworks: usize,
     pub cancelled: bool,
 }
@@ -73,12 +76,18 @@ impl From<audioplayer_db::Error> for Error {
 struct FolderArt {
     done: bool,
     folder_tried: bool,
+    // Un fil décode déjà l'image intégrée d'un fichier de ce dossier : les autres fils, qui
+    // lisent souvent le même dossier en même temps, ne décodent pas la leur aussi.
+    decoding: bool,
 }
 
 struct Read {
-    record: TrackRecord,
+    // `None` : rien à écrire (fichier connu illisible, ou inaccessible).
+    record: Option<TrackRecord>,
     thumbnail: Option<artwork::Thumbnail>,
-    readable: bool,
+    folder: String,
+    unreadable: bool,
+    inaccessible: bool,
 }
 
 pub fn scan(
@@ -96,7 +105,7 @@ pub fn scan(
     let known = db.library_files(library_id)?;
 
     let mut folders = 0;
-    let found = files::find(root, |_| {
+    let listing = files::find(root, |_| {
         folders += 1;
         if folders % 50 == 0 {
             progress(Progress::Listing { folders });
@@ -107,11 +116,12 @@ pub fn scan(
     if cancel.load(Ordering::Relaxed) {
         return Ok(Report { cancelled: true, ..Report::default() });
     }
+    let found = listing.files;
     if found.is_empty() && !known.is_empty() {
         return Err(Error::RootEmpty(root.to_owned()));
     }
 
-    let mut report = Report::default();
+    let mut report = Report { inaccessible: listing.errors, ..Report::default() };
     let to_read: Vec<&files::AudioFile> = found
         .iter()
         .filter(|file| {
@@ -131,15 +141,28 @@ pub fn scan(
     let mut art: HashMap<PathBuf, FolderArt> = db
         .folders_with_artwork(library_id, artwork::SIZE)?
         .into_iter()
-        .map(|folder| (PathBuf::from(folder), FolderArt { done: true, folder_tried: true }))
+        .map(|folder| (PathBuf::from(folder), FolderArt { done: true, folder_tried: true, decoding: false }))
         .collect();
     if mode == Mode::Full {
         art.clear();
     }
-    process(&mut db, library_id, &known, &to_read, art, cancel, progress, &mut report)?;
+    // Scan complet : l'année et le drapeau compilation des albums sont repris des fichiers.
+    let mut refreshed = (mode == Mode::Full).then(HashSet::new);
+    process(&mut db, library_id, &known, &to_read, art, refreshed.as_mut(), cancel, progress, &mut report)?;
 
     if cancel.load(Ordering::Relaxed) {
         report.cancelled = true;
+        // Les albums vidés par un regroupement déjà écrit ne restent pas affichés.
+        db.remove_orphans(library_id)?;
+        return Ok(report);
+    }
+    // Disque débranché pendant la lecture : la suite retirerait tout ce qui n'a pas été vu.
+    if !root.is_dir() {
+        return Err(Error::RootMissing(root.to_owned()));
+    }
+    // Liste incomplète (dossiers illisibles) : par prudence, rien n'est retiré.
+    if report.inaccessible > 0 {
+        db.mark_scanned(library_id)?;
         return Ok(report);
     }
 
@@ -164,6 +187,7 @@ fn process(
     known: &HashMap<String, audioplayer_db::KnownFile>,
     to_read: &[&files::AudioFile],
     art: HashMap<PathBuf, FolderArt>,
+    mut refreshed: Option<&mut HashSet<i64>>,
     cancel: &AtomicBool,
     progress: &(dyn Fn(Progress) + Sync),
     report: &mut Report,
@@ -185,7 +209,8 @@ fn process(
                 }
                 let index = next.fetch_add(1, Ordering::Relaxed);
                 let Some(file) = to_read.get(index) else { return };
-                if sender.send(read_file(file, art)).is_err() {
+                let is_known = known.contains_key(file.path.to_string_lossy().as_ref());
+                if sender.send(read_file(file, is_known, art)).is_err() {
                     return;
                 }
             });
@@ -197,16 +222,24 @@ fn process(
             if batch.is_empty() {
                 return Ok(());
             }
-            let records: Vec<TrackRecord> = batch.iter().map(|r| r.record.clone()).collect();
-            let albums = db.write_tracks(library_id, &records)?;
+            let has_record: Vec<bool> = batch.iter().map(|r| r.record.is_some()).collect();
+            let records: Vec<TrackRecord> = batch.iter_mut().filter_map(|r| r.record.take()).collect();
+            let paths: Vec<String> = records.iter().map(|r| r.path.clone()).collect();
+            let albums = db.write_tracks(library_id, &records, refreshed.as_deref_mut())?;
             let mut with_art = HashSet::new();
-            for (read, album) in batch.drain(..).zip(albums) {
-                if known.contains_key(&read.record.path) {
+            let mut written = paths.into_iter().zip(albums);
+            for (read, has_record) in batch.drain(..).zip(has_record) {
+                report.unreadable += usize::from(read.unreadable);
+                report.inaccessible += usize::from(read.inaccessible);
+                if !has_record {
+                    continue;
+                }
+                let Some((path, album)) = written.next() else { break };
+                if known.contains_key(&path) {
                     report.updated += 1;
                 } else {
                     report.added += 1;
                 }
-                report.unreadable += usize::from(!read.readable);
                 if let Some(thumbnail) = read.thumbnail {
                     if with_art.insert(album) {
                         db.set_artwork(album, &[thumbnail])?;
@@ -219,7 +252,7 @@ fn process(
         for read in receiver {
             done += 1;
             if done % 25 == 0 || done == total {
-                let folder = read.record.folder.clone().unwrap_or_default();
+                let folder = read.folder.clone();
                 progress(Progress::Reading { done, total, folder });
             }
             batch.push(read);
@@ -255,25 +288,36 @@ pub fn rescan_files(
                     .map_or(0, |d| d.as_secs() as i64);
                 present.push(files::AudioFile { path: path.clone(), size: meta.len(), mtime });
             }
-            _ => {
+            // Disparu seulement si son dossier est là : un disque débranché rend tout
+            // illisible, et rien ne doit alors être retiré.
+            _ if path.parent().is_some_and(Path::is_dir) => {
                 if let Some(file) = known.get(path.to_string_lossy().as_ref()) {
                     missing.push(file.track_id);
                 }
             }
+            _ => report.inaccessible += 1,
         }
     }
-    let rescanned: Vec<i64> = present.iter().filter_map(|f| known.get(f.path.to_string_lossy().as_ref())).map(|k| k.track_id).collect();
-    db.reset_album_fields(&rescanned)?;
     let to_read: Vec<&files::AudioFile> = present.iter().collect();
-    process(&mut db, library_id, &known, &to_read, HashMap::new(), cancel, progress, &mut report)?;
+    // L'année et le drapeau compilation des albums relus sont repris des fichiers.
+    let mut refreshed = HashSet::new();
+    process(&mut db, library_id, &known, &to_read, HashMap::new(), Some(&mut refreshed), cancel, progress, &mut report)?;
     report.removed = missing.len();
     db.remove_tracks(library_id, &missing)?;
     Ok(report)
 }
 
-fn read_file(file: &files::AudioFile, art: &Mutex<HashMap<PathBuf, FolderArt>>) -> Read {
-    let (record, picture, readable) = match tags::read(file) {
+fn read_file(file: &files::AudioFile, known: bool, art: &Mutex<HashMap<PathBuf, FolderArt>>) -> Read {
+    let folder = file.path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    let skip = |unreadable, inaccessible| Read { record: None, thumbnail: None, folder: folder.clone(), unreadable, inaccessible };
+    // Une erreur de lofty ou d'image (fichier corrompu) ne doit pas arrêter tout le scan.
+    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tags::read(file))).unwrap_or_else(|_| Err("panic".into()));
+    let (record, picture, readable) = match read {
         Ok(read) => (read.record, read.picture, true),
+        // Fichier devenu inaccessible (disque débranché…) : surtout ne rien écrire.
+        Err(_) if std::fs::metadata(&file.path).is_err() => return skip(false, true),
+        // Tags illisibles : un fichier connu garde ce que la base en sait.
+        Err(_) if known => return skip(true, false),
         Err(_) => (tags::minimal(file), None, false),
     };
     let dir = file.path.parent().map(Path::to_path_buf).unwrap_or_default();
@@ -283,7 +327,10 @@ fn read_file(file: &files::AudioFile, art: &Mutex<HashMap<PathBuf, FolderArt>>) 
         if state.done {
             None
         } else if picture.is_some() {
-            Some(false)
+            (!state.decoding).then(|| {
+                state.decoding = true;
+                false
+            })
         } else if !state.folder_tried {
             state.folder_tried = true;
             Some(true)
@@ -295,8 +342,11 @@ fn read_file(file: &files::AudioFile, art: &Mutex<HashMap<PathBuf, FolderArt>>) 
         let data = if from_folder { artwork::from_folder(&dir) } else { picture };
         artwork::thumbnail(&data?)
     });
-    if thumbnail.is_some() {
-        art.lock().unwrap().entry(dir).or_default().done = true;
+    if let Some(from_folder) = wanted {
+        let mut art = art.lock().unwrap();
+        let state = art.entry(dir).or_default();
+        state.decoding &= from_folder;
+        state.done |= thumbnail.is_some();
     }
-    Read { record, thumbnail, readable }
+    Read { record: Some(record), thumbnail, folder, unreadable: !readable, inaccessible: false }
 }

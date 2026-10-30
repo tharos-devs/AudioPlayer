@@ -15,7 +15,7 @@ import { UpdateCard, UpdateStage } from "update.slint";
 
 export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind, TagRow, TagChoice, MiniPlayerWindow, UpdateStage }
 
-export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed, tags-writing, tags-saved, tags-failed, tags-invalid, artwork-saved, busy }
+export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-incomplete, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, folder-in-library, database-problem, playback-failed, no-output, favorite-added, favorite-removed, tags-writing, tags-saved, tags-failed, tags-invalid, artwork-saved, busy }
 
 // Les messages d'état sont formatés ici (et non en Rust) pour passer par @tr.
 export struct Status {
@@ -98,6 +98,8 @@ export component AppWindow inherits Window {
         ? @tr("Scanning “{0}”: {1} folders…", root.status.track, root.status.count)
         : root.status.kind == StatusKind.scan-reading
         ? @tr("Scanning “{0}”: {1} / {2} files — {3}", root.status.track, root.status.count, root.status.total, root.status.playlist)
+        : root.status.kind == StatusKind.scan-incomplete
+        ? @tr("Scan of “{0}” incomplete: {1} files or folders could not be read (disk disconnected?). Nothing was removed.", root.status.track, root.status.removed)
         : root.status.kind == StatusKind.scan-finished
         ? @tr("Scan of “{0}” finished: {1} added, {2} updated, {3} removed", root.status.track, root.status.count, root.status.total, root.status.removed)
         : root.status.kind == StatusKind.scan-stopped

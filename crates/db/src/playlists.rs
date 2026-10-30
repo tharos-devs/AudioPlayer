@@ -1,6 +1,8 @@
 //! Playlists d'une bibliothèque (positions denses à partir de 0) et favoris.
 
-use rusqlite::{params, OptionalExtension};
+// Les modifications de playlist lisent puis écrivent : en IMMEDIATE, un scan qui écrit sur
+// son autre connexion ne peut pas les faire échouer entre les deux (SQLITE_BUSY_SNAPSHOT).
+use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
 use crate::{Database, Result};
 
@@ -62,7 +64,7 @@ impl Database {
 
     /// Ajoute en fin de playlist les morceaux absents ; renvoie combien ont été ajoutés.
     pub fn add_to_playlist(&mut self, playlist_id: i64, track_ids: &[i64]) -> Result<usize> {
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut next: i64 = tx.query_row(
             "SELECT coalesce(max(position) + 1, 0) FROM playlist_tracks WHERE playlist_id = ?1",
             [playlist_id],
@@ -88,7 +90,7 @@ impl Database {
     /// Place `track_ids` à la position `at` (index dans la playlist avant l'opération) :
     /// ceux déjà présents sont déplacés, les autres ajoutés. Renvoie le nombre d'ajouts.
     pub fn place_in_playlist(&mut self, playlist_id: i64, at: usize, track_ids: &[i64]) -> Result<usize> {
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let order: Vec<i64> = {
             let mut stmt = tx.prepare("SELECT track_id FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position")?;
             let rows = stmt.query_map([playlist_id], |row| row.get(0))?;
@@ -122,7 +124,7 @@ impl Database {
     }
 
     pub fn remove_from_playlist(&mut self, playlist_id: i64, track_ids: &[i64]) -> Result<()> {
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         {
             let mut delete = tx.prepare("DELETE FROM playlist_tracks WHERE playlist_id = ?1 AND track_id = ?2")?;
             for &track in track_ids {
@@ -193,16 +195,18 @@ impl Database {
     }
 }
 
-// Positions denses 0..n après une suppression.
+// Positions denses 0..n après une suppression, dans l'ordre actuel. L'ordre est lu avant
+// d'écrire : une mise à jour qui le relit en cours de route (sous-requête corrélée) voit
+// des lignes déjà renumérotées et mélange une playlist réordonnée.
 fn renumber(conn: &rusqlite::Connection, playlist_id: i64) -> rusqlite::Result<()> {
-    // En deux temps : les positions négatives évitent tout conflit transitoire.
-    conn.execute(
-        "UPDATE playlist_tracks SET position = -1 - (
-             SELECT count(*) FROM playlist_tracks o
-             WHERE o.playlist_id = playlist_tracks.playlist_id AND o.position < playlist_tracks.position)
-         WHERE playlist_id = ?1",
-        [playlist_id],
-    )?;
-    conn.execute("UPDATE playlist_tracks SET position = -1 - position WHERE playlist_id = ?1", [playlist_id])?;
+    let order: Vec<i64> = {
+        let mut stmt = conn.prepare_cached("SELECT id FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position, id")?;
+        let rows = stmt.query_map([playlist_id], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    let mut set = conn.prepare_cached("UPDATE playlist_tracks SET position = ?2 WHERE id = ?1")?;
+    for (position, id) in order.iter().enumerate() {
+        set.execute(params![id, position as i64])?;
+    }
     Ok(())
 }
