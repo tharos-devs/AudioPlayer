@@ -86,6 +86,9 @@ component QueueRow inherits Rectangle {
                 background: cross.has-hover ? Theme.hover-tint : transparent;
                 accessible-role: button;
                 accessible-label: @tr("Remove from Queue");
+                accessible-action-default => {
+                    root.remove();
+                }
                 Image {
                     source: @image-url("icons/ep-close.svg");
                     width: 10px;
@@ -106,8 +109,8 @@ component QueueRow inherits Rectangle {
         height: Theme.hairline;
         background: Theme.item-border;
     }
-    // Repère d'insertion pendant un glisser.
-    if drop.has-drag: Rectangle {
+    // Repère d'insertion pendant un glisser (rien ne se pose avant le morceau en cours).
+    if drop.has-drag && !root.item.current: Rectangle {
         y: 0;
         height: 2px;
         background: Theme.accent;

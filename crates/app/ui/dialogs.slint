@@ -34,6 +34,10 @@ export component NameDialog inherits Rectangle {
 
         keys := FocusScope {
             key-pressed(event) => {
+                // Dialogue modal : Tab ne sort pas vers le champ de recherche derrière lui.
+                if event.text == Key.Tab || event.text == Key.Backtab {
+                    return accept;
+                }
                 if event.text == Key.Escape {
                     root.cancelled();
                     return accept;
@@ -69,7 +73,7 @@ export component NameDialog inherits Rectangle {
                 if root.taken: Text {
                     text: @tr("This name is already used.");
                     font-size: 11px;
-                    color: #f56c6c;
+                    color: Theme.danger;
                 }
                 HorizontalLayout {
                     alignment: end;
@@ -124,6 +128,10 @@ export component ConfirmDialog inherits Rectangle {
 
         keys := FocusScope {
             key-pressed(event) => {
+                // Dialogue modal : Tab ne sort pas vers le champ de recherche derrière lui.
+                if event.text == Key.Tab || event.text == Key.Backtab {
+                    return accept;
+                }
                 if event.text == Key.Escape {
                     root.cancelled();
                     return accept;

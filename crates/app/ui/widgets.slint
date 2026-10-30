@@ -79,7 +79,7 @@ export component ThemedMenu inherits PopupWindow {
                             vertical-alignment: center;
                             overflow: elide;
                             color: !entry.enabled ? Theme.text-disabled
-                                : entry.danger ? #f56c6c
+                                : entry.danger ? Theme.danger
                                 : item.has-hover ? Theme.accent : Theme.text-primary;
                         }
                         // Chevron : le caractère « ▸ » ressemblait à un point à cette taille.

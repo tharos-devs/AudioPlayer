@@ -106,6 +106,9 @@ impl Updater {
         if matches!(self.state(), State::Checking | State::Downloading(..) | State::Installing) {
             return;
         }
+        // Une nouvelle vérification remplace la version proposée : « Retry » ne doit pas
+        // réinstaller une offre devenue ancienne.
+        *self.offered.lock().unwrap() = None;
         self.set(State::Checking);
         let updater = self.clone();
         std::thread::spawn(move || {

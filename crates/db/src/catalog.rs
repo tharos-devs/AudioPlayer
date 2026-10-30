@@ -146,16 +146,19 @@ impl Database {
 
     /// Pochettes de tous les albums d'une bibliothèque, une par album, choisies
     /// comme [`Database::artwork`].
-    pub fn library_artworks(&self, library_id: i64, min_size: u32) -> Result<Vec<(i64, Artwork)>> {
+    /// `skip` : albums dont la pochette est déjà en mémoire ; leur image n'est pas lue.
+    pub fn library_artworks(&self, library_id: i64, min_size: u32, skip: impl Fn(i64) -> bool) -> Result<Vec<(i64, Artwork)>> {
         // Jointure simple, le choix de la taille se fait ici : une fonction de fenêtre triait
         // toutes les images (blobs compris) dans un arbre temporaire, 7 fois plus lent.
         // En pratique, un album n'a qu'une vignette.
+        // Tailles d'abord, images ensuite et seulement pour les albums à décoder.
         let mut stmt = self.conn.prepare(
-            "SELECT w.album_id, w.size, w.mime, w.data FROM artworks w JOIN albums al ON al.id = w.album_id
+            "SELECT w.album_id, w.size, w.mime, w.rowid FROM artworks w JOIN albums al ON al.id = w.album_id
              WHERE al.library_id = ?1 ORDER BY w.album_id",
         )?;
         let rows = stmt.query_map([library_id], |row| {
-            Ok((row.get::<_, i64>(0)?, Artwork { size: row.get(1)?, mime: row.get(2)?, data: row.get(3)? }))
+            let rowid: i64 = row.get(3)?;
+            Ok((row.get::<_, i64>(0)?, Artwork { size: row.get(1)?, mime: row.get(2)?, data: Vec::new() }, rowid))
         })?;
         // La plus petite d'au moins `min_size`, sinon la plus grande.
         let better = |new: &Artwork, old: &Artwork| match (new.size >= min_size, old.size >= min_size) {
@@ -163,19 +166,29 @@ impl Database {
             (false, false) => new.size > old.size,
             (fits, _) => fits,
         };
-        let mut chosen: Vec<(i64, Artwork)> = Vec::new();
+        let mut chosen: Vec<(i64, Artwork, i64)> = Vec::new();
         for row in rows {
-            let (album, artwork) = row?;
+            let (album, artwork, rowid) = row?;
+            if skip(album) {
+                continue;
+            }
             match chosen.last_mut() {
-                Some((last, current)) if *last == album => {
+                Some((last, current, current_row)) if *last == album => {
                     if better(&artwork, current) {
-                        *current = artwork;
+                        (*current, *current_row) = (artwork, rowid);
                     }
                 }
-                _ => chosen.push((album, artwork)),
+                _ => chosen.push((album, artwork, rowid)),
             }
         }
-        Ok(chosen)
+        let mut data = self.conn.prepare_cached("SELECT data FROM artworks WHERE rowid = ?1")?;
+        chosen
+            .into_iter()
+            .map(|(album, mut artwork, rowid)| {
+                artwork.data = data.query_row([rowid], |row| row.get(0))?;
+                Ok((album, artwork))
+            })
+            .collect()
     }
 
     /// La plus petite pochette d'au moins `min_size` pixels, sinon la plus grande disponible.

@@ -93,9 +93,10 @@ fn artwork_picks_the_smallest_sufficient_size() {
     assert_eq!(size(1200), Some(600));
     assert_eq!(db.artwork(11, 80).unwrap(), None);
 
-    let all: Vec<_> = db.library_artworks(1, 160).unwrap().into_iter().map(|(album, a)| (album, a.size)).collect();
-    assert_eq!(all, [(10, 600)]);
-    assert!(db.library_artworks(2, 160).unwrap().is_empty());
+    let all: Vec<_> = db.library_artworks(1, 160, |_| false).unwrap().into_iter().map(|(album, a)| (album, a.size, a.data)).collect();
+    assert_eq!(all, [(10, 600, vec![2])]);
+    assert!(db.library_artworks(1, 160, |album| album == 10).unwrap().is_empty());
+    assert!(db.library_artworks(2, 160, |_| false).unwrap().is_empty());
 }
 
 // Sous-ensemble du schéma de la v0.1, avec ses colonnes ajoutées après coup.
@@ -497,4 +498,23 @@ fn tracks_are_favorited_together() {
     assert_eq!(favorite(&db), [100, 102]);
     db.set_tracks_favorite(&[100], false).unwrap();
     assert_eq!(favorite(&db), [102]);
+}
+
+#[test]
+fn nested_folders_are_refused_whatever_the_case() {
+    let db = Database::open_in_memory().unwrap();
+    assert!(db.create_library("Music", "/Volumes/Disk/Music").unwrap().is_some());
+    assert_eq!(db.create_library("OST", "/volumes/disk/music/OST").unwrap(), None);
+}
+
+#[test]
+fn album_mates_and_missing_artwork() {
+    let db = Database::open_in_memory().unwrap();
+    sample(&db);
+    // Album 10 (Jaws) : 100, 101, 102 ; album 11 : 103.
+    let mut mates = db.album_mates(&[100]).unwrap();
+    mates.sort();
+    assert_eq!(mates, ["/music/ost/jaws/01.flac", "/music/ost/jaws/02.flac", "/music/ost/jaws/201.flac"]);
+    // Album 10 a une pochette, 11 non.
+    assert_eq!(db.albums_missing_artwork(&[10, 11]).unwrap(), [(11, "/music/ost/bttf/01.flac".to_string())]);
 }

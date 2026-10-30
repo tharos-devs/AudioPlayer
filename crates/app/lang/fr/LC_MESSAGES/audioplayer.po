@@ -633,8 +633,8 @@ msgstr "Redémarrer"
 msgid "“{0}” is a v0.1 database. Convert it first with the import-v01 command (see the README)."
 msgstr "« {0} » est une base de la v0.1. Convertissez-la d'abord avec la commande import-v01 (voir le README)."
 
-msgid "Scan of “{0}” incomplete: {1} files or folders could not be read (disk disconnected?). Nothing was removed."
-msgstr "Scan de « {0} » incomplet : {1} fichiers ou dossiers illisibles (disque débranché ?). Rien n'a été retiré."
+msgid "Scan of “{0}” incomplete: {1} files or folders could not be read (disk disconnected?). Nothing was removed from them."
+msgstr "Scan de « {0} » incomplet : {1} fichiers ou dossiers illisibles (disque débranché ?). Rien n'y a été retiré."
 
 msgid "Custom"
 msgstr "Personnalisé"

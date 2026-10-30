@@ -116,7 +116,7 @@ pub fn scan(
     if cancel.load(Ordering::Relaxed) {
         return Ok(Report { cancelled: true, ..Report::default() });
     }
-    let found = listing.files;
+    let (found, unreadable_dirs) = (listing.files, listing.unreadable_dirs);
     if found.is_empty() && !known.is_empty() {
         return Err(Error::RootEmpty(root.to_owned()));
     }
@@ -148,29 +148,28 @@ pub fn scan(
     }
     // Scan complet : l'année et le drapeau compilation des albums sont repris des fichiers.
     let mut refreshed = (mode == Mode::Full).then(HashSet::new);
-    process(&mut db, library_id, &known, &to_read, art, refreshed.as_mut(), cancel, progress, &mut report)?;
+    let processed = process(&mut db, library_id, &known, &to_read, art, refreshed.as_mut(), cancel, progress, &mut report);
+    // Quoi qu'il arrive ensuite (arrêt, disque perdu, erreur), les albums vidés par un
+    // regroupement déjà écrit ne restent pas affichés.
+    db.remove_orphans(library_id)?;
+    processed?;
 
     if cancel.load(Ordering::Relaxed) {
         report.cancelled = true;
-        // Les albums vidés par un regroupement déjà écrit ne restent pas affichés.
-        db.remove_orphans(library_id)?;
         return Ok(report);
     }
     // Disque débranché pendant la lecture : la suite retirerait tout ce qui n'a pas été vu.
     if !root.is_dir() {
         return Err(Error::RootMissing(root.to_owned()));
     }
-    // Liste incomplète (dossiers illisibles) : par prudence, rien n'est retiré.
-    if report.inaccessible > 0 {
-        db.mark_scanned(library_id)?;
-        return Ok(report);
-    }
 
-    // Disparus : absents du dossier et introuvables sur le disque (double vérification).
+    // Disparus : absents du dossier et introuvables sur le disque (double vérification). Sous
+    // un dossier illisible, la liste est incomplète : rien n'y est retiré.
     let present: HashSet<String> = found.iter().map(|f| f.path.to_string_lossy().into_owned()).collect();
     let removed: Vec<i64> = known
         .iter()
         .filter(|(path, _)| !present.contains(*path) && !Path::new(path).exists())
+        .filter(|(path, _)| !unreadable_dirs.iter().any(|dir| Path::new(path).starts_with(dir)))
         .map(|(_, k)| k.track_id)
         .collect();
     report.removed = removed.len();
@@ -210,7 +209,17 @@ fn process(
                 let index = next.fetch_add(1, Ordering::Relaxed);
                 let Some(file) = to_read.get(index) else { return };
                 let is_known = known.contains_key(file.path.to_string_lossy().as_ref());
-                if sender.send(read_file(file, is_known, art)).is_err() {
+                // Toute la lecture (tags et pochette) : un fichier qui fait paniquer lofty ou image
+                // ne doit pas arrêter le scan ; il compte comme illisible.
+                let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| read_file(file, is_known, art)))
+                    .unwrap_or_else(|_| Read {
+                        record: (!is_known).then(|| tags::minimal(file)),
+                        thumbnail: None,
+                        folder: String::new(),
+                        unreadable: true,
+                        inaccessible: false,
+                    });
+                if sender.send(read).is_err() {
                     return;
                 }
             });
@@ -218,7 +227,9 @@ fn process(
         drop(sender);
 
         let mut batch: Vec<Read> = Vec::with_capacity(BATCH);
-        let mut flush = |batch: &mut Vec<Read>, report: &mut Report| -> Result<(), Error> {
+        // Albums écrits pendant ce scan : ceux restés sans pochette en reçoivent une à la fin.
+        let mut touched: HashSet<i64> = HashSet::new();
+        let mut flush = |batch: &mut Vec<Read>, report: &mut Report, touched: &mut HashSet<i64>| -> Result<(), Error> {
             if batch.is_empty() {
                 return Ok(());
             }
@@ -235,6 +246,7 @@ fn process(
                     continue;
                 }
                 let Some((path, album)) = written.next() else { break };
+                touched.insert(album);
                 if known.contains_key(&path) {
                     report.updated += 1;
                 } else {
@@ -257,11 +269,35 @@ fn process(
             }
             batch.push(read);
             if batch.len() >= BATCH {
-                flush(&mut batch, report)?;
+                flush(&mut batch, report, &mut touched)?;
             }
         }
-        flush(&mut batch, report)
+        flush(&mut batch, report, &mut touched)?;
+        if !cancel.load(Ordering::Relaxed) {
+            fill_missing_artwork(db, &touched, report)?;
+        }
+        Ok(())
     })
+}
+
+// La pochette est cherchée par dossier pendant la lecture ; un album sans pochette à la fin
+// (retagué ailleurs dans un dossier qui en avait une, deuxième album d'un dossier, image
+// intégrée illisible) la prend dans l'une de ses pistes, sinon dans l'image du dossier.
+fn fill_missing_artwork(db: &mut Database, albums: &HashSet<i64>, report: &mut Report) -> Result<(), Error> {
+    let albums: Vec<i64> = albums.iter().copied().collect();
+    for (album, path) in db.albums_missing_artwork(&albums)? {
+        let path = PathBuf::from(path);
+        let file = files::AudioFile { path: path.clone(), size: 0, mtime: 0 };
+        let picture = tags::read_with(&file, true).ok().and_then(|read| read.picture);
+        let thumbnail = picture
+            .and_then(|data| artwork::thumbnail(&data))
+            .or_else(|| path.parent().and_then(artwork::from_folder).and_then(|data| artwork::thumbnail(&data)));
+        if let Some(thumbnail) = thumbnail {
+            db.set_artwork(album, &[thumbnail])?;
+            report.artworks += 1;
+        }
+    }
+    Ok(())
 }
 
 /// « Rescan Audio Tags » de la v0.1 : relit ces fichiers (et leur pochette) même
@@ -298,10 +334,25 @@ pub fn rescan_files(
             _ => report.inaccessible += 1,
         }
     }
+    // Tout l'album de chaque fichier relu : l'année et le drapeau compilation viennent de
+    // l'ensemble de ses pistes, pas du seul morceau modifié.
+    let rescanned: Vec<i64> = present.iter().filter_map(|f| known.get(f.path.to_string_lossy().as_ref())).map(|k| k.track_id).collect();
+    let asked: HashSet<PathBuf> = present.iter().map(|f| f.path.clone()).collect();
+    for mate in db.album_mates(&rescanned)? {
+        let path = PathBuf::from(&mate);
+        if asked.contains(&path) {
+            continue;
+        }
+        if let Ok(meta) = std::fs::metadata(&path) {
+            let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64);
+            present.push(files::AudioFile { path, size: meta.len(), mtime });
+        }
+    }
     let to_read: Vec<&files::AudioFile> = present.iter().collect();
-    // L'année et le drapeau compilation des albums relus sont repris des fichiers.
     let mut refreshed = HashSet::new();
-    process(&mut db, library_id, &known, &to_read, HashMap::new(), Some(&mut refreshed), cancel, progress, &mut report)?;
+    let processed = process(&mut db, library_id, &known, &to_read, HashMap::new(), Some(&mut refreshed), cancel, progress, &mut report);
+    db.remove_orphans(library_id)?;
+    processed?;
     report.removed = missing.len();
     db.remove_tracks(library_id, &missing)?;
     Ok(report)

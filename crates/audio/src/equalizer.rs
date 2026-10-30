@@ -97,6 +97,8 @@ pub struct EqualizedSource<S: Source> {
     settings: Arc<Settings>,
     generation: u64,
     filters: Vec<Biquad>,
+    // Un gain positif peut dépasser la pleine échelle : arrondi doux seulement dans ce cas.
+    boost: bool,
     // Un état par canal et par bande.
     states: Vec<[f64; 4]>,
     channels: ChannelCount,
@@ -114,6 +116,7 @@ impl<S: Source> EqualizedSource<S> {
             settings,
             generation: u64::MAX,
             filters: Vec::new(),
+            boost: false,
             states: Vec::new(),
             channels,
             rate,
@@ -143,6 +146,7 @@ impl<S: Source> EqualizedSource<S> {
         } else {
             Vec::new()
         };
+        self.boost = enabled && gains.iter().any(|&g| g > 0.0);
         if format_changed || self.states.len() != self.filters.len() * channels.get() as usize {
             self.states = vec![[0.0; 4]; self.filters.len() * channels.get() as usize];
             self.channel = 0;
@@ -175,7 +179,7 @@ impl<S: Source> Iterator for EqualizedSource<S> {
             value = filter.process(value, state);
         }
         self.channel = (self.channel + 1) % self.channels.get() as usize;
-        Some(soft_clip(value) as Sample)
+        Some(if self.boost { soft_clip(value) } else { value.clamp(-1.0, 1.0) } as Sample)
     }
 }
 

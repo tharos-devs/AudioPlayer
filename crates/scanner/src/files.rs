@@ -29,8 +29,9 @@ fn hidden(path: &Path) -> bool {
 pub struct Listing {
     pub files: Vec<AudioFile>,
     /// Dossiers ou entrées illisibles (disque débranché en cours de route, droits…) : la
-    /// liste est alors incomplète et ne doit pas servir à retirer des morceaux.
+    /// liste est incomplète sous ces dossiers et ne doit pas servir à y retirer des morceaux.
     pub errors: usize,
+    pub unreadable_dirs: Vec<PathBuf>,
 }
 
 /// Parcourt `root` récursivement, sans suivre les liens symboliques (pas de boucle possible).
@@ -45,11 +46,14 @@ pub fn find(root: &Path, mut on_folder: impl FnMut(&Path) -> bool) -> Listing {
         }
         let Ok(entries) = std::fs::read_dir(&dir) else {
             listing.errors += 1;
+            listing.unreadable_dirs.push(dir);
             continue;
         };
+        let mut failed = false;
         for entry in entries {
             let Ok(entry) = entry else {
                 listing.errors += 1;
+                failed = true;
                 continue;
             };
             let path = entry.path();
@@ -58,6 +62,7 @@ pub fn find(root: &Path, mut on_folder: impl FnMut(&Path) -> bool) -> Listing {
             }
             let Ok(kind) = entry.file_type() else {
                 listing.errors += 1;
+                failed = true;
                 continue;
             };
             if kind.is_dir() {
@@ -68,9 +73,15 @@ pub fn find(root: &Path, mut on_folder: impl FnMut(&Path) -> bool) -> Listing {
                         let mtime = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64);
                         listing.files.push(AudioFile { path, size: meta.len(), mtime });
                     }
-                    Err(_) => listing.errors += 1,
+                    Err(_) => {
+                        listing.errors += 1;
+                        failed = true;
+                    }
                 }
             }
+        }
+        if failed {
+            listing.unreadable_dirs.push(dir);
         }
     }
     listing.files.sort_by(|a, b| a.path.cmp(&b.path));

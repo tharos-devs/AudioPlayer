@@ -290,3 +290,69 @@ fn rescan_with_an_unreachable_folder_removes_nothing() {
     assert_eq!((report.removed, report.inaccessible), (0, 1), "{report:?}");
     assert_eq!(Database::open(&db_path).unwrap().tracks(library).unwrap().len(), 1);
 }
+
+// Relecture ciblée d'une piste sans année : l'album garde l'année portée par une autre piste.
+#[test]
+fn targeted_rescan_rereads_the_whole_album() {
+    use audioplayer_scanner::write::{write_tags, Field};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("Music");
+    let db_path = dir.path().join("library.db");
+    let (one, two) = (root.join("A/One/01.wav"), root.join("A/One/02.wav"));
+    tagged(&one, "First", "Artist", None, "One", 1, None);
+    tagged(&two, "Second", "Artist", None, "One", 2, None);
+    write_tags(&one, &[(Field::Year, Some("1990".into()))], None).unwrap();
+    let library = Database::open(&db_path).unwrap().create_library("L", &root.to_string_lossy()).unwrap().unwrap();
+    run(&db_path, library, &root, Mode::Changes).unwrap();
+
+    write_tags(&two, &[(Field::Title, Some("Second (edited)".into()))], None).unwrap();
+    audioplayer_scanner::rescan_files(&db_path, library, &[two], &AtomicBool::new(false), &|_| {}).unwrap();
+    let years: Vec<_> = Database::open(&db_path).unwrap().albums(library).unwrap().into_iter().map(|a| a.year).collect();
+    assert_eq!(years, [Some(1990)]);
+}
+
+// Album renommé par un autre logiciel, dans un dossier qui avait déjà sa pochette : le nouvel
+// album la retrouve (image du dossier).
+#[test]
+fn retagged_album_keeps_its_artwork() {
+    use audioplayer_scanner::write::{write_tags, Field};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("Music");
+    let db_path = dir.path().join("library.db");
+    let path = root.join("A/One/01.wav");
+    tagged(&path, "First", "Artist", None, "One", 1, None);
+    std::fs::write(root.join("A/One/cover.jpg"), jpeg(300)).unwrap();
+    let library = Database::open(&db_path).unwrap().create_library("L", &root.to_string_lossy()).unwrap().unwrap();
+    run(&db_path, library, &root, Mode::Changes).unwrap();
+
+    write_tags(&path, &[(Field::Album, Some("One (Remastered)".into()))], None).unwrap();
+    run(&db_path, library, &root, Mode::Changes).unwrap();
+    let albums: Vec<_> = Database::open(&db_path).unwrap().albums(library).unwrap().into_iter().map(|a| (a.title, a.has_artwork)).collect();
+    assert_eq!(albums, [("One (Remastered)".to_string(), true)]);
+}
+
+// Un dossier illisible ne bloque que les retraits sous lui : un fichier supprimé ailleurs part.
+#[cfg(unix)]
+#[test]
+fn unreadable_folder_only_blocks_removals_below_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("Music");
+    let db_path = dir.path().join("library.db");
+    let (gone, locked_file) = (root.join("A/One/01.wav"), root.join("B/Two/01.wav"));
+    tagged(&gone, "Gone", "A", None, "One", 1, None);
+    tagged(&root.join("A/One/02.wav"), "Stays", "A", None, "One", 2, None);
+    tagged(&locked_file, "Kept", "B", None, "Two", 1, None);
+    let library = Database::open(&db_path).unwrap().create_library("L", &root.to_string_lossy()).unwrap().unwrap();
+    run(&db_path, library, &root, Mode::Changes).unwrap();
+
+    std::fs::remove_file(&gone).unwrap();
+    let locked = root.join("B");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let report = run(&db_path, library, &root, Mode::Changes);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(report.unwrap().removed, 1);
+    let mut titles: Vec<_> = Database::open(&db_path).unwrap().tracks(library).unwrap().into_iter().map(|t| t.title).collect();
+    titles.sort();
+    assert_eq!(titles, ["Kept", "Stays"]);
+}

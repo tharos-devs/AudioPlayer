@@ -178,7 +178,12 @@ impl Worker {
             }
             match commands.recv_timeout(POLL) {
                 Ok(command) => match &sink {
-                    Some(sink) => self.handle(command, sink),
+                    Some(sink) => {
+                        // Un enchaînement survenu depuis le dernier passage d'abord : sinon un saut
+                        // ou un changement de suivant viserait encore le morceau précédent.
+                        self.update();
+                        self.handle(command, sink);
+                    }
                     None => self.handle_without_output(command),
                 },
                 Err(RecvTimeoutError::Timeout) => {}
@@ -190,7 +195,9 @@ impl Worker {
         }
     }
 
-    fn open_sink(&self) -> Result<MixerDeviceSink, String> {
+    fn open_sink(&mut self) -> Result<MixerDeviceSink, String> {
+        // Un indicateur par sortie : une erreur tardive de l'ancienne ne coupe pas la nouvelle.
+        self.lost = Arc::new(AtomicBool::new(false));
         let lost = self.lost.clone();
         let opened = DeviceSinkBuilder::from_default_device()
             .map(|builder| {
@@ -339,8 +346,18 @@ impl Worker {
         }
         match self.open(&current) {
             Ok(mut source) => {
-                // Saut refusé (format sans index) : le morceau reprend au début.
-                let at = if source.try_seek(at).is_ok() { at } else { Duration::ZERO };
+                // Saut refusé : à la fin du morceau (flèche maintenue jusqu'au bout), il se termine ;
+                // ailleurs (format sans index), il reprend au début.
+                let near_end = source.total_duration().is_some_and(|d| at + Duration::from_secs(1) >= d);
+                let at = if source.try_seek(at).is_ok() {
+                    at
+                } else if near_end {
+                    self.reset();
+                    self.emit(Event::Ended);
+                    return;
+                } else {
+                    Duration::ZERO
+                };
                 player.append(source);
                 self.player = Some(player);
                 self.offset = at;

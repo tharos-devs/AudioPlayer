@@ -32,6 +32,9 @@ const SELECTION_PAYLOAD: &str = "audioplayer/selection";
 // Ligne de la vue « Up Next » : « audioplayer/queue:<position dans la file> ».
 const QUEUE_PAYLOAD_PREFIX: &str = "audioplayer/queue:";
 
+// File affichée par « Up Next » : bibliothèque, place du morceau en cours, suite.
+type QueueShown = (usize, Option<usize>, Vec<usize>);
+
 /// Ce qui peut être glissé sur une playlist.
 #[derive(Clone, Copy)]
 enum Dragged {
@@ -181,6 +184,9 @@ struct App {
     // Album de « Set Album Artwork… » et octets de l'image choisie.
     // Id en base de l'album : un rechargement pendant le choix de l'image change les index.
     artwork_request: Option<(i64, Vec<u8>)>,
+    // Dernière file affichée par « Up Next » (bibliothèque, place, suite) : rien à refaire si
+    // elle n'a pas changé (une file peut compter des dizaines de milliers de morceaux).
+    queue_shown: RefCell<Option<QueueShown>>,
     // Genres proposés pendant l'édition des tags (minuscules, genre), triés.
     genre_list: Vec<(String, String)>,
     updater: update::Updater,
@@ -248,6 +254,7 @@ impl App {
             tag_technical: true,
             mini_position: None,
             artwork_request: None,
+            queue_shown: RefCell::new(None),
             genre_list: Vec::new(),
             updater: update::Updater::default(),
             update_manual: false,
@@ -855,9 +862,17 @@ impl App {
         now.next = None;
     }
 
-    // Le moteur est passé au morceau mis en file.
-    fn advance(&mut self, ui: &AppWindow) {
-        let Some(next) = self.now.as_ref().and_then(|now| now.next) else { return };
+    // Le moteur est passé au morceau mis en file. C'est celui qu'il joue qui compte : si la file
+    // a changé pendant l'enchaînement (« Up Next », Add to Queue, rand), `now.next` peut déjà
+    // désigner un autre morceau.
+    fn advance(&mut self, ui: &AppWindow, path: &Path) {
+        let Some(now) = self.now.as_ref() else { return };
+        let Some(lib) = self.library_at(now.library) else { return };
+        let is_path = |t: &usize| lib.tracks.get(*t).is_some_and(|track| Path::new(&track.path) == path);
+        let next = now.next.filter(|t| is_path(t))
+            .or_else(|| now.index.and_then(|i| now.queue.iter().skip(i + 1).copied().find(|t| is_path(t))))
+            .or_else(|| lib.tracks.iter().position(|track| Path::new(&track.path) == path));
+        let Some(next) = next else { return };
         self.move_to(next);
         let Some(library) = self.now.as_ref().map(|now| now.library) else { return };
         self.position = 0;
@@ -888,8 +903,9 @@ impl App {
 
     // Tab / Maj+Tab : panneau suivant ou précédent parmi ceux qui ont du contenu.
     fn cycle_panel(&mut self, ui: &AppWindow, direction: i32) {
-        let available = [!self.artist_rows.is_empty() && self.view != View::Playlist,
-            !self.album_rows.is_empty() && self.view != View::Playlist, true];
+        // Playlist et « Most Played » : seul le panneau des morceaux est affiché.
+        let lists_only = matches!(self.view, View::Playlist | View::MostPlayed);
+        let available = [!self.artist_rows.is_empty() && !lists_only, !self.album_rows.is_empty() && !lists_only, true];
         let mut panel = ui.get_active_panel();
         for _ in 0..3 {
             panel = (panel + direction).rem_euclid(3);
@@ -1164,6 +1180,7 @@ impl App {
                 if self.now.is_some() && !self.stopped {
                     self.queue_next();
                 }
+                self.refresh_queue(ui);
             }
         }
     }
@@ -1236,7 +1253,7 @@ impl App {
         for event in self.engine.events() {
             match event {
                 // Seul un enchaînement fait avancer la file : un lancement direct l'a déjà placée.
-                Event::Started { gapless: true, .. } => self.advance(ui),
+                Event::Started { gapless: true, path, .. } => self.advance(ui, &path),
                 Event::Started { .. } => self.failures = 0,
                 Event::Ended => {
                     self.is_playing = false;
@@ -2050,7 +2067,7 @@ impl App {
         let playing = self.now.as_ref().filter(|now| now.library == index).and_then(|now| {
             let lib = self.library_at(index)?;
             let ids = |tracks: &[usize]| tracks.iter().map(|&t| lib.tracks[t].id).collect::<Vec<_>>();
-            Some((lib.tracks[now.track].id, ids(&now.queue)))
+            Some((lib.tracks[now.track].id, ids(&now.queue), now.index))
         });
         self.catalogs.remove(&index);
         if self.selected_library == Some(index) {
@@ -2068,33 +2085,47 @@ impl App {
             self.selected_artist = artist.and_then(|id| self.library.artists.iter().position(|a| a.id == id));
             self.selected_album = album.and_then(|id| self.library.albums.iter().position(|a| a.id == id));
             ui.set_selected_track(-1);
+            // La file d'abord : l'affichage (dont « Up Next ») lit ses index dans le nouveau catalogue.
+            self.remap_now(index, playing);
             self.refresh_all(ui);
+            self.published_track = None;
+            self.refresh_player(ui);
         } else if let Ok((library, pixels)) = Library::load_with_covers(&self.db, library_id, COVER_SIZE, |album| self.covers.contains_key(&album)) {
             self.add_covers(pixels);
             self.catalogs.insert(index, library);
-        }
-        if let Some((track_id, queue_ids)) = playing {
-            let lib = self.library_at(index);
-            let track = lib.and_then(|l| l.track_by_id(track_id));
-            match (lib, track) {
-                (Some(lib), Some(track)) => {
-                    let queue: Vec<usize> = queue_ids.iter().filter_map(|&id| lib.track_by_id(id)).collect();
-                    let now = self.now.as_mut().unwrap();
-                    now.index = queue.iter().position(|&t| t == track);
-                    now.track = track;
-                    now.queue = queue;
-                    self.queue_next();
-                }
-                // Le morceau a disparu : la lecture s'arrête.
-                _ => {
-                    self.engine.stop();
-                    self.now = None;
-                    self.is_playing = false;
-                }
-            }
+            self.remap_now(index, playing);
             self.published_track = None;
             self.refresh_player(ui);
         }
+    }
+
+    // Retrouve, par id, le morceau en cours et sa file dans le catalogue rechargé. La place
+    // dans la file est celle de la même entrée (un morceau peut y figurer plusieurs fois).
+    fn remap_now(&mut self, index: usize, playing: Option<(i64, Vec<i64>, Option<usize>)>) {
+        let Some((track_id, queue_ids, old_index)) = playing else { return };
+        let Some(lib) = self.library_at(index) else { return };
+        let Some(track) = lib.track_by_id(track_id) else {
+            // Le morceau a disparu : la lecture s'arrête.
+            self.engine.stop();
+            self.now = None;
+            self.is_playing = false;
+            return;
+        };
+        let mut queue = Vec::with_capacity(queue_ids.len());
+        let mut new_index = None;
+        for (position, id) in queue_ids.iter().enumerate() {
+            if let Some(t) = lib.track_by_id(*id) {
+                if Some(position) == old_index {
+                    new_index = Some(queue.len());
+                }
+                queue.push(t);
+            }
+        }
+        let new_index = new_index.or_else(|| queue.iter().position(|&t| t == track));
+        if let Some(now) = self.now.as_mut() {
+            (now.track, now.index, now.queue) = (track, new_index, queue);
+        }
+        self.queue_next();
     }
 
     // Le tiroir suit la sélection, sauf pendant une édition.
@@ -2433,18 +2464,28 @@ impl App {
     // Vue « Up Next » : le morceau en cours puis la suite de la file, si elle est affichée.
     fn refresh_queue(&self, ui: &AppWindow) {
         if !ui.get_tags_open() || ui.get_drawer_tab() != 1 {
+            // Masquée : la prochaine ouverture reconstruit la liste.
+            self.queue_shown.replace(None);
             return;
         }
         ui.set_queue_random(self.random);
         let Some((now, lib)) = self.now.as_ref().and_then(|now| Some((now, self.library_at(now.library)?))) else {
+            self.queue_shown.replace(None);
             return ui.set_queue_items(model(Vec::new()));
         };
         let start = now.index.unwrap_or(0);
+        // Rien n'a changé depuis le dernier affichage : la liste (et son défilement) reste.
+        let shown = (now.library, now.index, now.queue[start.min(now.queue.len())..].to_vec());
+        if self.queue_shown.borrow().as_ref() == Some(&shown) {
+            return;
+        }
+        self.queue_shown.replace(Some(shown));
         let items: Vec<QueueItem> = now.queue[start.min(now.queue.len())..]
             .iter()
             .enumerate()
-            .map(|(offset, &t)| {
-                let track = &lib.tracks[t];
+            // `get` : une file pas encore recalée sur un catalogue rechargé ne fait pas paniquer.
+            .filter_map(|(offset, &t)| Some((offset, lib.tracks.get(t)?)))
+            .map(|(offset, track)| {
                 let album = &lib.albums[track.album];
                 QueueItem {
                     position: (start + offset) as i32,
@@ -2459,13 +2500,15 @@ impl App {
     }
 
     // Le morceau en cours a toujours sa place dans la file (en tête si elle l'avait perdu).
-    fn queue_index(&mut self) -> Option<usize> {
+    // Renvoie sa place, et de combien les positions affichées par « Up Next » ont glissé.
+    fn queue_index(&mut self) -> Option<(usize, usize)> {
         let now = self.now.as_mut()?;
         if now.index.is_none() {
             now.queue.insert(0, now.track);
             now.index = Some(0);
+            return Some((0, 1));
         }
-        now.index
+        now.index.map(|index| (index, 0))
     }
 
     // Double-clic dans « Up Next » : la lecture saute à ce morceau.
@@ -2477,7 +2520,8 @@ impl App {
     }
 
     fn queue_remove(&mut self, ui: &AppWindow, position: usize) {
-        let Some(index) = self.queue_index() else { return };
+        let Some((index, shift)) = self.queue_index() else { return };
+        let position = position + shift;
         let Some(now) = self.now.as_mut().filter(|now| position > index && position < now.queue.len()) else { return };
         now.queue.remove(position);
         self.queue_next();
@@ -2486,7 +2530,7 @@ impl App {
 
     // « Clear » : plus rien après le morceau en cours.
     fn queue_clear(&mut self, ui: &AppWindow) {
-        let Some(index) = self.queue_index() else { return };
+        let Some((index, _)) = self.queue_index() else { return };
         if let Some(now) = self.now.as_mut() {
             now.queue.truncate(index + 1);
         }
@@ -2497,7 +2541,12 @@ impl App {
     // Une ligne de « Up Next » déplacée, ou des morceaux glissés depuis les listes, posés
     // avant la ligne `row` (`None` : en fin de file). Jamais avant le morceau en cours.
     fn queue_drop(&mut self, ui: &AppWindow, data: &DataTransfer, row: Option<usize>) {
-        let moved = data.plain_text().ok().and_then(|text| text.strip_prefix(QUEUE_PAYLOAD_PREFIX)?.parse::<usize>().ok());
+        // « audioplayer/queue:<position>:<morceau> » : le morceau permet de retrouver la ligne si
+        // la file a bougé pendant le glisser (enchaînement, tirage aléatoire).
+        let moved = data.plain_text().ok().and_then(|text| {
+            let (position, track) = text.strip_prefix(QUEUE_PAYLOAD_PREFIX)?.split_once(':')?;
+            Some((position.parse::<usize>().ok()?, track.parse::<usize>().ok()?))
+        });
         let dragged = dragged(data);
         if moved.is_none() && dragged.is_none() {
             return;
@@ -2507,25 +2556,45 @@ impl App {
         if let (Some(item), false) = (dragged, same_library && !self.stopped) {
             return self.enqueue(ui, item);
         }
-        let Some(index) = self.queue_index() else { return };
+        let Some((index, shift)) = self.queue_index() else { return };
         let tracks: Vec<usize> = match (moved, dragged) {
-            (Some(_), _) => Vec::new(),
             (None, Some(item)) => self.tracks_of(item),
-            (None, None) => return,
+            _ => Vec::new(),
         };
         let Some(now) = self.now.as_mut() else { return };
-        let mut at = row.unwrap_or(now.queue.len()).clamp(index + 1, now.queue.len());
+        let row = row.map(|r| r + shift);
         match moved {
-            Some(from) if from > index && from < now.queue.len() => {
+            Some((position, track)) => {
+                let position = position + shift;
+                let from = if now.queue.get(position) == Some(&track) && position > index {
+                    position
+                } else {
+                    match now.queue.iter().skip(index + 1).position(|&t| t == track) {
+                        Some(offset) => index + 1 + offset,
+                        None => return,
+                    }
+                };
+                let mut at = row.unwrap_or(now.queue.len()).clamp(index + 1, now.queue.len());
                 let track = now.queue.remove(from);
                 if from < at {
                     at -= 1;
                 }
                 now.queue.insert(at.max(index + 1), track);
             }
-            Some(_) => return,
             None => {
-                now.queue.splice(at..at, tracks);
+                // Un morceau n'est qu'une fois dans la suite (comme « Add to Queue ») ; le morceau
+                // en cours n'y est pas remis.
+                let added: std::collections::HashSet<usize> = tracks.iter().copied().collect();
+                let at = row.unwrap_or(now.queue.len()).clamp(index + 1, now.queue.len());
+                let before = now.queue[index + 1..at].iter().filter(|t| added.contains(t)).count();
+                let mut position = 0;
+                now.queue.retain(|t| {
+                    position += 1;
+                    position <= index + 1 || !added.contains(t)
+                });
+                let at = at - before;
+                let current = now.track;
+                now.queue.splice(at..at, tracks.into_iter().filter(|&t| t != current));
             }
         }
         self.queue_next();
@@ -2924,8 +2993,10 @@ fn launch(path: &Path) -> Result<(), Problem> {
     });
     let c = ctx.clone();
     ui.on_track_payload(move |id| {
-        let app = c.app.borrow();
-        let in_selection = from_ui_id(id).is_some_and(|t| app.selection.len() > 1 && app.selection.contains(&t));
+        // Évalué par Slint, parfois pendant une mise à jour : pas de deuxième emprunt qui panique.
+        let in_selection = c.app.try_borrow().is_ok_and(|app| {
+            from_ui_id(id).is_some_and(|t| app.selection.len() > 1 && app.selection.contains(&t))
+        });
         if in_selection { DataTransfer::from(SharedString::from(SELECTION_PAYLOAD)) } else { payload(TRACK_PAYLOAD_PREFIX, id) }
     });
     ui.on_artist_payload(|id| payload(ARTIST_PAYLOAD_PREFIX, id));
@@ -3000,7 +3071,14 @@ fn launch(path: &Path) -> Result<(), Problem> {
     ui.on_queue_clear(move || c.update(|app, ui| app.queue_clear(ui)));
     let c = ctx.clone();
     ui.on_queue_dropped(move |data, row| c.update(|app, ui| app.queue_drop(ui, &data, usize::try_from(row).ok())));
-    ui.on_queue_payload(|position| payload(QUEUE_PAYLOAD_PREFIX, position));
+    let c = ctx.clone();
+    ui.on_queue_payload(move |position| {
+        let track = c.app.try_borrow().ok().and_then(|app| {
+            let now = app.now.as_ref()?;
+            now.queue.get(usize::try_from(position).ok()?).copied()
+        });
+        DataTransfer::from(SharedString::from(format!("{QUEUE_PAYLOAD_PREFIX}{position}:{}", track.unwrap_or(usize::MAX))))
+    });
     ui.on_queue_accepts(|data| dragged(&data).is_some() || data.plain_text().is_ok_and(|t| t.starts_with(QUEUE_PAYLOAD_PREFIX)));
     let c = ctx.clone();
     ui.on_update_check(move || c.update(|app, ui| app.check_for_updates(ui, true)));
@@ -3165,6 +3243,12 @@ fn launch(path: &Path) -> Result<(), Problem> {
             // Lancé pendant l'appui, comme le demande macOS ; le système suit ensuite la souris.
             mini.window().with_winit_window(|window| {
                 let _ = window.drag_window();
+            });
+            // Le système garde le relâchement pour son déplacement : sans lui, la poignée
+            // garderait la souris et le clic suivant (lecture, pause…) lui reviendrait.
+            mini.window().dispatch_event(slint::platform::WindowEvent::PointerReleased {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+                button: slint::platform::PointerEventButton::Left,
             });
         }
     });

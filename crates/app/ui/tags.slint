@@ -533,10 +533,13 @@ export component TagsDrawer inherits Rectangle {
     }
 
     if root.genre-open: Rectangle {
+        // Pas assez de place sous le champ (près du bas du tiroir) : la liste s'ouvre au-dessus.
+        property <length> wanted: min(220px, genres.preferred-height + 8px);
+        property <bool> above: root.height - root.genre-y - 4px < min(self.wanted, 120px);
         x: root.genre-x;
-        y: root.genre-y;
+        y: self.above ? max(4px, root.genre-y - 32px - self.height) : root.genre-y;
         width: root.genre-width;
-        height: min(220px, genres.preferred-height + 8px, root.height - self.y - 4px);
+        height: self.above ? min(self.wanted, root.genre-y - 36px) : min(self.wanted, root.height - root.genre-y - 4px);
         background: Theme.popup-bg;
         border-radius: 4px;
         border-width: Theme.hairline;
@@ -588,7 +591,7 @@ export component TagsDrawer inherits Rectangle {
 
     // Champs visibles, cochés comme dans la v0.1 ; le menu reste ouvert pour en cocher plusieurs.
     fields-menu := PopupWindow {
-        x: root.width - self.width - 8px;
+        x: root.width - (self.width + 8px) / Theme.zoom;
         y: 34px;
         width: 210px;
         close-policy: close-on-click-outside;

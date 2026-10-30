@@ -21,6 +21,8 @@ branch=$(git branch --show-current)
 
 # La première ligne `version =` est celle de [workspace.package], partagée par tous les crates.
 perl -0pi -e 's/(\[workspace\.package\]\nversion = ")[^"]*"/${1}'"$version"'"/' Cargo.toml
+written=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+[ "$written" = "$version" ] || { echo "Cargo.toml n'a pas pu être mis à jour (version lue : $written)" >&2; exit 1; }
 cargo check --quiet -p audioplayer   # met Cargo.lock à jour
 git commit -qam "Release v$version"
 git tag -a "v$version" -m "AudioPlayer $version"

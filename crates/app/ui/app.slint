@@ -101,7 +101,7 @@ export component AppWindow inherits Window {
         : root.status.kind == StatusKind.scan-reading
         ? @tr("Scanning “{0}”: {1} / {2} files — {3}", root.status.track, root.status.count, root.status.total, root.status.playlist)
         : root.status.kind == StatusKind.scan-incomplete
-        ? @tr("Scan of “{0}” incomplete: {1} files or folders could not be read (disk disconnected?). Nothing was removed.", root.status.track, root.status.removed)
+        ? @tr("Scan of “{0}” incomplete: {1} files or folders could not be read (disk disconnected?). Nothing was removed from them.", root.status.track, root.status.removed)
         : root.status.kind == StatusKind.scan-finished
         ? @tr("Scan of “{0}” finished: {1} added, {2} updated, {3} removed", root.status.track, root.status.count, root.status.total, root.status.removed)
         : root.status.kind == StatusKind.scan-stopped
@@ -565,7 +565,9 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    if root.view != View.playlist: Rectangle {
+                    // Playlist et « Most Played » ne listent que des morceaux : pas d'artistes ni
+                    // d'albums (comme la v0.1).
+                    if root.view != View.playlist && root.view != View.most-played: Rectangle {
                         width: root.artists-width;
                         background: Theme.panel-bg;
 
@@ -595,11 +597,11 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    if root.view != View.playlist: Splitter {
+                    if root.view != View.playlist && root.view != View.most-played: Splitter {
                         target <=> root.artists-width;
                     }
 
-                    if root.view != View.playlist: Rectangle {
+                    if root.view != View.playlist && root.view != View.most-played: Rectangle {
                         width: root.albums-width;
                         background: Theme.panel-bg;
 
@@ -629,7 +631,7 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    if root.view != View.playlist: Splitter {
+                    if root.view != View.playlist && root.view != View.most-played: Splitter {
                         target <=> root.albums-width;
                     }
 

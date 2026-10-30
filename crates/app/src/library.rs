@@ -138,8 +138,8 @@ impl Library {
         cached: impl Fn(i64) -> bool,
     ) -> audioplayer_db::Result<(Self, Vec<(i64, Pixels)>)> {
         let library = Library::load(db, library_id)?;
-        let artworks = db.library_artworks(library_id, cover_size)?;
-        let encoded = artworks.into_iter().filter(|(album, _)| !cached(*album)).map(|(album, artwork)| (album, artwork.data)).collect();
+        let artworks = db.library_artworks(library_id, cover_size, cached)?;
+        let encoded = artworks.into_iter().map(|(album, artwork)| (album, artwork.data)).collect();
         Ok((library, covers::decode_all(encoded)))
     }
 

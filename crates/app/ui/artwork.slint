@@ -59,6 +59,10 @@ export component ArtworkDialog inherits Rectangle {
 
         keys := FocusScope {
             key-pressed(event) => {
+                // Dialogue modal : Tab ne sort pas vers le champ de recherche derrière lui.
+                if event.text == Key.Tab || event.text == Key.Backtab {
+                    return accept;
+                }
                 if event.text == Key.Escape {
                     root.cancelled();
                     return accept;
@@ -202,7 +206,7 @@ export component ArtworkDialog inherits Rectangle {
                         if root.unreadable: Text {
                             text: @tr("This file is not a readable JPG or PNG image.");
                             font-size: 12px;
-                            color: #f56c6c;
+                            color: Theme.danger;
                             wrap: word-wrap;
                         }
                         Text {

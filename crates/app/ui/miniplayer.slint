@@ -79,8 +79,8 @@ export component MiniPlayerWindow inherits Window {
                 width: 20px;
                 background: Theme.mini-handle-bg;
                 Rectangle {
-                    x: parent.width - Theme.hairline;
-                    width: Theme.hairline;
+                    x: parent.width - 1px / root.zoom;
+                    width: 1px / root.zoom;
                     background: Theme.mini-handle-border;
                 }
                 // Poignée « ⋮⋮ » : deux colonnes de trois points.
@@ -157,7 +157,7 @@ export component MiniPlayerWindow inherits Window {
                             Rectangle {
                                 height: 6px;
                                 border-radius: 3px;
-                                border-width: Theme.hairline;
+                                border-width: 1px / root.zoom;
                                 border-color: Theme.player-box-border;
                                 background: progress.has-hover ? Theme.progress-hover : Theme.progress-bg;
                             }

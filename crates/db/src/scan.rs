@@ -69,17 +69,53 @@ impl Database {
         Ok((inserted == 1).then(|| self.conn.last_insert_rowid()))
     }
 
-    /// Bibliothèque dont le dossier est `root`, le contient ou est contenu dans `root`.
+    /// Bibliothèque dont le dossier est `root`, le contient ou est contenu dans `root`. Sans
+    /// tenir compte des majuscules : APFS et exFAT ne les distinguent pas par défaut.
     pub fn overlapping_library(&self, root: &str) -> Result<Option<String>> {
         let inside = |outer: &str, inner: &str| {
-            let outer = outer.trim_end_matches(['/', '\\']);
-            inner == outer || inner.strip_prefix(outer).is_some_and(|rest| rest.starts_with(['/', '\\']))
+            let (outer, inner) = (outer.trim_end_matches(['/', '\\']).to_lowercase(), inner.to_lowercase());
+            inner == outer || inner.strip_prefix(&outer).is_some_and(|rest| rest.starts_with(['/', '\\']))
         };
         Ok(self
             .libraries()?
             .into_iter()
             .find(|l| inside(&l.root_path, root) || inside(root, &l.root_path))
             .map(|l| l.name))
+    }
+
+    /// Fichiers de tous les albums de ces morceaux : une relecture ciblée relit l'album
+    /// entier, dont l'année et le drapeau compilation viennent de l'ensemble de ses pistes.
+    pub fn album_mates(&self, track_ids: &[i64]) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT t.file_path FROM tracks t WHERE t.album_id = (SELECT album_id FROM tracks WHERE id = ?1)",
+        )?;
+        let mut paths = Vec::new();
+        let mut seen = HashSet::new();
+        for id in track_ids {
+            for path in stmt.query_map([id], |row| row.get::<_, String>(0))? {
+                let path = path?;
+                if seen.insert(path.clone()) {
+                    paths.push(path);
+                }
+            }
+        }
+        Ok(paths)
+    }
+
+    /// Parmi ces albums, ceux sans pochette, avec le chemin de l'une de leurs pistes.
+    pub fn albums_missing_artwork(&self, album_ids: &[i64]) -> Result<Vec<(i64, String)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT t.file_path FROM tracks t WHERE t.album_id = ?1
+               AND NOT EXISTS (SELECT 1 FROM artworks w WHERE w.album_id = ?1)
+             ORDER BY t.disc_number, t.track_number LIMIT 1",
+        )?;
+        let mut missing = Vec::new();
+        for &album in album_ids {
+            if let Some(path) = stmt.query_row([album], |row| row.get(0)).optional()? {
+                missing.push((album, path));
+            }
+        }
+        Ok(missing)
     }
 
     pub fn library_files(&self, library_id: i64) -> Result<HashMap<String, KnownFile>> {

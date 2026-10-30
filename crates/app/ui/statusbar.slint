@@ -89,12 +89,18 @@ component ZoomSlider inherits Rectangle {
 
     TouchArea {
         pointer-event(event) => {
+            if event.button != PointerEventButton.left && event.kind != PointerEventKind.cancel {
+                return;
+            }
             if event.kind == PointerEventKind.down {
                 root.dragging = true;
                 root.set-from(self.mouse-x);
-            } else if event.kind == PointerEventKind.up {
+            } else if event.kind == PointerEventKind.up && root.dragging {
                 root.dragging = false;
                 root.released(root.dragged);
+            } else if event.kind == PointerEventKind.cancel {
+                // Glisser interrompu (changement d'application, popup) : rien n'est appliqué.
+                root.dragging = false;
             }
         }
         moved => {

@@ -22,13 +22,21 @@ case "${1:-}" in
     *) echo "usage : $0 [--yes | --version X.Y.Z]" >&2; exit 2 ;;
 esac
 
-if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+# Chiffres seulement : macOS refuse « 1.2.3-beta » dans CFBundleVersion.
+if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "Version invalide : $version (attendu : 1.2.3)" >&2
     exit 1
 fi
 if [ "$version" != "$current" ]; then
     # La première ligne `version =` est celle de [workspace.package], partagée par tous les crates.
     perl -0pi -e 's/(\[workspace\.package\]\nversion = ")[^"]*"/${1}'"$version"'"/' Cargo.toml
+    # La réécriture ne doit pas avoir échoué en silence (Cargo.toml réorganisé) : le paquet
+    # porterait la nouvelle version et l'app l'ancienne.
+    written=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+    if [ "$written" != "$version" ]; then
+        echo "Cargo.toml n'a pas pu être mis à jour (version lue : $written)" >&2
+        exit 1
+    fi
     cargo check --quiet -p audioplayer   # met Cargo.lock à jour (les builds sont en --locked)
     echo "Cargo.toml : $current -> $version"
 fi
