@@ -7,15 +7,17 @@ pub mod equalizer;
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use rodio::{Decoder, DeviceSinkBuilder, Player};
+use rodio::{CpalError, CpalErrorKind, Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 
 /// Délai maximal entre deux mises à jour de la position et des fins de morceau.
 const POLL: Duration = Duration::from_millis(50);
+/// Sortie audio perdue ou absente : nouvel essai d'ouverture à cet intervalle.
+const REOPEN: Duration = Duration::from_secs(1);
 
 enum Command {
     Play { path: PathBuf, next: Option<PathBuf> },
@@ -29,13 +31,15 @@ enum Command {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    /// Un morceau commence : demandé par `play`, ou le suivant mis en file (enchaînement).
-    Started { path: PathBuf, duration: Option<Duration> },
+    /// Un morceau commence. `gapless` : c'est le morceau mis en file qui prend le relais
+    /// (enchaînement sans blanc) ; sinon il a été lancé par `play`.
+    Started { path: PathBuf, duration: Option<Duration>, gapless: bool },
     /// Plus rien à jouer.
     Ended,
-    /// Fichier illisible ou absent ; la lecture s'arrête.
+    /// Fichier illisible ou absent : celui demandé par `play`, ou le suivant mis en file
+    /// (signalé quand le morceau en cours se termine). La lecture s'arrête.
     Failed { path: PathBuf, message: String },
-    /// Pas de sortie audio : le moteur ne jouera rien.
+    /// Pas de sortie audio : rien ne joue jusqu'à ce qu'elle revienne (nouvel essai chaque seconde).
     NoOutput { message: String },
 }
 
@@ -56,9 +60,12 @@ impl Engine {
             events: event_tx,
             position_ms: position_ms.clone(),
             equalizer: equalizer.clone(),
+            lost: Arc::new(AtomicBool::new(false)),
             player: None,
             current: None,
+            offset: Duration::ZERO,
             queued: None,
+            unplayable: None,
             volume: 1.0,
             playing: false,
         };
@@ -119,46 +126,121 @@ impl Engine {
     }
 }
 
+type EqualizedFile = equalizer::EqualizedSource<Decoder<std::io::BufReader<File>>>;
+
 struct Worker {
     events: Sender<Event>,
     position_ms: Arc<AtomicU64>,
     equalizer: Arc<equalizer::Settings>,
+    // Levé par la sortie audio quand son périphérique disparaît (casque, DAC USB débranché).
+    lost: Arc<AtomicBool>,
     player: Option<Player>,
     current: Option<PathBuf>,
-    // Morceau déjà ajouté au lecteur, après `current`.
-    queued: Option<PathBuf>,
+    // Position où le morceau courant a été ouvert (déplacement) : le lecteur compte depuis là.
+    offset: Duration,
+    // Morceau déjà ajouté au lecteur, après `current`, avec sa durée.
+    queued: Option<(PathBuf, Option<Duration>)>,
+    // Suivant illisible : signalé quand le morceau en cours se termine.
+    unplayable: Option<(PathBuf, String)>,
     volume: f32,
     playing: bool,
 }
 
 impl Worker {
     fn run(mut self, commands: Receiver<Command>) {
-        let mut sink = match DeviceSinkBuilder::open_default_sink() {
-            Ok(sink) => sink,
-            Err(error) => {
-                let _ = self.events.send(Event::NoOutput { message: error.to_string() });
-                // Consommer les commandes jusqu'à la fermeture, sans rien jouer.
-                while commands.recv().is_ok() {}
-                return;
-            }
-        };
-        // Fermée volontairement avec le moteur (fin de l'app, changement de base) : pas de message.
-        sink.log_on_drop(false);
+        let mut sink = None;
+        let mut next_attempt = Instant::now();
+        let mut reported = false;
         loop {
+            // Sortie perdue : le morceau en cours reprendra à sa position sur la nouvelle.
+            if self.lost.swap(false, Ordering::Relaxed) && sink.is_some() {
+                sink = None;
+                next_attempt = Instant::now();
+            }
+            if sink.is_none() && Instant::now() >= next_attempt {
+                match self.open_sink() {
+                    Ok(opened) => {
+                        if self.current.is_some() {
+                            let next = self.next_path();
+                            self.restart(self.position(), next, &opened);
+                        }
+                        sink = Some(opened);
+                        reported = false;
+                    }
+                    Err(message) => {
+                        if !reported {
+                            self.emit(Event::NoOutput { message });
+                            reported = true;
+                        }
+                        next_attempt = Instant::now() + REOPEN;
+                    }
+                }
+            }
             match commands.recv_timeout(POLL) {
-                Ok(command) => self.handle(command, &sink),
+                Ok(command) => match &sink {
+                    Some(sink) => self.handle(command, sink),
+                    None => self.handle_without_output(command),
+                },
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
             }
-            self.update();
+            if sink.is_some() {
+                self.update();
+            }
         }
+    }
+
+    fn open_sink(&self) -> Result<MixerDeviceSink, String> {
+        let lost = self.lost.clone();
+        let opened = DeviceSinkBuilder::from_default_device()
+            .map(|builder| {
+                builder.with_error_callback(move |error: CpalError| {
+                    if matches!(error.kind(), CpalErrorKind::DeviceNotAvailable | CpalErrorKind::StreamInvalidated) {
+                        lost.store(true, Ordering::Relaxed);
+                    }
+                })
+            })
+            .and_then(|builder| builder.open_stream())
+            // Configuration par défaut refusée : rodio essaie les autres périphériques et réglages.
+            .or_else(|_| DeviceSinkBuilder::open_default_sink());
+        let mut sink = opened.map_err(|error| error.to_string())?;
+        // Fermée volontairement avec le moteur (fin de l'app, changement de base) : pas de message.
+        sink.log_on_drop(false);
+        Ok(sink)
     }
 
     fn emit(&self, event: Event) {
         let _ = self.events.send(event);
     }
 
-    fn handle(&mut self, command: Command, sink: &rodio::MixerDeviceSink) {
+    // Suivant voulu, même illisible : le remettre en file après un saut le signalera encore.
+    fn next_path(&self) -> Option<PathBuf> {
+        self.queued.as_ref().map(|(path, _)| path.clone()).or_else(|| self.unplayable.as_ref().map(|(path, _)| path.clone()))
+    }
+
+    fn position(&self) -> Duration {
+        Duration::from_millis(self.position_ms.load(Ordering::Relaxed))
+    }
+
+    // Sans sortie audio, seules les commandes qui changent l'état à reprendre comptent.
+    fn handle_without_output(&mut self, command: Command) {
+        match command {
+            Command::Play { path, next } => {
+                self.reset();
+                self.current = Some(path);
+                self.queued = next.map(|path| (path, None));
+                self.playing = true;
+            }
+            Command::SetNext(next) => self.queued = next.map(|path| (path, None)),
+            Command::Pause => self.playing = false,
+            Command::Resume => self.playing = self.current.is_some(),
+            Command::Stop => self.reset(),
+            Command::Seek(position) => self.position_ms.store(position.as_millis() as u64, Ordering::Relaxed),
+            Command::Volume(volume) => self.volume = volume,
+        }
+    }
+
+    fn handle(&mut self, command: Command, sink: &MixerDeviceSink) {
         match command {
             Command::Play { path, next } => {
                 self.reset();
@@ -166,24 +248,28 @@ impl Worker {
                 player.set_volume(self.volume);
                 match self.open(&path) {
                     Ok(source) => {
-                        let duration = rodio::Source::total_duration(&source);
+                        let duration = source.total_duration();
                         player.append(source);
                         self.player = Some(player);
                         self.current = Some(path.clone());
                         self.playing = true;
-                        self.emit(Event::Started { path, duration });
+                        self.emit(Event::Started { path, duration, gapless: false });
                         self.queue(next);
                     }
                     Err(message) => self.emit(Event::Failed { path, message }),
                 }
             }
             Command::SetNext(next) => {
-                if next != self.queued {
+                let queued = self.queued.as_ref().map(|(path, _)| path);
+                if next.as_ref() != queued || (next.is_none() && self.unplayable.is_some()) {
                     // Un morceau déjà en file ne se retire pas d'un `Player` rodio :
                     // on relance le morceau courant à sa position, suivi du nouveau.
                     if self.queued.is_some() {
-                        self.requeue(next, sink);
+                        // Position exacte du lecteur, pas celle notée au dernier passage (50 ms).
+                        let at = self.player.as_ref().map_or(self.position(), |p| self.offset + p.get_pos());
+                        self.restart(at, next, sink);
                     } else {
+                        self.unplayable = None;
                         self.queue(next);
                     }
                 }
@@ -201,11 +287,12 @@ impl Worker {
                 }
             }
             Command::Stop => self.reset(),
+            // Le fichier est rouvert à la position voulue plutôt que de demander le saut au
+            // fil de la sortie audio : rodio l'attendrait sans limite si la sortie a disparu.
             Command::Seek(position) => {
-                if let Some(player) = &self.player {
-                    if player.try_seek(position).is_ok() {
-                        self.position_ms.store(position.as_millis() as u64, Ordering::Relaxed);
-                    }
+                if self.current.is_some() {
+                    let next = self.next_path();
+                    self.restart(position, next, sink);
                 }
             }
             Command::Volume(volume) => {
@@ -217,39 +304,54 @@ impl Worker {
         }
     }
 
-    fn open(&self, path: &Path) -> Result<equalizer::EqualizedSource<Decoder<std::io::BufReader<File>>>, String> {
+    fn open(&self, path: &Path) -> Result<EqualizedFile, String> {
         let file = File::open(path).map_err(|e| e.to_string())?;
         let decoder = Decoder::try_from(file).map_err(|e| e.to_string())?;
         Ok(equalizer::EqualizedSource::new(decoder, self.equalizer.clone()))
     }
 
     fn queue(&mut self, next: Option<PathBuf>) {
+        self.queued = None;
+        self.unplayable = None;
         let (Some(player), Some(path)) = (&self.player, next) else { return };
-        // Fichier suivant illisible : rien en file ; l'erreur sortira quand on tentera de le jouer.
-        if let Ok(source) = self.open(&path) {
-            player.append(source);
-            self.queued = Some(path);
+        match self.open(&path) {
+            Ok(source) => {
+                let duration = source.total_duration();
+                player.append(source);
+                self.queued = Some((path, duration));
+            }
+            Err(message) => self.unplayable = Some((path, message)),
         }
     }
 
-    fn requeue(&mut self, next: Option<PathBuf>, sink: &rodio::MixerDeviceSink) {
+    // Rejoue le morceau courant à partir de `at` dans un lecteur neuf, `next` en file.
+    fn restart(&mut self, at: Duration, next: Option<PathBuf>, sink: &MixerDeviceSink) {
         let Some(current) = self.current.clone() else { return };
-        let position = Duration::from_millis(self.position_ms.load(Ordering::Relaxed));
         let playing = self.playing;
-        self.reset();
+        if let Some(player) = self.player.take() {
+            player.stop();
+        }
+        self.queued = None;
         let player = Player::connect_new(sink.mixer());
         player.set_volume(self.volume);
         if !playing {
             player.pause();
         }
-        if let Ok(source) = self.open(&current) {
-            player.append(source);
-            let _ = player.try_seek(position);
-            self.player = Some(player);
-            self.current = Some(current);
-            self.playing = playing;
-            self.position_ms.store(position.as_millis() as u64, Ordering::Relaxed);
-            self.queue(next);
+        match self.open(&current) {
+            Ok(mut source) => {
+                // Saut refusé (format sans index) : le morceau reprend au début.
+                let at = if source.try_seek(at).is_ok() { at } else { Duration::ZERO };
+                player.append(source);
+                self.player = Some(player);
+                self.offset = at;
+                self.playing = playing;
+                self.position_ms.store(at.as_millis() as u64, Ordering::Relaxed);
+                self.queue(next);
+            }
+            Err(message) => {
+                self.reset();
+                self.emit(Event::Failed { path: current, message });
+            }
         }
     }
 
@@ -259,6 +361,8 @@ impl Worker {
         }
         self.current = None;
         self.queued = None;
+        self.unplayable = None;
+        self.offset = Duration::ZERO;
         self.playing = false;
         self.position_ms.store(0, Ordering::Relaxed);
     }
@@ -267,18 +371,23 @@ impl Worker {
         let Some(player) = &self.player else { return };
         // Le morceau en file a pris le relais : il devient le morceau courant.
         if self.queued.is_some() && player.len() <= 1 && !player.empty() {
-            let path = self.queued.take().unwrap();
+            let (path, duration) = self.queued.take().unwrap();
             self.current = Some(path.clone());
+            self.offset = Duration::ZERO;
             self.position_ms.store(player.get_pos().as_millis() as u64, Ordering::Relaxed);
-            let duration = None;
-            self.emit(Event::Started { path, duration });
+            self.emit(Event::Started { path, duration, gapless: true });
             return;
         }
         if player.empty() {
+            let unplayable = self.unplayable.take();
             self.reset();
-            self.emit(Event::Ended);
+            self.emit(match unplayable {
+                Some((path, message)) => Event::Failed { path, message },
+                None => Event::Ended,
+            });
             return;
         }
-        self.position_ms.store(player.get_pos().as_millis() as u64, Ordering::Relaxed);
+        let position = self.offset + player.get_pos();
+        self.position_ms.store(position.as_millis() as u64, Ordering::Relaxed);
     }
 }

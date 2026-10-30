@@ -135,7 +135,9 @@ impl<S: Source> EqualizedSource<S> {
         let rate_hz = rate.get() as f64;
         self.filters = if enabled {
             (0..FREQUENCIES.len())
-                .filter(|&band| gains[band] != 0.0)
+                // Une bande au-delà de ce que le fichier peut reproduire (près de la moitié de sa
+                // fréquence d'échantillonnage) rendrait le filtre instable.
+                .filter(|&band| gains[band] != 0.0 && FREQUENCIES[band] < rate_hz * 0.45)
                 .map(|band| Biquad::for_band(rate_hz, band, gains[band] as f64))
                 .collect()
         } else {
@@ -173,9 +175,20 @@ impl<S: Source> Iterator for EqualizedSource<S> {
             value = filter.process(value, state);
         }
         self.channel = (self.channel + 1) % self.channels.get() as usize;
-        // Les gains positifs peuvent dépasser la pleine échelle : on écrête plutôt que de saturer.
-        Some(value.clamp(-1.0, 1.0) as Sample)
+        Some(soft_clip(value) as Sample)
     }
+}
+
+// Les gains positifs peuvent dépasser la pleine échelle : au-delà de 0,8 le signal est
+// arrondi en douceur vers 1 au lieu d'être coupé net (distorsion dure). En dessous, intact.
+fn soft_clip(value: f64) -> f64 {
+    const KNEE: f64 = 0.8;
+    let magnitude = value.abs();
+    if magnitude <= KNEE {
+        return value;
+    }
+    let curved = KNEE + (1.0 - KNEE) * ((magnitude - KNEE) / (1.0 - KNEE)).tanh();
+    curved.copysign(value)
 }
 
 impl<S: Source> Source for EqualizedSource<S> {
@@ -247,6 +260,24 @@ mod tests {
             // Loin de la bande (60 Hz) : presque rien.
             assert!(run(&settings, 60.0, rate).abs() < 0.5);
         }
+    }
+
+    #[test]
+    fn soft_clip_keeps_quiet_samples_and_bounds_loud_ones() {
+        assert_eq!(soft_clip(0.5), 0.5);
+        assert_eq!(soft_clip(-0.8), -0.8);
+        assert!(soft_clip(1.5) < 1.0 && soft_clip(1.5) > 0.95);
+        assert!(soft_clip(-3.0) > -1.0);
+        assert!(soft_clip(0.9) > 0.85 && soft_clip(0.9) < 0.9);
+    }
+
+    // Bande 6 kHz sur un fichier à 11 025 Hz : ignorée plutôt qu'instable.
+    #[test]
+    fn bands_above_the_file_range_are_skipped() {
+        let settings = Arc::new(Settings::default());
+        settings.set(true, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 12.0]);
+        let gain = run(&settings, 1000.0, 11_025);
+        assert!(gain.is_finite() && gain.abs() < 0.5, "{gain}");
     }
 
     #[test]

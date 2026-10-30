@@ -619,6 +619,7 @@ impl App {
         // Le morceau n'est surligné que dans sa propre bibliothèque.
         let here = self.now.as_ref().filter(|now| Some(now.library) == self.selected_library).map(|now| now.track);
         ui.set_playing_track(to_ui_id(here));
+        ui.set_has_track(now.is_some());
         ui.set_playing(self.is_playing);
         // « Titre - Album », comme le bandeau du lecteur de la v0.1.
         ui.set_now_title(
@@ -773,6 +774,8 @@ impl App {
 
     // Joue `now.track` depuis le début et met le suivant en file.
     fn start(&mut self, ui: &AppWindow) {
+        // Un autre morceau lancé pendant une écriture de tags : rien à reprendre ensuite.
+        self.tag_resume = None;
         let next = self.pick_next();
         let Some(now) = self.now.as_mut() else { return };
         now.next = next;
@@ -816,27 +819,46 @@ impl App {
     }
 
     // « rand » : un morceau au hasard de la bibliothèque ; « loop » : la file reboucle.
+    // En aléatoire, la file garde l'historique des morceaux tirés (pour « précédent ») et
+    // les morceaux ajoutés par « Add to Queue », joués avant le prochain tirage.
     fn pick_next(&mut self) -> Option<usize> {
         let now = self.now.as_ref()?;
+        let after = now.index.and_then(|i| now.queue.get(i + 1)).copied();
         if self.random {
             let (library, track) = (now.library, now.track);
-            return self.random_track(library, track);
+            return after.or_else(|| self.random_track(library, track));
         }
-        let index = now.index?;
-        match now.queue.get(index + 1) {
-            Some(&next) => Some(next),
-            None if self.repeat => now.queue.first().copied(),
+        match after {
+            Some(next) => Some(next),
+            None if self.repeat && now.index.is_some() => now.queue.first().copied(),
             None => None,
         }
     }
 
+    // `track` devient le morceau courant, juste après celui-ci dans la file (ou au début
+    // de la file quand « loop » reboucle) ; un tirage aléatoire y est inséré.
+    fn move_to(&mut self, track: usize) {
+        let (random, repeat) = (self.random, self.repeat);
+        let Some(now) = self.now.as_mut() else { return };
+        let i = now.index.map_or(0, |i| i + 1).min(now.queue.len());
+        let index = if now.queue.get(i) == Some(&track) {
+            i
+        } else if !random && repeat && now.queue.first() == Some(&track) {
+            0
+        } else {
+            now.queue.insert(i, track);
+            i
+        };
+        now.track = track;
+        now.index = Some(index);
+        now.next = None;
+    }
+
     // Le moteur est passé au morceau mis en file.
     fn advance(&mut self, ui: &AppWindow) {
-        let Some(now) = self.now.as_mut() else { return };
-        let Some(next) = now.next.take() else { return };
-        now.track = next;
-        now.index = now.queue.iter().position(|&t| t == next);
-        let library = now.library;
+        let Some(next) = self.now.as_ref().and_then(|now| now.next) else { return };
+        self.move_to(next);
+        let Some(library) = self.now.as_ref().map(|now| now.library) else { return };
         self.position = 0;
         self.failures = 0;
         self.record_play(ui, library, next);
@@ -1049,21 +1071,29 @@ impl App {
             }
             return;
         };
-        let (library, track, index, len) = (now.library, now.track, now.index, now.queue.len());
-        let target = if self.random {
-            self.random_track(library, track).map(|t| (t, None))
-        } else {
-            index.and_then(|i| {
-                let wrapped = (i as isize + delta).rem_euclid(len as isize) as usize;
-                let inside = i.checked_add_signed(delta).filter(|&j| j < len);
-                inside.or((self.repeat).then_some(wrapped))
-            })
-            .map(|j| (self.now.as_ref().unwrap().queue[j], Some(j)))
-        };
-        if let Some((track, index)) = target {
+        let (index, len) = (now.index, now.queue.len());
+        // Aléatoire : « précédent » remonte l'historique ; « suivant » prend la file, puis tire.
+        if self.random {
+            if delta < 0 {
+                if let Some(i) = index.filter(|&i| i > 0) {
+                    let now = self.now.as_mut().unwrap();
+                    (now.track, now.index) = (now.queue[i - 1], Some(i - 1));
+                    self.start(ui);
+                }
+            } else if let Some(track) = self.pick_next() {
+                self.move_to(track);
+                self.start(ui);
+            }
+            return;
+        }
+        let target = index.and_then(|i| {
+            let wrapped = (i as isize + delta).rem_euclid(len as isize) as usize;
+            let inside = i.checked_add_signed(delta).filter(|&j| j < len);
+            inside.or((self.repeat).then_some(wrapped))
+        });
+        if let Some(j) = target {
             let now = self.now.as_mut().unwrap();
-            now.track = track;
-            now.index = index;
+            (now.track, now.index) = (now.queue[j], Some(j));
             self.start(ui);
         }
     }
@@ -1117,8 +1147,19 @@ impl App {
                     self.now = Some(NowPlaying { library: library.unwrap(), track, queue: vec![track], index: Some(0), next: None });
                     self.start(ui);
                 }
-            } else if self.now.is_some() && !self.stopped {
-                self.queue_next();
+            } else {
+                // « rand » coupé : la suite reprend la liste affichée, si le morceau y est.
+                let visible = (!random).then(|| self.visible.clone());
+                if let (Some(now), Some(visible)) = (self.now.as_mut(), visible) {
+                    if Some(now.library) == self.selected_library {
+                        if let Some(index) = visible.iter().position(|&t| t == now.track) {
+                            (now.queue, now.index) = (visible, Some(index));
+                        }
+                    }
+                }
+                if self.now.is_some() && !self.stopped {
+                    self.queue_next();
+                }
             }
         }
     }
@@ -1190,17 +1231,9 @@ impl App {
         self.sync_controls(ui);
         for event in self.engine.events() {
             match event {
-                Event::Started { path, .. } => {
-                    let queued = self.now.as_ref().and_then(|now| {
-                        let next = now.next?;
-                        Some(self.library_at(now.library)?.tracks[next].path == path.to_string_lossy())
-                    });
-                    if queued == Some(true) {
-                        self.advance(ui);
-                    } else {
-                        self.failures = 0;
-                    }
-                }
+                // Seul un enchaînement fait avancer la file : un lancement direct l'a déjà placée.
+                Event::Started { gapless: true, .. } => self.advance(ui),
+                Event::Started { .. } => self.failures = 0,
                 Event::Ended => {
                     self.is_playing = false;
                     self.stopped = true;
@@ -1208,6 +1241,15 @@ impl App {
                     self.refresh_player(ui);
                 }
                 Event::Failed { path, message } => {
+                    // Le suivant mis en file était illisible : la file avance jusqu'à lui, et la
+                    // suite repart du morceau d'après.
+                    let queued_failed = self.now.as_ref().and_then(|now| {
+                        let next = now.next?;
+                        (self.library_at(now.library)?.tracks[next].path == path.to_string_lossy()).then_some(next)
+                    });
+                    if let Some(next) = queued_failed {
+                        self.move_to(next);
+                    }
                     let title = self.now_track().map(|(_, t)| t.title.clone()).unwrap_or_else(|| path.display().to_string());
                     self.show_status(ui, Status { kind: StatusKind::PlaybackFailed, track: title.into(), playlist: message.into(), ..Default::default() });
                     self.failures += 1;
@@ -1215,13 +1257,12 @@ impl App {
                     self.stopped = true;
                     if self.failures < MAX_FAILURES {
                         self.step(ui, 1);
-                    } else {
-                        self.refresh_player(ui);
                     }
+                    // Rien après (fin de file) ou trop d'échecs d'affilée : l'affichage s'arrête aussi.
+                    self.refresh_player(ui);
                 }
                 Event::NoOutput { message } => {
                     self.show_status(ui, Status { kind: StatusKind::NoOutput, playlist: message.into(), ..Default::default() });
-                    self.is_playing = false;
                 }
             }
         }
@@ -1369,18 +1410,22 @@ impl App {
             return self.play_items(ui, item);
         }
         let now = self.now.as_mut().unwrap();
-        // Un morceau n'est qu'une fois dans la file (le morceau en cours reste à sa place).
-        let current = now.track;
-        now.queue.retain(|t| *t == current || !tracks.contains(t));
-        let index = match now.queue.iter().position(|&t| t == current) {
+        // Un morceau n'est qu'une fois dans la suite de la file (ce qui est déjà joué reste).
+        let added: std::collections::HashSet<usize> = tracks.iter().copied().collect();
+        let index = match now.index {
             Some(index) => index,
             None => {
-                now.queue.insert(0, current);
+                now.queue.insert(0, now.track);
                 0
             }
         };
+        let mut position = 0;
+        now.queue.retain(|t| {
+            position += 1;
+            position <= index + 1 || !added.contains(t)
+        });
         now.index = Some(index);
-        now.queue.extend(tracks);
+        now.queue.extend(tracks.iter().copied().filter(|&t| t != now.track));
         self.queue_next();
         let kind = if matches!(item, Dragged::Selection) { StatusKind::SelectionEnqueued } else { StatusKind::Enqueued };
         let count = self.tracks_of(item).len() as i32;
@@ -2460,7 +2505,7 @@ fn sync_mini(ui: &AppWindow, mini: &MiniPlayerWindow) {
     mini_theme.set_dark(theme.get_dark());
     mini_theme.set_accent(theme.get_accent());
     mini.set_track_title(ui.get_now_title());
-    mini.set_has_track(ui.get_playing_track() != -1);
+    mini.set_has_track(ui.get_has_track());
     mini.set_playing(ui.get_playing());
     mini.set_position(ui.get_position());
     mini.set_duration(ui.get_duration());

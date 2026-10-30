@@ -76,6 +76,8 @@ export component AppWindow inherits Window {
     in property <int> tracks-duration;
 
     in property <int> playing-track: -1;
+    // Un morceau est chargé, quelle que soit la bibliothèque affichée.
+    in property <bool> has-track;
     in property <bool> playing;
     in property <string> now-title;
     in property <string> now-artist;
@@ -463,7 +465,7 @@ export component AppWindow inherits Window {
                     title: root.now-title;
                     artwork: root.now-artwork;
                     has-artwork: root.now-has-artwork;
-                    has-track: root.playing-track != -1;
+                    has-track: root.has-track;
                     playing: root.playing;
                     position: root.position;
                     duration: root.duration;
