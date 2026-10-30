@@ -51,11 +51,11 @@ export component ArtworkDialog inherits Rectangle {
         width: 560px;
         height: layout.preferred-height;
         border-radius: 6px;
-        background: Theme.footer-bg;
+        background: Theme.popup-bg;
         border-width: Theme.hairline;
-        border-color: Theme.border-base;
+        border-color: Theme.popup-border;
         drop-shadow-blur: 16px;
-        drop-shadow-color: #00000080;
+        drop-shadow-color: Theme.popup-shadow;
 
         keys := FocusScope {
             key-pressed(event) => {

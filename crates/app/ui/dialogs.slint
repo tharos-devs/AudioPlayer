@@ -1,6 +1,6 @@
-import { LineEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ThemedButton } from "widgets.slint";
+import { TagField } from "tags.slint";
 
 export enum NameDialogKind { new-playlist, rename-playlist, rename-library, new-library }
 
@@ -16,8 +16,7 @@ export component NameDialog inherits Rectangle {
     background: #00000080;
 
     public function focus-input() {
-        input.focus();
-        input.select-all();
+        input.focus-input();
     }
 
     // Absorbe les clics hors de la boîte.
@@ -27,11 +26,11 @@ export component NameDialog inherits Rectangle {
         width: 360px;
         height: layout.preferred-height;
         border-radius: 6px;
-        background: Theme.footer-bg;
+        background: Theme.popup-bg;
         border-width: Theme.hairline;
-        border-color: Theme.border-base;
+        border-color: Theme.popup-border;
         drop-shadow-blur: 16px;
-        drop-shadow-color: #00000080;
+        drop-shadow-color: Theme.popup-shadow;
 
         keys := FocusScope {
             key-pressed(event) => {
@@ -54,11 +53,17 @@ export component NameDialog inherits Rectangle {
                     font-weight: 600;
                     color: Theme.text-primary;
                 }
-                input := LineEdit {
+                // Champ aux couleurs du thème (le LineEdit standard suit l'accent bleu du système).
+                input := TagField {
+                    height: 30px;
+                    font-size: 13px;
                     text <=> root.text;
-                    placeholder-text: @tr("Name");
-                    accepted(value) => {
-                        root.accepted(value);
+                    placeholder: @tr("Name");
+                    accepted => {
+                        root.accepted(root.text);
+                    }
+                    cancelled => {
+                        root.cancelled();
                     }
                 }
                 if root.taken: Text {
@@ -111,11 +116,11 @@ export component ConfirmDialog inherits Rectangle {
         width: 380px;
         height: layout.preferred-height;
         border-radius: 6px;
-        background: Theme.footer-bg;
+        background: Theme.popup-bg;
         border-width: Theme.hairline;
-        border-color: Theme.border-base;
+        border-color: Theme.popup-border;
         drop-shadow-blur: 16px;
-        drop-shadow-color: #00000080;
+        drop-shadow-color: Theme.popup-shadow;
 
         keys := FocusScope {
             key-pressed(event) => {

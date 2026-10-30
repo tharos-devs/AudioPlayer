@@ -107,6 +107,12 @@ export global Theme {
     out property <color> search-text: dark ? #e5eaf3 : #606266;
     out property <color> search-placeholder: dark ? #a3a6ad : #a8abb2;
 
+    // Menus, popups et dialogues : une surface plus claire que l'app en thème sombre (blanche
+    // en clair), bordée et ombrée, pour se détacher de ce qu'elle recouvre.
+    out property <color> popup-bg: dark ? #303030 : #ffffff;
+    out property <color> popup-border: dark ? #555555 : #d4d7de;
+    out property <color> popup-shadow: dark ? #000000b3 : #00000040;
+
     // Mini-lecteur (--mini-*)
     out property <color> mini-bg: dark ? #1d1d1d : #f8f9fa;
     out property <color> mini-handle-bg: dark ? #494949 : #555555;

@@ -68,9 +68,15 @@ export component TagField inherits Rectangle {
     in-out property <string> text;
     in property <string> placeholder;
     out property <bool> focused: input.has-focus;
+    in property <length> font-size: 12px;
     callback edited(string);
     callback accepted();
     callback cancelled();
+    // Focus avec le texte sélectionné, prêt à être remplacé.
+    public function focus-input() {
+        input.focus();
+        input.select-all();
+    }
     height: 26px;
     border-radius: 3px;
     border-width: Theme.hairline;
@@ -81,18 +87,18 @@ export component TagField inherits Rectangle {
         padding-left: 7px;
         padding-right: 7px;
         Rectangle {
-            if root.text == "" && !input.has-focus: Text {
+            if root.text == "": Text {
                 x: 0;
                 height: 100%;
                 text: root.placeholder;
-                font-size: 12px;
+                font-size: root.font-size;
                 font-italic: true;
                 color: Theme.text-disabled;
                 vertical-alignment: center;
             }
             input := TextInput {
                 text <=> root.text;
-                font-size: 12px;
+                font-size: root.font-size;
                 color: Theme.text-primary;
                 vertical-alignment: center;
                 single-line: true;
@@ -531,13 +537,13 @@ export component TagsDrawer inherits Rectangle {
         y: root.genre-y;
         width: root.genre-width;
         height: min(220px, genres.preferred-height + 8px, root.height - self.y - 4px);
-        background: Theme.footer-bg;
+        background: Theme.popup-bg;
         border-radius: 4px;
         border-width: Theme.hairline;
-        border-color: Theme.border-base;
+        border-color: Theme.popup-border;
         drop-shadow-blur: 16px;
         drop-shadow-offset-y: 4px;
-        drop-shadow-color: #00000080;
+        drop-shadow-color: Theme.popup-shadow;
         clip: true;
         // Les clics dans la liste ne traversent pas vers les champs dessous.
         TouchArea { }
@@ -587,12 +593,12 @@ export component TagsDrawer inherits Rectangle {
         width: 210px;
         close-policy: close-on-click-outside;
         Rectangle {
-            background: Theme.footer-bg;
+            background: Theme.popup-bg;
             border-radius: 4px;
             border-width: Theme.hairline;
-            border-color: Theme.border-base;
-            drop-shadow-blur: 10px;
-            drop-shadow-color: #00000066;
+            border-color: Theme.popup-border;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: Theme.popup-shadow;
             VerticalLayout {
                 padding-top: 5px;
                 padding-bottom: 5px;

@@ -179,12 +179,12 @@ export component Equalizer inherits Rectangle {
                     y: parent.height + 2px * Theme.zoom;
                     width: parent.width;
                     Rectangle {
-                        background: Theme.eq-bg;
+                        background: Theme.popup-bg;
                         border-radius: 4px;
                         border-width: Theme.hairline;
-                        border-color: Theme.eq-dropdown-border;
-                        drop-shadow-blur: 8px;
-                        drop-shadow-color: #0000004d;
+                        border-color: Theme.popup-border;
+                        drop-shadow-blur: 16px;
+                        drop-shadow-color: Theme.popup-shadow;
                         VerticalLayout {
                             padding-top: 4px;
                             padding-bottom: 4px;

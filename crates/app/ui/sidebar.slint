@@ -1,7 +1,8 @@
-import { ScrollView, SpinBox, ComboBox } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ListItem, ThemedButton, MenuEntry } from "widgets.slint";
 import { Equalizer } from "equalizer.slint";
+import { TagField } from "tags.slint";
 
 // Ce que montrent les panneaux Artistes / Albums / Morceaux.
 export enum View { library, recent, most-played, favorite-artists, favorite-albums, favorite-tracks, playlist }
@@ -39,12 +40,12 @@ component DropdownMenu inherits PopupWindow {
     width: 172px;
 
     Rectangle {
-        background: Theme.footer-bg;
+        background: Theme.popup-bg;
         border-radius: 4px;
         border-width: Theme.hairline;
-        border-color: Theme.border-base;
-        drop-shadow-blur: 8px;
-        drop-shadow-color: #0000004d;
+        border-color: Theme.popup-border;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: Theme.popup-shadow;
 
         VerticalLayout {
             padding-top: 6px;
@@ -132,22 +133,32 @@ component RecentPopup inherits PopupWindow {
     in property <int> amount;
     in property <string> unit;
     callback apply(int, string);
-    property <[string]> units: ["days", "weeks", "months", "years"];
-    width: 280px;
+    // Nombre saisi borné à 1–99 (une saisie illisible garde la valeur actuelle).
+    function apply-choice() {
+        let typed = round(root.amount-text.to-float());
+        root.apply(typed >= 1 ? min(typed, 99) : root.amount, root.chosen);
+        root.close();
+    }
+    // Choix en cours, repris des réglages à chaque ouverture (le contenu d'un PopupWindow est
+    // recréé quand il s'affiche).
+    property <string> amount-text: root.amount;
+    property <string> chosen: root.unit;
+    width: 300px;
     close-policy: close-on-click-outside;
 
     Rectangle {
-        background: Theme.footer-bg;
+        background: Theme.popup-bg;
         border-radius: 6px;
         border-width: Theme.hairline;
-        border-color: Theme.border-base;
-        drop-shadow-blur: 8px;
-        drop-shadow-color: #0000004d;
+        border-color: Theme.popup-border;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: Theme.popup-shadow;
 
         VerticalLayout {
             padding: 12px;
             spacing: 10px;
             HorizontalLayout {
+                alignment: start;
                 spacing: 6px;
                 Text {
                     text: @tr("Last");
@@ -155,17 +166,42 @@ component RecentPopup inherits PopupWindow {
                     color: Theme.text-primary;
                     vertical-alignment: center;
                 }
-                amount-box := SpinBox {
-                    width: 80px;
-                    minimum: 1;
-                    maximum: 99;
-                    value: root.amount;
+                // Champs aux couleurs du thème (SpinBox et ComboBox suivent l'accent du système).
+                TagField {
+                    width: 44px;
+                    text <=> root.amount-text;
+                    accepted => {
+                        root.apply-choice();
+                    }
+                    cancelled => {
+                        root.close();
+                    }
                 }
-                unit-box := ComboBox {
+            }
+            HorizontalLayout {
+                spacing: 4px;
+                for unit in [
+                    { id: "days", label: @tr("days") },
+                    { id: "weeks", label: @tr("weeks") },
+                    { id: "months", label: @tr("months") },
+                    { id: "years", label: @tr("years") },
+                ]: Rectangle {
                     horizontal-stretch: 1;
-                    min-width: 110px;
-                    model: [@tr("days"), @tr("weeks"), @tr("months"), @tr("years")];
-                    current-index: root.unit == "days" ? 0 : root.unit == "months" ? 2 : root.unit == "years" ? 3 : 1;
+                    height: 24px;
+                    border-radius: 3px;
+                    border-width: Theme.hairline;
+                    border-color: root.chosen == unit.id || option.has-hover ? Theme.accent : Theme.border-base;
+                    background: root.chosen == unit.id ? Theme.tint-strong : option.has-hover ? Theme.hover-tint : Theme.bg-primary;
+                    Text {
+                        text: unit.label;
+                        font-size: 11px;
+                        color: root.chosen == unit.id ? Theme.accent : Theme.text-primary;
+                    }
+                    option := TouchArea {
+                        clicked => {
+                            root.chosen = unit.id;
+                        }
+                    }
                 }
             }
             HorizontalLayout {
@@ -181,8 +217,7 @@ component RecentPopup inherits PopupWindow {
                     text: @tr("Apply");
                     primary: true;
                     clicked => {
-                        root.apply(amount-box.value, root.units[unit-box.current-index]);
-                        root.close();
+                        root.apply-choice();
                     }
                 }
             }
