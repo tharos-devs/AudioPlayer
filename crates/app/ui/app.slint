@@ -167,9 +167,8 @@ export component AppWindow inherits Window {
     in property <bool> tags-editing;
     in property <bool> tags-saving;
     callback tags-toggled();
-    // Onglet du tiroir de droite : 0 = infos du morceau, 1 = « Up Next ».
+    // Vue du tiroir de droite (boutons de la barre d'état) : 0 = infos du morceau, 1 = « Up Next ».
     in-out property <int> drawer-tab;
-    callback drawer-tab-changed();
     in property <[QueueItem]> queue-items;
     in property <bool> queue-random;
     callback queue-play(int);
@@ -713,40 +712,6 @@ export component AppWindow inherits Window {
 
                     if root.tags-open: VerticalLayout {
                         width: root.tags-width;
-                        // Onglets : infos et tags du morceau, ou file de lecture.
-                        Rectangle {
-                            height: 30px;
-                            background: Theme.panel-bg;
-                            HorizontalLayout {
-                                padding-left: 8px;
-                                spacing: 4px;
-                                for tab[index] in [@tr("Track Info"), @tr("Up Next")]: Rectangle {
-                                    width: label.preferred-width + 20px;
-                                    label := Text {
-                                        text: tab;
-                                        font-size: 11px;
-                                        font-weight: 600;
-                                        color: root.drawer-tab == index ? Theme.accent : tab-touch.has-hover ? Theme.text-primary : Theme.text-tertiary;
-                                    }
-                                    Rectangle {
-                                        y: parent.height - 2px;
-                                        height: 2px;
-                                        background: root.drawer-tab == index ? Theme.accent : transparent;
-                                    }
-                                    tab-touch := TouchArea {
-                                        clicked => {
-                                            root.drawer-tab = index;
-                                            root.drawer-tab-changed();
-                                        }
-                                    }
-                                }
-                            }
-                            Rectangle {
-                                y: parent.height - Theme.hairline;
-                                height: Theme.hairline;
-                                background: Theme.border-base;
-                            }
-                        }
                         if root.drawer-tab == 0: TagsDrawer {
                             vertical-stretch: 1;
                             rows: root.tag-rows;
@@ -815,6 +780,7 @@ export component AppWindow inherits Window {
                     version: root.version;
                     show-equalizer <=> root.show-equalizer;
                     show-tags <=> root.tags-open;
+                    drawer-tab <=> root.drawer-tab;
                     tags-toggled => {
                         root.tags-toggled();
                     }

@@ -119,6 +119,8 @@ export component StatusBar inherits Rectangle {
     property <float> zoom-max: Theme.zoom-max;
     in-out property <bool> show-equalizer;
     in-out property <bool> show-tags;
+    // Vue du tiroir de droite : 0 = infos et tags du morceau, 1 = « Up Next ».
+    in-out property <int> drawer-tab;
     callback tags-toggled();
     callback mini-player();
     callback zoom-edited(float);
@@ -321,14 +323,30 @@ export component StatusBar inherits Rectangle {
                         }
                     }
                 }
+                // « Up Next » et infos du morceau partagent le tiroir de droite : chaque bouton
+                // affiche sa vue, un second clic le referme.
+                VerticalLayout {
+                    alignment: center;
+                    SquareButton {
+                        icon: @image-url("icons/queue.svg");
+                        label: @tr("Up Next");
+                        active: root.show-tags && root.drawer-tab == 1;
+                        clicked => {
+                            root.show-tags = !(root.show-tags && root.drawer-tab == 1);
+                            root.drawer-tab = 1;
+                            root.tags-toggled();
+                        }
+                    }
+                }
                 VerticalLayout {
                     alignment: center;
                     SquareButton {
                         glyph: "i";
                         label: @tr("Track Info");
-                        active: root.show-tags;
+                        active: root.show-tags && root.drawer-tab == 0;
                         clicked => {
-                            root.show-tags = !root.show-tags;
+                            root.show-tags = !(root.show-tags && root.drawer-tab == 0);
+                            root.drawer-tab = 0;
                             root.tags-toggled();
                         }
                     }

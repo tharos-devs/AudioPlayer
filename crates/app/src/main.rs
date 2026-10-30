@@ -1606,6 +1606,8 @@ impl App {
                 if self.scan.is_none() {
                     let ids = self.tracks_of(item).into_iter().map(|t| self.library.tracks[t].id).collect();
                     ui.set_tags_open(true);
+                    // Le tiroir montrait peut-être « Up Next » : l'édition se fait dans les infos.
+                    ui.set_drawer_tab(0);
                     ui.set_tags_editing(false);
                     self.show_tags(ui, ids);
                     ui.set_tags_editing(!self.tag_tracks.is_empty());
@@ -2097,7 +2099,8 @@ impl App {
 
     // Le tiroir suit la sélection, sauf pendant une édition.
     fn refresh_tags(&mut self, ui: &AppWindow) {
-        if !ui.get_tags_open() || ui.get_tags_editing() {
+        // Infos masquées (tiroir fermé ou sur « Up Next ») : aucune requête pour rien.
+        if !ui.get_tags_open() || ui.get_drawer_tab() != 0 || ui.get_tags_editing() {
             return;
         }
         let ids: Vec<i64> = self.tracks_of(Dragged::Selection).into_iter().map(|t| self.library.tracks[t].id).collect();
@@ -2971,13 +2974,14 @@ fn launch(path: &Path) -> Result<(), Problem> {
     let c = ctx.clone();
     ui.on_tags_toggled(move || {
         c.update(|app, ui| {
-            if ui.get_tags_open() {
+            let tags_shown = ui.get_tags_open() && ui.get_drawer_tab() == 0;
+            if tags_shown {
                 app.refresh_tags(ui);
-                app.refresh_queue(ui);
             } else if !ui.get_tags_saving() {
-                // Fermé en pleine édition : les saisies sont abandonnées.
+                // Infos fermées (ou remplacées par « Up Next ») en pleine édition : saisies abandonnées.
                 ui.set_tags_editing(false);
             }
+            app.refresh_queue(ui);
         })
     });
     let c = ctx.clone();
@@ -2988,8 +2992,6 @@ fn launch(path: &Path) -> Result<(), Problem> {
     ui.on_tags_cancel(move || c.update(|app, ui| app.cancel_tags(ui)));
     let c = ctx.clone();
     ui.on_tag_edited(move |key, value| c.update(|app, ui| app.tag_edited(ui, &key, &value)));
-    let c = ctx.clone();
-    ui.on_drawer_tab_changed(move || c.update(|app, ui| app.refresh_queue(ui)));
     let c = ctx.clone();
     ui.on_queue_play(move |position| c.update(|app, ui| app.queue_play(ui, position.max(0) as usize)));
     let c = ctx.clone();
