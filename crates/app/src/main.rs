@@ -110,6 +110,8 @@ struct ScanJob {
     stale_albums: Option<Vec<i64>>,
     messages: std::sync::mpsc::Receiver<ScanMessage>,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    // Scan de la bibliothèque (et non relecture ciblée) : son bilan s'ouvre dans une fenêtre.
+    report: bool,
 }
 
 struct App {
@@ -1898,6 +1900,29 @@ impl App {
             });
             let _ = sender.send(ScanMessage::Scanned(result));
         });
+        if let Some(job) = self.scan.as_mut() {
+            job.report = true;
+        }
+        ui.set_status(Status { kind: StatusKind::ScanListing, track: self.libraries[index].name.as_str().into(), ..Default::default() });
+    }
+
+    // « Add Folder… » : seul le dossier choisi (dans celui de la bibliothèque) est parcouru.
+    fn start_folder_scan(&mut self, ui: &AppWindow, index: usize, folder: PathBuf) {
+        if self.scan.is_some() || index >= self.libraries.len() {
+            return;
+        }
+        let library = self.libraries[index].clone();
+        let (db_path, root) = (self.db_path.clone(), PathBuf::from(&library.root_path));
+        self.spawn_job(ui, &library, None, move |sender, stop| {
+            let progress = sender.clone();
+            let result = audioplayer_scanner::scan_folder(&db_path, library.id, &root, &folder, stop, &move |p| {
+                let _ = progress.send(ScanMessage::Progress(p));
+            });
+            let _ = sender.send(ScanMessage::Scanned(result));
+        });
+        if let Some(job) = self.scan.as_mut() {
+            job.report = true;
+        }
         ui.set_status(Status { kind: StatusKind::ScanListing, track: self.libraries[index].name.as_str().into(), ..Default::default() });
     }
 
@@ -1964,7 +1989,7 @@ impl App {
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop = cancel.clone();
         std::thread::spawn(move || work(sender, &stop));
-        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel, stale_albums });
+        self.scan = Some(ScanJob { library: library.id, name: library.name.clone(), messages, cancel, stale_albums, report: false });
         ui.set_scanning(true);
     }
 
@@ -2018,13 +2043,21 @@ impl App {
             }
         }
         let Some(message) = finished else { return };
+        let mut wants_report = false;
         if let Some(job) = self.scan.take() {
+            wants_report = job.report;
             self.forget_covers(job.library, job.stale_albums);
         }
         ui.set_scanning(false);
         let root = self.libraries.iter().find(|l| l.id == library).map(|l| l.root_path.clone()).unwrap_or_default();
         let status = |kind| Status { kind, track: name.as_str().into(), playlist: root.as_str().into(), ..Default::default() };
         match message {
+            ScanMessage::Scanned(Ok(report)) if wants_report => {
+                self.reload_library(ui, library);
+                ui.set_status(Status::default());
+                ui.set_scan_report(scan_report(&name, &report));
+                ui.invoke_open_report();
+            }
             ScanMessage::Scanned(Ok(report)) => {
                 self.reload_library(ui, library);
                 self.show_status_for(ui, Status {
@@ -2043,8 +2076,20 @@ impl App {
                     ..Default::default()
                 }, Duration::from_secs(10));
             }
-            ScanMessage::Scanned(Err(audioplayer_scanner::Error::RootMissing(_))) => self.show_status_for(ui, status(StatusKind::ScanRootMissing), Duration::from_secs(10)),
-            ScanMessage::Scanned(Err(audioplayer_scanner::Error::RootEmpty(_))) => self.show_status_for(ui, status(StatusKind::ScanRootEmpty), Duration::from_secs(10)),
+            // Le dossier en cause : celui de la bibliothèque, ou celui choisi par « Add Folder… ».
+            ScanMessage::Scanned(Err(
+                audioplayer_scanner::Error::RootMissing(ref folder)
+                | audioplayer_scanner::Error::RootEmpty(ref folder)
+                | audioplayer_scanner::Error::OutsideLibrary(ref folder),
+            )) => {
+                let kind = match message {
+                    ScanMessage::Scanned(Err(audioplayer_scanner::Error::RootMissing(_))) => StatusKind::ScanRootMissing,
+                    ScanMessage::Scanned(Err(audioplayer_scanner::Error::RootEmpty(_))) => StatusKind::ScanRootEmpty,
+                    _ => StatusKind::ScanOutsideLibrary,
+                };
+                let status = Status { kind, track: name.as_str().into(), playlist: folder.display().to_string().into(), ..Default::default() };
+                self.show_status_for(ui, status, Duration::from_secs(10));
+            }
             ScanMessage::Scanned(Err(error)) => {
                 let status = Status { kind: StatusKind::ScanFailed, track: name.as_str().into(), playlist: error.to_string().into(), ..Default::default() };
                 self.show_status_for(ui, status, Duration::from_secs(10));
@@ -2783,6 +2828,33 @@ fn check_database(path: &Path) -> Result<(), Problem> {
     }
 }
 
+// Fenêtre de bilan d'un scan : les listes d'albums sont limitées pour rester légères.
+fn scan_report(library: &str, report: &audioplayer_scanner::Report) -> ScanReport {
+    const SHOWN: usize = 300;
+    let names = |names: &[String]| -> (slint::ModelRc<slint::SharedString>, i32) {
+        let shown: Vec<slint::SharedString> = names.iter().take(SHOWN).map(|n| n.as_str().into()).collect();
+        (std::rc::Rc::new(slint::VecModel::from(shown)).into(), names.len().saturating_sub(SHOWN) as i32)
+    };
+    let (added_names, more_added) = names(&report.albums_added);
+    let (removed_names, more_removed) = names(&report.albums_removed);
+    ScanReport {
+        library: library.into(),
+        stopped: report.cancelled,
+        tracks_added: report.added as i32,
+        tracks_updated: report.updated as i32,
+        tracks_removed: report.removed as i32,
+        albums_added: report.albums_added.len() as i32,
+        albums_updated: report.albums_updated as i32,
+        albums_removed: report.albums_removed.len() as i32,
+        unreadable: report.unreadable as i32,
+        inaccessible: report.inaccessible as i32,
+        added_names,
+        removed_names,
+        more_added,
+        more_removed,
+    }
+}
+
 fn database_dialog() -> rfd::FileDialog {
     rfd::FileDialog::new().add_filter("AudioPlayer database", &["db"])
 }
@@ -3061,6 +3133,14 @@ fn launch(path: &Path) -> Result<(), Problem> {
         "new-library" => c.update(|app, ui| {
             app.ask_name(ui, NameDialogKind::NewLibrary, "", NameRequest::NewLibrary(None));
         }),
+        action if action.starts_with("add-folder:") => {
+            let index = action["add-folder:".len()..].parse::<usize>().ok();
+            let root = index.and_then(|i| Some(c.app.try_borrow().ok()?.libraries.get(i)?.root_path.clone()));
+            let (Some(index), Some(root)) = (index, root) else { return };
+            if let Some(folder) = rfd::FileDialog::new().set_directory(&root).pick_folder() {
+                c.update(|app, ui| app.start_folder_scan(ui, index, folder));
+            }
+        }
         action => c.update(|app, ui| app.library_menu(ui, action)),
     });
     let c = ctx.clone();

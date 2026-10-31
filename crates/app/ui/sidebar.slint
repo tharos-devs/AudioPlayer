@@ -577,7 +577,8 @@ export component Sidebar inherits Rectangle {
                         // L'action porte la bibliothèque visée : « scan:2 ».
                         menu: [
                             { action: "rename-library:" + library.id, label: @tr("Rename Library…"), enabled: true },
-                            { action: "scan:" + library.id, label: @tr("Scan for Changes"), enabled: !root.scanning, separated: true },
+                            { action: "add-folder:" + library.id, label: @tr("Add Folder…"), enabled: !root.scanning, separated: true },
+                            { action: "scan:" + library.id, label: @tr("Scan for Changes"), enabled: !root.scanning },
                             { action: "rescan:" + library.id, label: @tr("Rescan All Files"), enabled: !root.scanning },
                             { action: "health:" + library.id, label: @tr("Check Library Health"), enabled: !root.scanning },
                             { action: "delete-library:" + library.id, label: @tr("Delete Library…"), enabled: !root.scanning, danger: true, separated: true },

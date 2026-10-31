@@ -1,3 +1,4 @@
+import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ThemedButton } from "widgets.slint";
 import { TagField } from "tags.slint";
@@ -219,6 +220,181 @@ export component ConfirmDialog inherits Rectangle {
                         primary: true;
                         clicked => {
                             root.confirmed();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Bilan d'un scan de bibliothèque (« Scan for Changes », « Rescan All Files », « Add Folder… »).
+export struct ScanReport {
+    library: string,
+    stopped: bool,
+    tracks-added: int,
+    tracks-updated: int,
+    tracks-removed: int,
+    albums-added: int,
+    albums-updated: int,
+    albums-removed: int,
+    unreadable: int,
+    inaccessible: int,
+    // Noms « artiste — album », limités ; `more-*` : ceux qui n'y sont pas.
+    added-names: [string],
+    removed-names: [string],
+    more-added: int,
+    more-removed: int,
+}
+
+component ReportCell inherits Text {
+    font-size: 12px;
+    color: Theme.text-primary;
+    horizontal-alignment: right;
+}
+
+component AlbumNames inherits VerticalLayout {
+    in property <string> title;
+    in property <[string]> names;
+    in property <int> more;
+    spacing: 4px;
+    Text {
+        text: root.title;
+        font-size: 12px;
+        font-weight: 600;
+        color: Theme.text-primary;
+    }
+    ScrollView {
+        height: min(root.names.length * 17px + 4px, 150px);
+        VerticalLayout {
+            padding-right: 12px;
+            for name in root.names: Text {
+                height: 17px;
+                text: name;
+                font-size: 12px;
+                color: Theme.text-secondary;
+                overflow: elide;
+            }
+        }
+    }
+    if root.more > 0: Text {
+        text: @tr("…and {n} more" | "…and {n} more" % root.more);
+        font-size: 11px;
+        color: Theme.text-secondary;
+    }
+}
+
+export component ScanReportDialog inherits Rectangle {
+    in property <ScanReport> report;
+    callback closed();
+    // Arrêté ou incomplet : rien ne dit que la bibliothèque est à jour.
+    property <bool> unchanged: root.report.tracks-added + root.report.tracks-updated + root.report.tracks-removed == 0
+        && !root.report.stopped && root.report.inaccessible == 0;
+
+    background: #00000080;
+
+    public function focus-keys() {
+        keys.focus();
+    }
+
+    TouchArea { }
+
+    Rectangle {
+        width: 440px;
+        height: layout.preferred-height;
+        border-radius: 6px;
+        background: Theme.popup-bg;
+        border-width: Theme.hairline;
+        border-color: Theme.popup-border;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: Theme.popup-shadow;
+
+        keys := FocusScope {
+            key-pressed(event) => {
+                if event.text == Key.Tab || event.text == Key.Backtab {
+                    return accept;
+                }
+                if event.text == Key.Escape || event.text == Key.Return {
+                    root.closed();
+                    return accept;
+                }
+                return reject;
+            }
+
+            layout := VerticalLayout {
+                padding: 16px;
+                spacing: 10px;
+                Text {
+                    text: root.report.stopped ? @tr("Scan of “{0}” stopped", root.report.library)
+                        : root.report.inaccessible > 0 ? @tr("Scan of “{0}” incomplete", root.report.library)
+                        : @tr("Scan of “{0}” finished", root.report.library);
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: Theme.text-primary;
+                    wrap: word-wrap;
+                }
+                if root.unchanged: Text {
+                    text: @tr("No changes: the library is up to date.");
+                    font-size: 12px;
+                    color: Theme.text-secondary;
+                }
+                if !root.unchanged: GridLayout {
+                    spacing-horizontal: 18px;
+                    spacing-vertical: 4px;
+                    Row {
+                        Text { }
+                        ReportCell { text: @tr("Added"); color: Theme.text-secondary; }
+                        ReportCell { text: @tr("Updated"); color: Theme.text-secondary; }
+                        ReportCell { text: @tr("Removed"); color: Theme.text-secondary; }
+                    }
+                    Row {
+                        ReportCell { text: @tr("Albums"); horizontal-alignment: left; horizontal-stretch: 1; }
+                        ReportCell { text: root.report.albums-added; }
+                        ReportCell { text: root.report.albums-updated; }
+                        ReportCell { text: root.report.albums-removed; }
+                    }
+                    Row {
+                        ReportCell { text: @tr("Tracks"); horizontal-alignment: left; horizontal-stretch: 1; }
+                        ReportCell { text: root.report.tracks-added; }
+                        ReportCell { text: root.report.tracks-updated; }
+                        ReportCell { text: root.report.tracks-removed; }
+                    }
+                }
+                if root.report.added-names.length > 0: AlbumNames {
+                    title: @tr("New albums");
+                    names: root.report.added-names;
+                    more: root.report.more-added;
+                }
+                if root.report.removed-names.length > 0: AlbumNames {
+                    title: @tr("Removed albums");
+                    names: root.report.removed-names;
+                    more: root.report.more-removed;
+                }
+                if root.report.stopped: Text {
+                    text: @tr("The next scan picks up where this one stopped.");
+                    font-size: 11px;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                if root.report.inaccessible > 0: Text {
+                    text: @tr("{n} file or folder could not be read (disk disconnected?): nothing was removed from it." | "{n} files or folders could not be read (disk disconnected?): nothing was removed from them." % root.report.inaccessible);
+                    font-size: 11px;
+                    color: Theme.danger;
+                    wrap: word-wrap;
+                }
+                if root.report.unreadable > 0: Text {
+                    text: @tr("{n} file has unreadable tags." | "{n} files have unreadable tags." % root.report.unreadable);
+                    font-size: 11px;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    ThemedButton {
+                        text: @tr("OK");
+                        primary: true;
+                        clicked => {
+                            root.closed();
                         }
                     }
                 }

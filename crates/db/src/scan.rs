@@ -209,6 +209,49 @@ impl Database {
         Ok(())
     }
 
+    /// Albums de la bibliothèque : « artiste — titre » et nombre de morceaux, pour le
+    /// rapport d'un scan (comparés avant et après).
+    pub fn album_summaries(&self, library_id: i64) -> Result<HashMap<i64, (String, u32)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT al.id, ar.name || ' — ' || al.title, (SELECT count(*) FROM tracks t WHERE t.album_id = al.id)
+             FROM albums al JOIN artists ar ON ar.id = al.artist_id WHERE al.library_id = ?1",
+        )?;
+        let rows = stmt.query_map([library_id], |row| Ok((row.get(0)?, (row.get(1)?, row.get(2)?))))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Nouveau chemin de morceaux dont le fichier a été renommé (`(id, chemin)`).
+    pub fn rename_tracks(&mut self, tracks: &[(i64, String)]) -> Result<()> {
+        if tracks.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.transaction()?;
+        {
+            let mut update = tx.prepare("UPDATE tracks SET file_path = ?2 WHERE id = ?1")?;
+            for (id, path) in tracks {
+                update.execute(params![id, path])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Date de modification de fichiers inchangés, connus sans elle (import de la v0.1).
+    pub fn set_file_mtimes(&mut self, files: &[(i64, i64)]) -> Result<()> {
+        if files.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.transaction()?;
+        {
+            let mut update = tx.prepare("UPDATE tracks SET file_mtime = ?2 WHERE id = ?1")?;
+            for (id, mtime) in files {
+                update.execute([id, mtime])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn mark_scanned(&self, library_id: i64) -> Result<()> {
         self.conn.execute("UPDATE libraries SET last_scan_at = datetime('now') WHERE id = ?1", [library_id])?;
         Ok(())

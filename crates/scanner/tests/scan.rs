@@ -356,3 +356,85 @@ fn unreadable_folder_only_blocks_removals_below_it() {
     titles.sort();
     assert_eq!(titles, ["Kept", "Stays"]);
 }
+
+#[test]
+fn files_imported_without_a_date_are_dated_not_reread() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("Music");
+    let db_path = dir.path().join("library.db");
+    tagged(&root.join("Jaws/01.wav"), "Main Title", "John Williams", None, "Jaws", 1, None);
+    tagged(&root.join("Jaws/02.wav"), "Shark Cage", "John Williams", None, "Jaws", 2, None);
+    let library = Database::open(&db_path).unwrap().create_library("OST", &root.to_string_lossy()).unwrap().unwrap();
+    run(&db_path, library, &root, Mode::Changes).unwrap();
+    // Comme après l'import de la v0.1 : la taille est connue, pas la date.
+    let db = Database::open(&db_path).unwrap();
+    db.connection().execute("UPDATE tracks SET file_mtime = NULL, title = 'Imported'", []).unwrap();
+    db.connection().execute("UPDATE tracks SET file_size = 1 WHERE file_path LIKE '%02.wav'", []).unwrap();
+
+    let report = run(&db_path, library, &root, Mode::Changes).unwrap();
+    assert_eq!((report.updated, report.unchanged), (1, 1), "{report:?}");
+    let titles: Vec<_> = db.tracks(library).unwrap().into_iter().map(|t| t.title).collect();
+    assert!(titles.contains(&"Imported".to_string()) && titles.contains(&"Shark Cage".to_string()), "{titles:?}");
+    let undated: i64 = db.connection().query_row("SELECT count(*) FROM tracks WHERE file_mtime IS NULL", [], |r| r.get(0)).unwrap();
+    assert_eq!(undated, 0);
+    let again = run(&db_path, library, &root, Mode::Changes).unwrap();
+    assert_eq!((again.updated, again.unchanged), (0, 2));
+}
+
+#[test]
+fn add_folder_scans_only_that_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("Music");
+    let db_path = dir.path().join("library.db");
+    tagged(&root.join("Jaws/01.wav"), "Main Title", "John Williams", None, "Jaws", 1, None);
+    tagged(&root.join("Dune/01.wav"), "Dream", "Hans Zimmer", None, "Dune", 1, None);
+    let library = Database::open(&db_path).unwrap().create_library("OST", &root.to_string_lossy()).unwrap().unwrap();
+    run(&db_path, library, &root, Mode::Changes).unwrap();
+
+    // Un album copié, un autre supprimé hors du dossier choisi : seul le premier est vu.
+    tagged(&root.join("Alien/01.wav"), "Main Title", "Jerry Goldsmith", None, "Alien", 1, None);
+    std::fs::remove_file(root.join("Dune/01.wav")).unwrap();
+    let folder = |db: &Path, folder: &Path| audioplayer_scanner::scan_folder(db, library, &root, folder, &AtomicBool::new(false), &|_| {});
+    let report = folder(&db_path, &root.join("Alien")).unwrap();
+    assert_eq!((report.added, report.removed, report.unchanged), (1, 0, 0), "{report:?}");
+    assert_eq!((report.albums_added.as_slice(), report.albums_updated), (["Jerry Goldsmith — Alien".to_string()].as_slice(), 0));
+    assert!(report.albums_removed.is_empty());
+    let db = Database::open(&db_path).unwrap();
+    let titles: Vec<_> = db.albums(library).unwrap().into_iter().map(|a| a.title).collect();
+    assert_eq!(titles, ["Alien", "Dune", "Jaws"]);
+
+    assert!(matches!(folder(&db_path, dir.path()), Err(Error::OutsideLibrary(_))));
+}
+
+#[test]
+fn folder_renamed_by_case_keeps_its_tracks() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("Music");
+    let db_path = dir.path().join("library.db");
+    tagged(&root.join("Bill brown/01.wav"), "Intro", "Bill Brown", None, "Trespasser", 1, None);
+    let library = Database::open(&db_path).unwrap().create_library("OST", &root.to_string_lossy()).unwrap().unwrap();
+    run(&db_path, library, &root, Mode::Changes).unwrap();
+    let db = Database::open(&db_path).unwrap();
+    let id = db.library_files(library).unwrap().values().next().unwrap().track_id;
+    db.record_play(id).unwrap();
+    std::fs::rename(root.join("Bill brown"), root.join("Bill Brown")).unwrap();
+
+    // Le morceau garde sa ligne et ses écoutes sous le nouveau chemin.
+    let report = run(&db_path, library, &root, Mode::Changes).unwrap();
+    assert_eq!((report.added, report.removed, report.unchanged), (0, 0, 1), "{report:?}");
+    let files = db.library_files(library).unwrap();
+    assert_eq!(files.keys().collect::<Vec<_>>(), [&root.join("Bill Brown/01.wav").to_string_lossy().into_owned()]);
+    let track = db.tracks(library).unwrap().into_iter().next().unwrap();
+    assert_eq!((track.id, track.play_count), (id, 1));
+
+    // Doublon laissé par une version précédente (ancien et nouveau chemin en base) : l'ancien part.
+    db.connection()
+        .execute(
+            "INSERT INTO tracks (album_id, artist_id, title, file_path, file_size) SELECT album_id, artist_id, title, ?1, file_size FROM tracks",
+            [root.join("Bill brown/01.wav").to_string_lossy()],
+        )
+        .unwrap();
+    let report = run(&db_path, library, &root, Mode::Changes).unwrap();
+    assert_eq!((report.added, report.removed), (0, 1), "{report:?}");
+    assert_eq!(db.tracks(library).unwrap().into_iter().map(|t| t.id).collect::<Vec<_>>(), [id]);
+}

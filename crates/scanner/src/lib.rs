@@ -43,6 +43,12 @@ pub struct Report {
     /// Fichiers ou dossiers inaccessibles (disque débranché…) : rien n'a été retiré.
     pub inaccessible: usize,
     pub artworks: usize,
+    /// Albums apparus et disparus (« artiste — titre », triés) ; un album retagué sous un
+    /// autre nom compte dans les deux.
+    pub albums_added: Vec<String>,
+    pub albums_removed: Vec<String>,
+    /// Albums restés en place dont des morceaux ont été relus, ajoutés ou retirés.
+    pub albums_updated: usize,
     pub cancelled: bool,
 }
 
@@ -52,6 +58,8 @@ pub enum Error {
     RootMissing(PathBuf),
     /// Aucun fichier alors que la base en connaît : par prudence, rien n'est retiré.
     RootEmpty(PathBuf),
+    /// « Add Folder » : le dossier choisi n'est pas dans celui de la bibliothèque.
+    OutsideLibrary(PathBuf),
     Database(audioplayer_db::Error),
 }
 
@@ -60,6 +68,7 @@ impl fmt::Display for Error {
         match self {
             Error::RootMissing(path) => write!(f, "{}: folder not found", path.display()),
             Error::RootEmpty(path) => write!(f, "{}: no audio file found", path.display()),
+            Error::OutsideLibrary(path) => write!(f, "{}: not inside the library folder", path.display()),
             Error::Database(error) => write!(f, "{error}"),
         }
     }
@@ -98,11 +107,48 @@ pub fn scan(
     cancel: &AtomicBool,
     progress: &(dyn Fn(Progress) + Sync),
 ) -> Result<Report, Error> {
+    scan_tree(db_path, library_id, root, mode, true, cancel, progress)
+}
+
+/// « Add Folder » : « Scan for Changes » limité à un dossier de la bibliothèque (un album
+/// copié dans son dossier), sans parcourir le reste.
+pub fn scan_folder(
+    db_path: &Path,
+    library_id: i64,
+    root: &Path,
+    folder: &Path,
+    cancel: &AtomicBool,
+    progress: &(dyn Fn(Progress) + Sync),
+) -> Result<Report, Error> {
+    if !root.is_dir() {
+        return Err(Error::RootMissing(root.to_owned()));
+    }
+    if !folder.starts_with(root) {
+        return Err(Error::OutsideLibrary(folder.to_owned()));
+    }
+    scan_tree(db_path, library_id, folder, Mode::Changes, folder == root, cancel, progress)
+}
+
+// `whole` : `root` est le dossier de la bibliothèque, et non l'un de ses sous-dossiers.
+fn scan_tree(
+    db_path: &Path,
+    library_id: i64,
+    root: &Path,
+    mode: Mode,
+    whole: bool,
+    cancel: &AtomicBool,
+    progress: &(dyn Fn(Progress) + Sync),
+) -> Result<Report, Error> {
     if !root.is_dir() {
         return Err(Error::RootMissing(root.to_owned()));
     }
     let mut db = Database::open(db_path)?;
-    let known = db.library_files(library_id)?;
+    let mut known = db.library_files(library_id)?;
+    let albums_before = db.album_summaries(library_id)?;
+    // Sous-dossier : le reste de la bibliothèque n'est ni relu ni retiré.
+    if !whole {
+        known.retain(|path, _| Path::new(path).starts_with(root));
+    }
 
     let mut folders = 0;
     let listing = files::find(root, |_| {
@@ -121,14 +167,41 @@ pub fn scan(
         return Err(Error::RootEmpty(root.to_owned()));
     }
 
+    // Dossier renommé en changeant seulement des majuscules : le morceau garde sa ligne (écoutes,
+    // favoris, playlists) sous son nouveau chemin au lieu de revenir comme un morceau neuf.
+    let present: HashSet<String> = found.iter().map(|f| f.path.to_string_lossy().into_owned()).collect();
+    let mut gone: HashMap<String, String> = known
+        .keys()
+        .filter(|path| !present.contains(*path))
+        .map(|path| (path.to_lowercase(), path.clone()))
+        .collect();
+    let new: Vec<&String> = present.iter().filter(|path| !known.contains_key(*path)).collect();
+    let mut renamed = Vec::new();
+    for path in new {
+        if let Some(old) = gone.remove(&path.to_lowercase()) {
+            let file = known.remove(&old).expect("known path");
+            renamed.push((file.track_id, path.clone()));
+            known.insert(path.clone(), file);
+        }
+    }
+    db.rename_tracks(&renamed)?;
+
     let mut report = Report { inaccessible: listing.errors, ..Report::default() };
+    // Morceaux importés de la v0.1, qui ne gardait que la taille : à taille égale, le fichier
+    // est tenu pour inchangé et sa date est seulement notée, sans relire ses tags.
+    let mut dated = Vec::new();
     let to_read: Vec<&files::AudioFile> = found
         .iter()
         .filter(|file| {
             let key = file.path.to_string_lossy();
             let changed = match known.get(key.as_ref()) {
                 None => true,
-                Some(k) => mode == Mode::Full || k.size != Some(file.size) || k.mtime != Some(file.mtime),
+                Some(_) if mode == Mode::Full => true,
+                Some(k) if k.mtime.is_none() && k.size == Some(file.size) => {
+                    dated.push((k.track_id, file.mtime));
+                    false
+                }
+                Some(k) => k.size != Some(file.size) || k.mtime != Some(file.mtime),
             };
             if !changed {
                 report.unchanged += 1;
@@ -136,6 +209,7 @@ pub fn scan(
             changed
         })
         .collect();
+    db.set_file_mtimes(&dated)?;
 
     // Pochette déjà présente : rien à chercher dans ces dossiers.
     let mut art: HashMap<PathBuf, FolderArt> = db
@@ -148,7 +222,8 @@ pub fn scan(
     }
     // Scan complet : l'année et le drapeau compilation des albums sont repris des fichiers.
     let mut refreshed = (mode == Mode::Full).then(HashSet::new);
-    let processed = process(&mut db, library_id, &known, &to_read, art, refreshed.as_mut(), cancel, progress, &mut report);
+    let mut touched = HashSet::new();
+    let processed = process(&mut db, library_id, &known, &to_read, art, refreshed.as_mut(), &mut touched, cancel, progress, &mut report);
     // Quoi qu'il arrive ensuite (arrêt, disque perdu, erreur), les albums vidés par un
     // regroupement déjà écrit ne restent pas affichés.
     db.remove_orphans(library_id)?;
@@ -156,6 +231,7 @@ pub fn scan(
 
     if cancel.load(Ordering::Relaxed) {
         report.cancelled = true;
+        compare_albums(&db, library_id, &albums_before, &touched, &mut report)?;
         return Ok(report);
     }
     // Disque débranché pendant la lecture : la suite retirerait tout ce qui n'a pas été vu.
@@ -164,18 +240,46 @@ pub fn scan(
     }
 
     // Disparus : absents du dossier et introuvables sur le disque (double vérification). Sous
-    // un dossier illisible, la liste est incomplète : rien n'y est retiré.
-    let present: HashSet<String> = found.iter().map(|f| f.path.to_string_lossy().into_owned()).collect();
+    // un dossier illisible, la liste est incomplète : rien n'y est retiré. Un dossier renommé
+    // en changeant seulement des majuscules reste « présent » sur un disque qui ne les
+    // distingue pas (exFAT, APFS) : l'ancien chemin, doublon du nouveau déjà en base, est retiré aussi.
+    let present_lower: HashSet<String> = present.iter().map(|p| p.to_lowercase()).collect();
     let removed: Vec<i64> = known
         .iter()
-        .filter(|(path, _)| !present.contains(*path) && !Path::new(path).exists())
+        .filter(|(path, _)| !present.contains(*path) && (present_lower.contains(&path.to_lowercase()) || !Path::new(path).exists()))
         .filter(|(path, _)| !unreadable_dirs.iter().any(|dir| Path::new(path).starts_with(dir)))
         .map(|(_, k)| k.track_id)
         .collect();
     report.removed = removed.len();
     db.remove_tracks(library_id, &removed)?;
-    db.mark_scanned(library_id)?;
+    if whole {
+        db.mark_scanned(library_id)?;
+    }
+    compare_albums(&db, library_id, &albums_before, &touched, &mut report)?;
     Ok(report)
+}
+
+// Bilan par album, d'après les albums d'avant le scan et ceux écrits pendant.
+fn compare_albums(
+    db: &Database,
+    library_id: i64,
+    before: &HashMap<i64, (String, u32)>,
+    touched: &HashSet<i64>,
+    report: &mut Report,
+) -> Result<(), Error> {
+    let after = db.album_summaries(library_id)?;
+    let names = |from: &HashMap<i64, (String, u32)>, other: &HashMap<i64, (String, u32)>| {
+        let mut names: Vec<String> = from.iter().filter(|(id, _)| !other.contains_key(*id)).map(|(_, (name, _))| name.clone()).collect();
+        names.sort_by_key(|name| name.to_lowercase());
+        names
+    };
+    report.albums_added = names(&after, before);
+    report.albums_removed = names(before, &after);
+    report.albums_updated = after
+        .iter()
+        .filter(|(id, (_, count))| before.get(*id).is_some_and(|(_, old)| old != count || touched.contains(*id)))
+        .count();
+    Ok(())
 }
 
 // Lit `to_read` sur tous les cœurs et écrit les résultats par lots.
@@ -187,6 +291,7 @@ fn process(
     to_read: &[&files::AudioFile],
     art: HashMap<PathBuf, FolderArt>,
     mut refreshed: Option<&mut HashSet<i64>>,
+    touched: &mut HashSet<i64>,
     cancel: &AtomicBool,
     progress: &(dyn Fn(Progress) + Sync),
     report: &mut Report,
@@ -228,7 +333,6 @@ fn process(
 
         let mut batch: Vec<Read> = Vec::with_capacity(BATCH);
         // Albums écrits pendant ce scan : ceux restés sans pochette en reçoivent une à la fin.
-        let mut touched: HashSet<i64> = HashSet::new();
         let mut flush = |batch: &mut Vec<Read>, report: &mut Report, touched: &mut HashSet<i64>| -> Result<(), Error> {
             if batch.is_empty() {
                 return Ok(());
@@ -269,12 +373,12 @@ fn process(
             }
             batch.push(read);
             if batch.len() >= BATCH {
-                flush(&mut batch, report, &mut touched)?;
+                flush(&mut batch, report, touched)?;
             }
         }
-        flush(&mut batch, report, &mut touched)?;
+        flush(&mut batch, report, touched)?;
         if !cancel.load(Ordering::Relaxed) {
-            fill_missing_artwork(db, &touched, report)?;
+            fill_missing_artwork(db, touched, report)?;
         }
         Ok(())
     })
@@ -349,8 +453,8 @@ pub fn rescan_files(
         }
     }
     let to_read: Vec<&files::AudioFile> = present.iter().collect();
-    let mut refreshed = HashSet::new();
-    let processed = process(&mut db, library_id, &known, &to_read, HashMap::new(), Some(&mut refreshed), cancel, progress, &mut report);
+    let (mut refreshed, mut touched) = (HashSet::new(), HashSet::new());
+    let processed = process(&mut db, library_id, &known, &to_read, HashMap::new(), Some(&mut refreshed), &mut touched, cancel, progress, &mut report);
     db.remove_orphans(library_id)?;
     processed?;
     report.removed = missing.len();

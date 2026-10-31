@@ -302,6 +302,12 @@ msgstr "Rechercher les modifications"
 msgid "Rescan All Files"
 msgstr "Tout relire"
 
+msgid "Add Folder…"
+msgstr "Ajouter un dossier…"
+
+msgid "{1} is not inside the folder of “{0}”: nothing was added."
+msgstr "{1} n'est pas dans le dossier de « {0} » : rien n'a été ajouté."
+
 msgid "New Library"
 msgstr "Nouvelle bibliothèque"
 
@@ -722,3 +728,48 @@ msgstr "Rien en lecture. Lancez un morceau, ou utilisez « Ajouter à la file d'
 
 msgid "Then random tracks from the library"
 msgstr "Puis des morceaux tirés au hasard dans la bibliothèque"
+
+msgid "Scan of “{0}” finished"
+msgstr "Scan de « {0} » terminé"
+
+msgid "Scan of “{0}” stopped"
+msgstr "Scan de « {0} » arrêté"
+
+msgid "Scan of “{0}” incomplete"
+msgstr "Scan de « {0} » incomplet"
+
+msgid "No changes: the library is up to date."
+msgstr "Aucun changement : la bibliothèque est à jour."
+
+msgid "Added"
+msgstr "Ajoutés"
+
+msgid "Updated"
+msgstr "Modifiés"
+
+msgid "Removed"
+msgstr "Retirés"
+
+msgid "New albums"
+msgstr "Nouveaux albums"
+
+msgid "Removed albums"
+msgstr "Albums retirés"
+
+msgid "…and {n} more"
+msgid_plural "…and {n} more"
+msgstr[0] "…et {n} autre"
+msgstr[1] "…et {n} autres"
+
+msgid "The next scan picks up where this one stopped."
+msgstr "Le prochain scan reprendra là où celui-ci s'est arrêté."
+
+msgid "{n} file or folder could not be read (disk disconnected?): nothing was removed from it."
+msgid_plural "{n} files or folders could not be read (disk disconnected?): nothing was removed from them."
+msgstr[0] "{n} fichier ou dossier illisible (disque débranché ?) : rien n'y a été retiré."
+msgstr[1] "{n} fichiers ou dossiers illisibles (disque débranché ?) : rien n'y a été retiré."
+
+msgid "{n} file has unreadable tags."
+msgid_plural "{n} files have unreadable tags."
+msgstr[0] "{n} fichier a des tags illisibles."
+msgstr[1] "{n} fichiers ont des tags illisibles."

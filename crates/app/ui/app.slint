@@ -2,7 +2,7 @@ import { ListView, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ListItem, PanelHeader, ArtistList, AlbumList, Splitter } from "widgets.slint";
 import { TrackItem, TrackItemKind, TrackList, PlaylistTrackList, TrackMenu } from "tracks.slint";
-import { NameDialog, NameDialogKind, ConfirmDialog, ConfirmKind } from "dialogs.slint";
+import { NameDialog, NameDialogKind, ConfirmDialog, ConfirmKind, ScanReportDialog, ScanReport } from "dialogs.slint";
 import { Sidebar, View } from "sidebar.slint";
 import { ControlBar } from "controlbar.slint";
 import { StatusBar, StatusSource } from "statusbar.slint";
@@ -14,9 +14,9 @@ import { ArtworkDialog } from "artwork.slint";
 import { UpdateCard, UpdateStage } from "update.slint";
 import { QueueView, QueueItem } from "queue.slint";
 
-export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind, TagRow, TagChoice, MiniPlayerWindow, UpdateStage, QueueItem }
+export { Theme, ListItem, TrackItem, TrackItemKind, View, StatusSource, EqualizerState, SetupWindow, DatabaseProblem, TrackMenu, NameDialogKind, ConfirmKind, TagRow, TagChoice, MiniPlayerWindow, UpdateStage, QueueItem, ScanReport }
 
-export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-incomplete, scan-stopped, scan-root-missing, scan-root-empty, scan-failed, library-healthy, database-problem, playback-failed, no-output, favorite-added, favorite-removed, tags-writing, tags-saved, tags-failed, tags-invalid, artwork-saved, busy }
+export enum StatusKind { summary, added-to-playlist, already-in-playlist, enqueued, selection-added, selection-already-in-playlist, selection-enqueued, selection-favorited, selection-unfavorited, tracks-added, scan-listing, scan-reading, scan-finished, scan-incomplete, scan-stopped, scan-root-missing, scan-root-empty, scan-outside-library, scan-failed, library-healthy, database-problem, playback-failed, no-output, favorite-added, favorite-removed, tags-writing, tags-saved, tags-failed, tags-invalid, artwork-saved, busy }
 
 // Les messages d'état sont formatés ici (et non en Rust) pour passer par @tr.
 export struct Status {
@@ -110,6 +110,8 @@ export component AppWindow inherits Window {
         ? @tr("Folder of “{0}” not found: {1}. Nothing was changed.", root.status.track, root.status.playlist)
         : root.status.kind == StatusKind.scan-root-empty
         ? @tr("No audio file found in {1}: “{0}” was left unchanged.", root.status.track, root.status.playlist)
+        : root.status.kind == StatusKind.scan-outside-library
+        ? @tr("{1} is not inside the folder of “{0}”: nothing was added.", root.status.track, root.status.playlist)
         : root.status.kind == StatusKind.scan-failed
         ? @tr("Scan of “{0}” failed: {1}", root.status.track, root.status.playlist)
         : root.status.kind == StatusKind.library-healthy
@@ -276,6 +278,12 @@ export component AppWindow inherits Window {
     public function close-artwork() {
         root.artwork-open = false;
         keys.focus();
+    }
+    in-out property <bool> report-open;
+    in property <ScanReport> scan-report;
+    public function open-report() {
+        root.report-open = true;
+        report-dialog.focus-keys();
     }
     public function open-confirm() {
         root.confirm-open = true;
@@ -866,6 +874,15 @@ export component AppWindow inherits Window {
             }
             cancelled => {
                 root.close-confirm();
+            }
+        }
+
+        report-dialog := ScanReportDialog {
+            visible: root.report-open;
+            report: root.scan-report;
+            closed => {
+                root.report-open = false;
+                keys.focus();
             }
         }
 
