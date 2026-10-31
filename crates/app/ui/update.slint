@@ -37,6 +37,9 @@ export component UpdateCard inherits Rectangle {
     drop-shadow-offset-y: 6px;
     drop-shadow-color: #000000b3;
 
+    // Les textes sur plusieurs lignes ont une largeur fixée : sans elle, la hauteur de la
+    // fenêtre est calculée pour une seule ligne et les boutons débordent en bas.
+
     // Absorbe les clics : la liste dessous ne les reçoit pas.
     TouchArea { }
 
@@ -81,6 +84,7 @@ export component UpdateCard inherits Rectangle {
                 font-size: 12px;
                 color: root.text-secondary;
                 wrap: word-wrap;
+                width: root.width - 28px;
             }
             HorizontalLayout {
                 alignment: start;
@@ -128,18 +132,21 @@ export component UpdateCard inherits Rectangle {
             font-size: 12px;
             color: root.text-secondary;
             wrap: word-wrap;
+            width: root.width - 28px;
         }
         if root.stage == UpdateStage.installed: Text {
             text: @tr("AudioPlayer {0} is installed. Restart to use the new version.", root.version);
             font-size: 12px;
             color: root.text-secondary;
             wrap: word-wrap;
+            width: root.width - 28px;
         }
         if root.stage == UpdateStage.failed: Text {
             text: root.message;
             font-size: 12px;
             color: root.text-secondary;
             wrap: word-wrap;
+            width: root.width - 28px;
         }
 
         if root.stage != UpdateStage.downloading && root.stage != UpdateStage.installing && root.stage != UpdateStage.checking: HorizontalLayout {
